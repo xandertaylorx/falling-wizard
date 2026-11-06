@@ -1,136 +1,278 @@
-//! The cellular grid, its update rules and its rendering into an RGBA buffer.
+//! The infinite world.
 //!
-//! The grid is split into CS x CS chunks. A chunk is only simulated when something
-//! in or next to it changed during the previous step, so settled areas cost nothing.
+//! The world is made of 64x64 storage chunks generated on demand. Only a window of
+//! WCX x WCY chunks around the camera lives in a dense array and is simulated; when the
+//! camera moves, the window shifts, chunks leaving it are stored (if modified) and new
+//! ones are loaded from storage or generated. Inside the window, 16x16 sim chunks sleep
+//! when nothing in them changed, so settled terrain costs nothing.
+//!
+//! All public methods take global cell coordinates.
 
-use crate::cell::Cell;
-use crate::materials::{Kind, Material};
-use crate::noise::{fbm, hash3, Rng};
+use std::collections::HashMap;
 
-pub const W: usize = 320;
-pub const H: usize = 180;
-pub const CS: usize = 16;
-pub const CW: usize = (W + CS - 1) / CS;
-pub const CH: usize = (H + CS - 1) / CS;
+use crate::cell::{Cell, FIRE_FLOWING, FIRE_FUEL};
+use crate::materials::{Kind, Material as M};
+use crate::noise::Rng;
+use crate::worldgen::Generator;
+
+pub const CHUNK: i32 = 64;
+const CU: usize = CHUNK as usize;
+pub const WCX: i32 = 10;
+pub const WCY: i32 = 8;
+pub const WW: usize = (WCX * CHUNK) as usize;
+pub const WH: usize = (WCY * CHUNK) as usize;
+pub const SC: usize = 16;
+pub const SCW: usize = WW / SC;
+pub const SCH: usize = WH / SC;
+const SPC: usize = CU / SC;
 
 const N4: [(i32, i32); 4] = [(0, 1), (-1, 0), (1, 0), (0, -1)];
-const N8: [(i32, i32); 8] = [
-    (-1, -1),
-    (0, -1),
-    (1, -1),
-    (-1, 0),
-    (1, 0),
-    (-1, 1),
-    (0, 1),
-    (1, 1),
-];
+const N8: [(i32, i32); 8] = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)];
 
-const FIRE_PAL: [[u8; 3]; 5] = [
-    [150, 24, 8],
-    [222, 58, 12],
-    [255, 122, 20],
-    [255, 188, 48],
-    [255, 240, 150],
-];
+struct Stored {
+    cells: Vec<Cell>,
+    wall: Vec<u8>,
+    dirty: bool,
+}
 
 pub struct World {
     pub cells: Vec<Cell>,
-    bg: Vec<[u8; 3]>,
-    pub clock: u8,
-    pub frame: u64,
+    /// Background wall shade per cell; 0 means open sky.
+    pub wall: Vec<u8>,
+    /// Global coordinate of the window's top-left cell.
+    pub ox: i32,
+    pub oy: i32,
+    /// Surface height for each window column.
+    pub surf: Vec<i32>,
+    store: HashMap<(i32, i32), Stored>,
+    dirty: Vec<bool>,
+    pub gen: Generator,
     active: Vec<bool>,
     next: Vec<bool>,
     pub rng: Rng,
+    pub clock: u8,
+    pub frame: u64,
     pub fire_count: usize,
     pub active_chunks: usize,
+    /// Explosions requested by the simulation (gunpowder), consumed by the game.
+    pub explosions: Vec<(i32, i32, i32)>,
 }
 
 impl World {
-    pub fn new(seed: u64) -> Self {
-        let mut bg = vec![[0u8; 3]; W * H];
-        for y in 0..H {
-            for x in 0..W {
-                let t = y as f32 / H as f32;
-                let n = fbm(x as f32 * 0.07, y as f32 * 0.07, 3, 4242);
-                let f = 0.7 + n * 0.6;
-                let base = [16.0 + 12.0 * t, 13.0 + 6.0 * t, 26.0 - 4.0 * t];
-                bg[y * W + x] = [
-                    (base[0] * f) as u8,
-                    (base[1] * f) as u8,
-                    (base[2] * f) as u8,
-                ];
-            }
-        }
-        Self {
-            cells: vec![Cell::EMPTY; W * H],
-            bg,
+    pub fn new(seed: u64, gx: f32, gy: f32) -> Self {
+        let pcx = (gx.floor() as i32).div_euclid(CHUNK);
+        let pcy = (gy.floor() as i32).div_euclid(CHUNK);
+        let mut w = World {
+            cells: vec![Cell::EMPTY; WW * WH],
+            wall: vec![0; WW * WH],
+            ox: (pcx - 5) * CHUNK,
+            oy: (pcy - 4) * CHUNK,
+            surf: vec![0; WW],
+            store: HashMap::new(),
+            dirty: vec![false; (WCX * WCY) as usize],
+            gen: Generator::new(seed),
+            active: vec![false; SCW * SCH],
+            next: vec![false; SCW * SCH],
+            rng: Rng::new(seed ^ 0x5151),
             clock: 0,
             frame: 0,
-            active: vec![true; CW * CH],
-            next: vec![true; CW * CH],
-            rng: Rng::new(seed),
             fire_count: 0,
-            active_chunks: CW * CH,
+            active_chunks: 0,
+            explosions: Vec::new(),
+        };
+        for j in 0..WCY {
+            for i in 0..WCX {
+                let (c, wl) = w.gen.chunk(w.ox / CHUNK + i, w.oy / CHUNK + j);
+                w.blit(i, j, &c, &wl);
+            }
+        }
+        w.update_surf();
+        w
+    }
+
+    // ---------- streaming ----------
+
+    fn blit(&mut self, i: i32, j: i32, cells: &[Cell], wall: &[u8]) {
+        for r in 0..CU {
+            let dst = (j as usize * CU + r) * WW + i as usize * CU;
+            self.cells[dst..dst + CU].copy_from_slice(&cells[r * CU..(r + 1) * CU]);
+            self.wall[dst..dst + CU].copy_from_slice(&wall[r * CU..(r + 1) * CU]);
         }
     }
 
-    #[inline]
-    pub fn in_bounds(x: i32, y: i32) -> bool {
-        x >= 0 && y >= 0 && (x as usize) < W && (y as usize) < H
+    fn update_surf(&mut self) {
+        for x in 0..WW {
+            self.surf[x] = self.gen.surface(self.ox + x as i32);
+        }
     }
 
-    #[inline]
-    pub fn idx(x: i32, y: i32) -> usize {
-        y as usize * W + x as usize
-    }
-
-    /// Material at (x, y); out of bounds behaves like solid stone.
-    #[inline]
-    pub fn mat(&self, x: i32, y: i32) -> Material {
-        if Self::in_bounds(x, y) {
-            self.cells[Self::idx(x, y)].mat
+    /// Surface height at a global column (cached inside the window).
+    pub fn surface_at(&self, gx: i32) -> i32 {
+        let lx = gx - self.ox;
+        if lx >= 0 && (lx as usize) < WW {
+            self.surf[lx as usize]
         } else {
-            Material::Stone
+            self.gen.surface(gx)
         }
     }
 
-    /// Mark the chunks around (x, y) for simulation next step.
-    #[inline]
-    pub fn wake(&mut self, x: i32, y: i32) {
-        let cx0 = (x - 1).clamp(0, W as i32 - 1) as usize / CS;
-        let cx1 = (x + 1).clamp(0, W as i32 - 1) as usize / CS;
-        let cy0 = (y - 1).clamp(0, H as i32 - 1) as usize / CS;
-        let cy1 = (y + 1).clamp(0, H as i32 - 1) as usize / CS;
-        for cy in cy0..=cy1 {
-            for cx in cx0..=cx1 {
-                self.next[cy * CW + cx] = true;
+    /// Keep the window centred on (gx, gy), shifting by whole chunks with some hysteresis.
+    pub fn recenter(&mut self, gx: f32, gy: f32) {
+        let pcx = (gx.floor() as i32).div_euclid(CHUNK);
+        let pcy = (gy.floor() as i32).div_euclid(CHUNK);
+        let (cx0, cy0) = (self.ox.div_euclid(CHUNK), self.oy.div_euclid(CHUNK));
+        let (ix, iy) = (pcx - cx0, pcy - cy0);
+        let ncx0 = if ix < 4 { pcx - 4 } else if ix > 5 { pcx - 5 } else { cx0 };
+        let ncy0 = if iy < 3 { pcy - 3 } else if iy > 4 { pcy - 4 } else { cy0 };
+        if (ncx0, ncy0) != (cx0, cy0) {
+            self.shift_to(ncx0, ncy0);
+        }
+    }
+
+    fn shift_to(&mut self, ncx0: i32, ncy0: i32) {
+        let (ocx0, ocy0) = (self.ox.div_euclid(CHUNK), self.oy.div_euclid(CHUNK));
+        let old_cells = std::mem::replace(&mut self.cells, vec![Cell::EMPTY; WW * WH]);
+        let old_wall = std::mem::replace(&mut self.wall, vec![0; WW * WH]);
+        let old_next = std::mem::replace(&mut self.next, vec![false; SCW * SCH]);
+        let old_dirty = std::mem::replace(&mut self.dirty, vec![false; (WCX * WCY) as usize]);
+        let inside = |i: i32, j: i32| i >= 0 && j >= 0 && i < WCX && j < WCY;
+
+        // Store modified chunks that leave the window; clean ones can be regenerated.
+        for j in 0..WCY {
+            for i in 0..WCX {
+                let (gcx, gcy) = (ocx0 + i, ocy0 + j);
+                if inside(gcx - ncx0, gcy - ncy0) || !old_dirty[(j * WCX + i) as usize] {
+                    continue;
+                }
+                let mut cells = Vec::with_capacity(CU * CU);
+                let mut wall = Vec::with_capacity(CU * CU);
+                for r in 0..CU {
+                    let src = (j as usize * CU + r) * WW + i as usize * CU;
+                    cells.extend_from_slice(&old_cells[src..src + CU]);
+                    wall.extend_from_slice(&old_wall[src..src + CU]);
+                }
+                self.store.insert((gcx, gcy), Stored { cells, wall, dirty: true });
+            }
+        }
+
+        self.ox = ncx0 * CHUNK;
+        self.oy = ncy0 * CHUNK;
+        for j in 0..WCY {
+            for i in 0..WCX {
+                let (gcx, gcy) = (ncx0 + i, ncy0 + j);
+                let (oi, oj) = (gcx - ocx0, gcy - ocy0);
+                if inside(oi, oj) {
+                    for r in 0..CU {
+                        let src = (oj as usize * CU + r) * WW + oi as usize * CU;
+                        let dst = (j as usize * CU + r) * WW + i as usize * CU;
+                        self.cells[dst..dst + CU].copy_from_slice(&old_cells[src..src + CU]);
+                        self.wall[dst..dst + CU].copy_from_slice(&old_wall[src..src + CU]);
+                    }
+                    for sy in 0..SPC {
+                        for sx in 0..SPC {
+                            let o = (oj as usize * SPC + sy) * SCW + oi as usize * SPC + sx;
+                            let n = (j as usize * SPC + sy) * SCW + i as usize * SPC + sx;
+                            self.next[n] = old_next[o];
+                        }
+                    }
+                    self.dirty[(j * WCX + i) as usize] = old_dirty[(oj * WCX + oi) as usize];
+                } else if let Some(s) = self.store.remove(&(gcx, gcy)) {
+                    self.blit(i, j, &s.cells, &s.wall);
+                    self.dirty[(j * WCX + i) as usize] = s.dirty;
+                    if s.dirty {
+                        for sy in 0..SPC {
+                            for sx in 0..SPC {
+                                self.next[(j as usize * SPC + sy) * SCW + i as usize * SPC + sx] = true;
+                            }
+                        }
+                    }
+                } else {
+                    let (c, w) = self.gen.chunk(gcx, gcy);
+                    self.blit(i, j, &c, &w);
+                }
+            }
+        }
+        self.update_surf();
+        self.store.retain(|&(cx, cy), s| {
+            s.dirty || (cx >= ncx0 - 3 && cx < ncx0 + WCX + 3 && cy >= ncy0 - 3 && cy < ncy0 + WCY + 3)
+        });
+    }
+
+    /// Generate a few chunks around the window ahead of time so shifting is instant.
+    pub fn prefetch(&mut self, budget: usize) {
+        let (cx0, cy0) = (self.ox.div_euclid(CHUNK), self.oy.div_euclid(CHUNK));
+        let mut done = 0;
+        for j in -1..=WCY {
+            for i in -1..=WCX {
+                if i >= 0 && j >= 0 && i < WCX && j < WCY {
+                    continue;
+                }
+                let k = (cx0 + i, cy0 + j);
+                if self.store.contains_key(&k) {
+                    continue;
+                }
+                let (cells, wall) = self.gen.chunk(k.0, k.1);
+                self.store.insert(k, Stored { cells, wall, dirty: false });
+                done += 1;
+                if done >= budget {
+                    return;
+                }
             }
         }
     }
 
-    pub fn wake_all(&mut self) {
-        self.next.fill(true);
+    // ---------- local helpers ----------
+
+    #[inline]
+    fn inb(x: i32, y: i32) -> bool {
+        x >= 0 && y >= 0 && (x as usize) < WW && (y as usize) < WH
     }
 
     #[inline]
-    pub fn set(&mut self, x: i32, y: i32, mut c: Cell) {
-        if !Self::in_bounds(x, y) {
+    fn li(x: i32, y: i32) -> usize {
+        y as usize * WW + x as usize
+    }
+
+    #[inline]
+    fn lm(&self, x: i32, y: i32) -> M {
+        if Self::inb(x, y) {
+            self.cells[Self::li(x, y)].mat
+        } else {
+            M::Stone
+        }
+    }
+
+    #[inline]
+    fn wake(&mut self, x: i32, y: i32) {
+        if !Self::inb(x, y) {
+            return;
+        }
+        self.dirty[(y as usize / CU) * WCX as usize + x as usize / CU] = true;
+        let cx0 = (x - 1).max(0) as usize / SC;
+        let cx1 = (x + 1).min(WW as i32 - 1) as usize / SC;
+        let cy0 = (y - 1).max(0) as usize / SC;
+        let cy1 = (y + 1).min(WH as i32 - 1) as usize / SC;
+        for cy in cy0..=cy1 {
+            for cx in cx0..=cx1 {
+                self.next[cy * SCW + cx] = true;
+            }
+        }
+    }
+
+    #[inline]
+    fn lset(&mut self, x: i32, y: i32, mut c: Cell) {
+        if !Self::inb(x, y) {
             return;
         }
         c.clock = self.clock;
-        self.cells[Self::idx(x, y)] = c;
+        self.cells[Self::li(x, y)] = c;
         self.wake(x, y);
-    }
-
-    pub fn place(&mut self, x: i32, y: i32, m: Material) {
-        let c = Cell::new(m, &mut self.rng);
-        self.set(x, y, c);
     }
 
     #[inline]
     fn swap(&mut self, x0: i32, y0: i32, x1: i32, y1: i32) {
-        let a = Self::idx(x0, y0);
-        let b = Self::idx(x1, y1);
+        let a = Self::li(x0, y0);
+        let b = Self::li(x1, y1);
         self.cells.swap(a, b);
         self.cells[a].clock = self.clock;
         self.cells[b].clock = self.clock;
@@ -138,7 +280,67 @@ impl World {
         self.wake(x1, y1);
     }
 
-    /// One fixed simulation step: bottom-to-top, alternating horizontal scan direction.
+    // ---------- public, global coordinates ----------
+
+    #[inline]
+    pub fn mat(&self, gx: i32, gy: i32) -> M {
+        self.lm(gx - self.ox, gy - self.oy)
+    }
+
+    #[inline]
+    pub fn get(&self, gx: i32, gy: i32) -> Option<Cell> {
+        let (x, y) = (gx - self.ox, gy - self.oy);
+        Self::inb(x, y).then(|| self.cells[Self::li(x, y)])
+    }
+
+    pub fn in_window(&self, gx: i32, gy: i32) -> bool {
+        Self::inb(gx - self.ox, gy - self.oy)
+    }
+
+    pub fn set(&mut self, gx: i32, gy: i32, c: Cell) {
+        self.lset(gx - self.ox, gy - self.oy, c);
+    }
+
+    pub fn place(&mut self, gx: i32, gy: i32, m: M) {
+        let c = Cell::new(m, &mut self.rng);
+        self.set(gx, gy, c);
+    }
+
+    /// Set fire to (gx, gy) if what's there can burn.
+    pub fn ignite_at(&mut self, gx: i32, gy: i32) {
+        let (x, y) = (gx - self.ox, gy - self.oy);
+        let m = self.lm(x, y);
+        if m.flammable() && Self::inb(x, y) {
+            self.ignite(x, y, m);
+        }
+    }
+
+    fn ignite(&mut self, x: i32, y: i32, m: M) {
+        match m {
+            M::Gunpowder => {
+                self.lset(x, y, Cell::EMPTY);
+                if self.explosions.len() < 200 {
+                    self.explosions.push((x + self.ox, y + self.oy, 5));
+                }
+            }
+            M::Grass => {
+                let mut d = Cell::new(M::Dirt, &mut self.rng);
+                d.shade = self.cells[Self::li(x, y)].shade;
+                self.lset(x, y, d);
+                if self.lm(x, y - 1) == M::Empty {
+                    let f = Cell::fire(&mut self.rng);
+                    self.lset(x, y - 1, f);
+                }
+            }
+            _ => {
+                let f = Cell::burning(m, &mut self.rng);
+                self.lset(x, y, f);
+            }
+        }
+    }
+
+    // ---------- simulation ----------
+
     pub fn step(&mut self) {
         self.clock = self.clock.wrapping_add(1);
         self.frame += 1;
@@ -148,57 +350,72 @@ impl World {
         self.active_chunks = self.active.iter().filter(|a| **a).count();
 
         let ltr = self.frame % 2 == 0;
-        for y in (0..H).rev() {
-            let cy = y / CS;
-            for k in 0..CW {
-                let cx = if ltr { k } else { CW - 1 - k };
-                if !self.active[cy * CW + cx] {
+        for y in (0..WH).rev() {
+            let cy = y / SC;
+            for k in 0..SCW {
+                let cx = if ltr { k } else { SCW - 1 - k };
+                if !self.active[cy * SCW + cx] {
                     continue;
                 }
-                let x0 = cx * CS;
-                let x1 = (x0 + CS).min(W);
+                let x0 = cx * SC;
                 if ltr {
-                    for x in x0..x1 {
+                    for x in x0..x0 + SC {
                         self.update_cell(x as i32, y as i32);
                     }
                 } else {
-                    for x in (x0..x1).rev() {
+                    for x in (x0..x0 + SC).rev() {
                         self.update_cell(x as i32, y as i32);
                     }
                 }
             }
         }
+        self.random_ticks(500);
     }
 
     #[inline]
     fn update_cell(&mut self, x: i32, y: i32) {
-        let i = Self::idx(x, y);
+        let i = Self::li(x, y);
         let c = self.cells[i];
-        if c.mat == Material::Empty || c.clock == self.clock {
+        if c.mat == M::Empty || c.clock == self.clock {
             return;
         }
         match c.mat.kind() {
             Kind::Empty | Kind::Static => {}
-            Kind::Powder => self.update_powder(x, y, c),
-            Kind::Liquid => {
-                if c.mat == Material::Acid && self.update_acid(x, y) {
+            Kind::Powder => {
+                if c.mat == M::Seed && self.update_seed(x, y) {
                     return;
+                }
+                self.update_powder(x, y, c);
+            }
+            Kind::Liquid => {
+                match c.mat {
+                    M::Acid => {
+                        if self.update_acid(x, y) {
+                            return;
+                        }
+                    }
+                    M::Lava => {
+                        if self.update_lava(x, y) || !self.rng.chance(0.4) {
+                            return;
+                        }
+                    }
+                    _ => {}
                 }
                 let c = self.cells[i];
                 self.update_liquid(x, y, c);
             }
-            Kind::Gas => self.update_smoke(x, y, c),
+            Kind::Gas => self.update_gas(x, y, c),
             Kind::Fire => self.update_fire(x, y, c),
+            Kind::Life => self.update_sprout(x, y, c),
         }
     }
 
-    /// Can a cell of density `d` move into (x, y)?
     #[inline]
     fn can_enter(&mut self, x: i32, y: i32, d: u8) -> bool {
-        if !Self::in_bounds(x, y) {
+        if !Self::inb(x, y) {
             return false;
         }
-        let m = self.cells[Self::idx(x, y)].mat;
+        let m = self.cells[Self::li(x, y)].mat;
         match m.kind() {
             Kind::Empty | Kind::Gas | Kind::Fire => true,
             Kind::Liquid => m.density() < d && self.rng.chance(0.35),
@@ -206,7 +423,6 @@ impl World {
         }
     }
 
-    /// Accelerating fall. Returns true if the cell moved.
     fn fall(&mut self, x: i32, y: i32, c: Cell, d: u8) -> bool {
         let vel = (c.vel as i32 + 1).min(20);
         let steps = 1 + vel / 5;
@@ -220,10 +436,10 @@ impl World {
             }
         }
         if cy != y {
-            self.cells[Self::idx(x, cy)].vel = vel as u8;
+            self.cells[Self::li(x, cy)].vel = vel as u8;
             true
         } else {
-            self.cells[Self::idx(x, y)].vel = 0;
+            self.cells[Self::li(x, y)].vel = 0;
             false
         }
     }
@@ -244,10 +460,73 @@ impl World {
         }
     }
 
+    /// Seeds sprout when resting on soil. Returns true if it sprouted.
+    fn update_seed(&mut self, x: i32, y: i32) -> bool {
+        let below = self.lm(x, y + 1);
+        if matches!(below, M::Dirt | M::Grass) {
+            self.wake(x, y);
+            if self.lm(x, y - 1) == M::Empty && self.rng.chance(0.04) {
+                let s = Cell::new(M::Sprout, &mut self.rng);
+                self.lset(x, y, s);
+                return true;
+            }
+        }
+        false
+    }
+
+    fn update_sprout(&mut self, x: i32, y: i32, c: Cell) {
+        self.wake(x, y);
+        if !self.rng.chance(0.15) {
+            return;
+        }
+        if c.life == 0 {
+            // Bloom: a little crown of leaves.
+            for dy in -2i32..=1 {
+                for dx in -2i32..=2 {
+                    if dx * dx + dy * dy <= 5 && self.lm(x + dx, y + dy) == M::Empty && self.rng.chance(0.8) {
+                        let l = Cell::new(M::Leaves, &mut self.rng);
+                        self.lset(x + dx, y + dy, l);
+                    }
+                }
+            }
+            let p = Cell::new(M::Plant, &mut self.rng);
+            self.lset(x, y, p);
+            return;
+        }
+        let r = self.rng.f32();
+        let dx = if r < 0.6 { 0 } else if r < 0.8 { -1 } else { 1 };
+        if self.lm(x + dx, y - 1) == M::Empty {
+            let mut stem = Cell::new(M::Plant, &mut self.rng);
+            stem.shade = c.shade;
+            self.lset(x, y, stem);
+            let mut tip = c;
+            tip.life = c.life - 1;
+            tip.temp = 0;
+            self.lset(x + dx, y - 1, tip);
+            if c.life > 6 && self.rng.chance(0.1) {
+                let side = self.rng.sign();
+                if self.lm(x + side, y - 1) == M::Empty && side != dx {
+                    let mut b = c;
+                    b.life = c.life / 2;
+                    b.temp = 0;
+                    self.lset(x + side, y - 1, b);
+                }
+            }
+        } else {
+            let t = c.temp.saturating_add(1);
+            if t > 30 {
+                let p = Cell::new(M::Plant, &mut self.rng);
+                self.lset(x, y, p);
+            } else {
+                self.cells[Self::li(x, y)].temp = t;
+            }
+        }
+    }
+
     fn update_liquid(&mut self, x: i32, y: i32, c: Cell) {
         let d = c.mat.density();
         if c.temp > 0 {
-            self.cells[Self::idx(x, y)].temp = c.temp.saturating_sub(1);
+            self.cells[Self::li(x, y)].temp = c.temp.saturating_sub(1);
         }
         if self.fall(x, y, c, d) {
             return;
@@ -259,21 +538,20 @@ impl World {
                 return;
             }
         }
-        // Spread sideways, stopping early at a drop so it pours over ledges.
         let disp = c.mat.dispersion();
         for dx in [dir, -dir] {
             let mut tx = x;
             for s in 1..=disp {
                 let nx = x + dx * s;
-                if !Self::in_bounds(nx, y) {
+                if !Self::inb(nx, y) {
                     break;
                 }
-                let k = self.cells[Self::idx(nx, y)].mat.kind();
+                let k = self.cells[Self::li(nx, y)].mat.kind();
                 if k != Kind::Empty && k != Kind::Gas {
                     break;
                 }
                 tx = nx;
-                if self.mat(nx, y + 1) == Material::Empty {
+                if self.lm(nx, y + 1) == M::Empty {
                     break;
                 }
             }
@@ -284,37 +562,37 @@ impl World {
         }
     }
 
-    fn update_smoke(&mut self, x: i32, y: i32, c: Cell) {
-        let decay = if y < 2 {
-            4
-        } else if self.rng.chance(0.6) {
-            1
-        } else {
-            0
-        };
+    fn update_gas(&mut self, x: i32, y: i32, c: Cell) {
+        let steam = c.mat == M::Steam;
+        let decay = if self.rng.chance(if steam { 0.8 } else { 0.6 }) { 1 } else { 0 };
         let life = c.life.saturating_sub(decay);
         if life == 0 {
-            self.set(x, y, Cell::EMPTY);
+            if steam && self.rng.chance(0.25) {
+                let w = Cell::new(M::Water, &mut self.rng);
+                self.lset(x, y, w);
+            } else {
+                self.lset(x, y, Cell::EMPTY);
+            }
             return;
         }
-        self.cells[Self::idx(x, y)].life = life;
+        self.cells[Self::li(x, y)].life = life;
         self.wake(x, y);
 
-        if self.rng.chance(0.75) {
-            let up = self.mat(x, y - 1);
-            if up == Material::Empty || (up.kind() == Kind::Liquid && self.rng.chance(0.3)) {
+        if self.rng.chance(if steam { 0.9 } else { 0.75 }) {
+            let up = self.lm(x, y - 1);
+            if up == M::Empty || (up.kind() == Kind::Liquid && self.rng.chance(0.3)) {
                 self.swap(x, y, x, y - 1);
                 return;
             }
         }
         let dir = self.rng.sign();
         for dx in [dir, -dir] {
-            if self.mat(x + dx, y - 1) == Material::Empty {
+            if self.lm(x + dx, y - 1) == M::Empty {
                 self.swap(x, y, x + dx, y - 1);
                 return;
             }
         }
-        if self.rng.chance(0.5) && self.mat(x + dir, y) == Material::Empty {
+        if self.rng.chance(0.5) && self.lm(x + dir, y) == M::Empty {
             self.swap(x, y, x + dir, y);
         }
     }
@@ -322,41 +600,48 @@ impl World {
     fn update_fire(&mut self, x: i32, y: i32, c: Cell) {
         self.fire_count += 1;
         self.wake(x, y);
-        let fuel = c.temp > 200;
+        let falls = c.temp == FIRE_FLOWING;
+        let fuel = c.temp >= FIRE_FUEL;
 
-        // Water puts fire out, sometimes boiling off as steam.
         for (dx, dy) in N4 {
-            // Burning oil floats on water, so water below it doesn't douse it.
-            if fuel && dy == 1 {
-                continue;
+            if falls && dy == 1 {
+                continue; // burning oil floats on water
             }
-            if self.mat(x + dx, y + dy) == Material::Water && self.rng.chance(if fuel { 0.3 } else { 0.8 }) {
-                let s = Cell::smoke(&mut self.rng, 30, 70);
-                self.set(x, y, s);
-                if self.rng.chance(0.12) {
-                    let s = Cell::smoke(&mut self.rng, 30, 70);
-                    self.set(x + dx, y + dy, s);
+            if self.lm(x + dx, y + dy) == M::Water && self.rng.chance(if fuel { 0.3 } else { 0.8 }) {
+                let s = Cell::gas(M::Steam, &mut self.rng, 30, 70);
+                self.lset(x, y, s);
+                if self.rng.chance(0.15) {
+                    let s = Cell::gas(M::Steam, &mut self.rng, 30, 70);
+                    self.lset(x + dx, y + dy, s);
                 }
                 return;
             }
         }
 
-        // Heat flammable neighbours; they ignite once hot enough.
-        let (heat_min, heat_max) = if fuel { (10, 45) } else { (25, 70) };
+        let (hmin, hmax) = if fuel { (10, 45) } else { (25, 70) };
         for (dx, dy) in N8 {
             let (nx, ny) = (x + dx, y + dy);
-            if !Self::in_bounds(nx, ny) {
+            if !Self::inb(nx, ny) {
                 continue;
             }
-            let ni = Self::idx(nx, ny);
-            if self.cells[ni].mat.flammable() {
-                let h = self.rng.range(heat_min, heat_max) as u8;
-                let t = self.cells[ni].temp.saturating_add(h);
-                if t >= 100 {
-                    let f = Cell::fire(true, &mut self.rng);
-                    self.set(nx, ny, f);
-                } else {
-                    self.cells[ni].temp = t;
+            let ni = Self::li(nx, ny);
+            let m = self.cells[ni].mat;
+            match m {
+                M::Ice | M::Snow => {
+                    if self.rng.chance(0.03) {
+                        let w = Cell::new(M::Water, &mut self.rng);
+                        self.lset(nx, ny, w);
+                    }
+                }
+                _ => {
+                    if let Some(b) = m.burn() {
+                        let t = self.cells[ni].temp.saturating_add(self.rng.range(hmin, hmax) as u8);
+                        if t >= b.ignite {
+                            self.ignite(nx, ny, m);
+                        } else {
+                            self.cells[ni].temp = t;
+                        }
+                    }
                 }
             }
         }
@@ -366,65 +651,119 @@ impl World {
             life = life.saturating_sub(1);
         }
         if life == 0 {
-            if self.rng.chance(if fuel { 0.65 } else { 0.2 }) {
-                let s = Cell::smoke(&mut self.rng, 60, 140);
-                self.set(x, y, s);
+            if self.rng.chance(if fuel { 0.6 } else { 0.2 }) {
+                let s = Cell::gas(M::Smoke, &mut self.rng, 60, 140);
+                self.lset(x, y, s);
             } else {
-                self.set(x, y, Cell::EMPTY);
+                self.lset(x, y, Cell::EMPTY);
             }
             return;
         }
-        self.cells[Self::idx(x, y)].life = life;
+        self.cells[Self::li(x, y)].life = life;
 
         if fuel {
-            // Burning oil throws up flames and lots of smoke.
-            if self.mat(x, y - 1) == Material::Empty {
+            if self.lm(x, y - 1) == M::Empty {
                 let r = self.rng.f32();
-                if r < 0.2 {
-                    let s = Cell::smoke(&mut self.rng, 90, 180);
-                    self.set(x, y - 1, s);
-                } else if r < 0.5 {
-                    let f = Cell::fire(false, &mut self.rng);
-                    self.set(x, y - 1, f);
+                if r < 0.15 {
+                    let s = Cell::gas(M::Smoke, &mut self.rng, 80, 160);
+                    self.lset(x, y - 1, s);
+                } else if r < 0.45 {
+                    let f = Cell::fire(&mut self.rng);
+                    self.lset(x, y - 1, f);
                 }
             }
-            let below = self.mat(x, y + 1);
-            if below == Material::Empty || below.kind() == Kind::Gas {
-                self.swap(x, y, x, y + 1);
+            if falls {
+                let below = self.lm(x, y + 1);
+                if below == M::Empty || below.kind() == Kind::Gas {
+                    self.swap(x, y, x, y + 1);
+                }
             }
         } else if self.rng.chance(0.55) {
             let dx = self.rng.range(-1, 2);
-            if self.mat(x + dx, y - 1) == Material::Empty {
+            if self.lm(x + dx, y - 1) == M::Empty {
                 self.swap(x, y, x + dx, y - 1);
             }
         }
     }
 
+    /// Lava heats, ignites, melts and is quenched by water. Returns true if it solidified.
+    fn update_lava(&mut self, x: i32, y: i32) -> bool {
+        let mut busy = false;
+        for (dx, dy) in N8 {
+            let (nx, ny) = (x + dx, y + dy);
+            if !Self::inb(nx, ny) {
+                continue;
+            }
+            let ni = Self::li(nx, ny);
+            let m = self.cells[ni].mat;
+            match m {
+                M::Water => {
+                    let s = Cell::gas(M::Steam, &mut self.rng, 40, 90);
+                    self.lset(nx, ny, s);
+                    if self.rng.chance(0.5) {
+                        let b = Cell::new(M::Basalt, &mut self.rng);
+                        self.lset(x, y, b);
+                        return true;
+                    }
+                }
+                M::Ice | M::Snow => {
+                    let w = Cell::new(M::Water, &mut self.rng);
+                    self.lset(nx, ny, w);
+                }
+                M::Sand => {
+                    busy = true;
+                    if self.rng.chance(0.004) {
+                        let g = Cell::new(M::Glass, &mut self.rng);
+                        self.lset(nx, ny, g);
+                    }
+                }
+                _ => {
+                    if let Some(b) = m.burn() {
+                        busy = true;
+                        let t = self.cells[ni].temp.saturating_add(self.rng.range(30, 80) as u8);
+                        if t >= b.ignite {
+                            self.ignite(nx, ny, m);
+                        } else {
+                            self.cells[ni].temp = t;
+                        }
+                    }
+                }
+            }
+        }
+        if busy {
+            self.wake(x, y);
+        }
+        if self.rng.chance(0.002) && self.lm(x, y - 1) == M::Empty {
+            let f = Cell::fire(&mut self.rng);
+            self.lset(x, y - 1, f);
+        }
+        false
+    }
+
     /// Returns true if the acid cell was used up.
     fn update_acid(&mut self, x: i32, y: i32) -> bool {
-        let i = Self::idx(x, y);
+        let i = Self::li(x, y);
         let mut found = false;
         for (dx, dy) in N4 {
             let (nx, ny) = (x + dx, y + dy);
-            if !Self::in_bounds(nx, ny) || !self.cells[Self::idx(nx, ny)].mat.dissolvable() {
+            if !Self::inb(nx, ny) {
+                continue;
+            }
+            let rate = self.cells[Self::li(nx, ny)].mat.acid_rate();
+            if rate <= 0.0 {
                 continue;
             }
             found = true;
-            if self.rng.chance(0.025) {
+            if self.rng.chance(0.025 * rate) {
                 if self.rng.chance(0.3) {
-                    let s = Cell::smoke(&mut self.rng, 20, 50);
-                    self.set(nx, ny, s);
+                    let s = Cell::gas(M::Smoke, &mut self.rng, 20, 50);
+                    self.lset(nx, ny, s);
                 } else {
-                    self.set(nx, ny, Cell::EMPTY);
+                    self.lset(nx, ny, Cell::EMPTY);
                 }
                 let life = self.cells[i].life.saturating_sub(1);
                 if life == 0 {
-                    if self.rng.chance(0.4) {
-                        let s = Cell::smoke(&mut self.rng, 20, 50);
-                        self.set(x, y, s);
-                    } else {
-                        self.set(x, y, Cell::EMPTY);
-                    }
+                    self.lset(x, y, Cell::EMPTY);
                     return true;
                 }
                 self.cells[i].life = life;
@@ -437,62 +776,33 @@ impl World {
         false
     }
 
-    /// Write every cell's colour into an RGBA8 buffer of W*H pixels.
-    pub fn render(&self, px: &mut [u8]) {
-        let frame = self.frame;
-        for y in 0..H {
-            for x in 0..W {
-                let i = y * W + x;
-                let c = self.cells[i];
-                let rgb = match c.mat {
-                    Material::Empty => self.bg[i],
-                    Material::Smoke => {
-                        let a = (c.life as f32 / 90.0).min(1.0) * 0.85;
-                        lerp3(self.bg[i], Material::Smoke.base_color(), a)
+    /// Slow background processes on random cells, like Minecraft's random ticks.
+    fn random_ticks(&mut self, n: usize) {
+        for _ in 0..n {
+            let x = self.rng.range(0, WW as i32);
+            let y = self.rng.range(1, WH as i32 - 1);
+            let c = self.cells[Self::li(x, y)];
+            match c.mat {
+                M::Dirt => {
+                    if self.lm(x, y - 1) == M::Empty
+                        && [(-1, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (1, 1)]
+                            .iter()
+                            .any(|(dx, dy)| self.lm(x + dx, y + dy) == M::Grass)
+                    {
+                        let mut g = Cell::new(M::Grass, &mut self.rng);
+                        g.shade = c.shade;
+                        self.lset(x, y, g);
                     }
-                    Material::Fire => {
-                        let h = hash3(x as i32, y as i32, (frame / 2) as u32 ^ ((c.life as u32) << 8));
-                        let heat = if c.temp > 200 { 0.3 } else { 0.0 }
-                            + (c.life as f32 / 25.0).min(1.0) * 0.35;
-                        let v = (h & 255) as f32 / 255.0 * 0.6 + heat;
-                        FIRE_PAL[((v * 5.0) as usize).min(4)]
+                }
+                M::Grass => {
+                    if self.lm(x, y - 1).solid() {
+                        let mut d = Cell::new(M::Dirt, &mut self.rng);
+                        d.shade = c.shade;
+                        self.lset(x, y, d);
                     }
-                    Material::Water => {
-                        let tw = (hash3(x as i32, y as i32, (frame / 8) as u32) & 15) as u8;
-                        shade(c.mat.base_color(), c.shade.saturating_add(tw), c.mat.variation())
-                    }
-                    Material::Oil if c.temp > 20 => {
-                        let base = lerp3(c.mat.base_color(), [150, 60, 30], c.temp as f32 / 120.0);
-                        shade(base, c.shade, c.mat.variation())
-                    }
-                    m => shade(m.base_color(), c.shade, m.variation()),
-                };
-                let o = i * 4;
-                px[o] = rgb[0];
-                px[o + 1] = rgb[1];
-                px[o + 2] = rgb[2];
-                px[o + 3] = 255;
+                }
+                _ => {}
             }
         }
     }
-}
-
-#[inline]
-pub fn shade(base: [u8; 3], s: u8, amt: f32) -> [u8; 3] {
-    let f = 1.0 + (s as f32 / 255.0 - 0.5) * amt;
-    [
-        (base[0] as f32 * f).min(255.0) as u8,
-        (base[1] as f32 * f).min(255.0) as u8,
-        (base[2] as f32 * f).min(255.0) as u8,
-    ]
-}
-
-#[inline]
-pub fn lerp3(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
-    let t = t.clamp(0.0, 1.0);
-    [
-        (a[0] as f32 + (b[0] as f32 - a[0] as f32) * t) as u8,
-        (a[1] as f32 + (b[1] as f32 - a[1] as f32) * t) as u8,
-        (a[2] as f32 + (b[2] as f32 - a[2] as f32) * t) as u8,
-    ]
 }
