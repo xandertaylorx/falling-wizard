@@ -167,6 +167,8 @@ struct App {
     fps: f32,
     shake_rng: Rng,
     menu_x: f32,
+    /// Esc pressed this frame and not yet handled (so one press can't open and close a menu).
+    esc: bool,
 }
 
 async fn run(args: Vec<String>) {
@@ -194,6 +196,7 @@ async fn run(args: Vec<String>) {
         fps: 60.0,
         shake_rng: Rng::new(99),
         menu_x: 0.0,
+        esc: false,
     };
 
     let t0 = get_time();
@@ -324,7 +327,12 @@ fn script_controls(app: &mut App, t: f64, secs: f64) -> Controls {
 }
 
 impl App {
+    fn take_esc(&mut self) -> bool {
+        std::mem::take(&mut self.esc)
+    }
+
     fn frame(&mut self, dt: f32, script: Option<Controls>) {
+        self.esc = is_key_pressed(KeyCode::Escape);
         let (sw, sh) = (screen_width(), screen_height());
         if let Some(a) = &mut self.audio {
             a.master = self.settings.master;
@@ -344,7 +352,7 @@ impl App {
                 if self.game.player.dead() {
                     self.screen = Screen::Dead;
                 }
-                if is_key_pressed(KeyCode::Escape) {
+                if self.take_esc() {
                     self.screen = Screen::Pause;
                 }
             }
@@ -547,7 +555,7 @@ impl App {
         self.title("PAUSED", sh * 0.24, 6.0, TEXT);
         let mut y = sh * 0.44;
         let w = 260.0;
-        if self.ui.button("RESUME", cx, y, w) || is_key_pressed(KeyCode::Escape) {
+        if self.ui.button("RESUME", cx, y, w) || self.take_esc() {
             self.screen = Screen::Play;
         }
         y += 42.0;
@@ -595,7 +603,7 @@ impl App {
         }
         self.settings = s;
         y += 70.0;
-        if self.ui.button("BACK", cx, y, 260.0) || is_key_pressed(KeyCode::Escape) {
+        if self.ui.button("BACK", cx, y, 260.0) || self.take_esc() {
             self.settings.save();
             self.screen = self.back;
         }
@@ -626,7 +634,7 @@ impl App {
             self.ui.text_right(a, x + w, y, 2.0, TEXT);
             y += 32.0;
         }
-        if self.ui.button("BACK", cx, y + 30.0, 260.0) || is_key_pressed(KeyCode::Escape) {
+        if self.ui.button("BACK", cx, y + 30.0, 260.0) || self.take_esc() {
             self.screen = self.back;
         }
     }
