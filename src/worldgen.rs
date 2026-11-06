@@ -99,7 +99,11 @@ impl Generator {
             }
         }
         self.stamp_pools(cx, cy, &mut cells, &mut rng);
+        self.stamp_ruins(cx, cy, &mut cells, &mut rng);
         self.stamp_trees(cx, cy, &mut cells, &mut rng);
+        if y0 < -100 {
+            self.stamp_sky(cx, cy, &mut cells, &mut rng);
+        }
         (cells, wall)
     }
 
@@ -133,6 +137,9 @@ impl Generator {
             open = fbm(fx * 0.007, fy * 0.012, 3, s.wrapping_add(3)) > 0.62;
         }
         if open {
+            if d > 60 && d < 280 && fbm(fx * 0.02, fy * 0.03, 2, s.wrapping_add(20)) > 0.69 {
+                return (M::Gas, wall, None);
+            }
             return (M::Empty, wall, None);
         }
 
@@ -147,6 +154,9 @@ impl Generator {
                 }
             }
             Biome::Desert => {
+                if d > 1 && d < 14 && fbm(fx * 0.04, fy * 0.08, 2, s.wrapping_add(21)) > 0.64 {
+                    return (M::Quicksand, wall, None);
+                }
                 if d < topsoil * 3 {
                     return (M::Sand, wall, None);
                 }
@@ -170,6 +180,9 @@ impl Generator {
         }
         if fbm(fx * 0.05, fy * 0.05, 2, s.wrapping_add(4)) > 0.71 {
             return (M::Sand, wall, None);
+        }
+        if d > 20 && d < 260 && fbm(fx * 0.06, fy * 0.09, 2, s.wrapping_add(22)) > 0.72 {
+            return (M::Gravel, wall, None);
         }
         if d > 15 && value_noise(fx * 0.13, fy * 0.13, s.wrapping_add(7)) > 0.87 {
             return (M::Coal, wall, None);
@@ -258,6 +271,150 @@ impl Generator {
                     let mut c = Cell::new(shell, rng);
                     c.shade = 50 + (rng.f32() * 60.0) as u8;
                     cells[i] = c;
+                }
+            }
+        }
+    }
+
+    /// Small brick ruins underground holding a chest or a wand altar.
+    fn stamp_ruins(&self, cx: i32, cy: i32, cells: &mut [Cell], rng: &mut Rng) {
+        const RG: i32 = 130;
+        let (x0, y0) = (cx * CHUNK, cy * CHUNK);
+        for gy in (y0 - 20).div_euclid(RG)..=(y0 + CHUNK + 20).div_euclid(RG) {
+            for gx in (x0 - 30).div_euclid(RG)..=(x0 + CHUNK + 30).div_euclid(RG) {
+                let h = hash3(gx, gy, self.s ^ 0x7777);
+                if h % 100 >= 50 {
+                    continue;
+                }
+                let rx = gx * RG + 20 + (h >> 8) as i32 % (RG - 40);
+                let ry = gy * RG + 20 + (h >> 16) as i32 % (RG - 40);
+                if ry - self.surface(rx) < 22 {
+                    continue;
+                }
+                let (w, hgt) = (14 + (h >> 4) as i32 % 8, 8);
+                let altar = (h >> 24) % 4 == 0;
+                for y in ry - hgt..=ry {
+                    for x in rx - w / 2..=rx + w / 2 {
+                        if x < x0 || y < y0 || x >= x0 + CHUNK || y >= y0 + CHUNK {
+                            continue;
+                        }
+                        let i = ((y - y0) as usize) * CU + (x - x0) as usize;
+                        let edge = y == ry - hgt || y == ry || x == rx - w / 2 || x == rx + w / 2;
+                        let door = (x == rx - w / 2 || x == rx + w / 2) && y > ry - 4 && y < ry;
+                        let item = if altar { (x - rx).abs() <= 1 && y >= ry - 4 && y < ry } else { (x - rx).abs() <= 2 && y >= ry - 3 && y < ry };
+                        let m = if item {
+                            if altar { M::Altar } else { M::Chest }
+                        } else if edge && !door {
+                            M::Brick
+                        } else {
+                            M::Empty
+                        };
+                        let mut c = Cell::new(m, rng);
+                        if m == M::Brick {
+                            c.shade = if (y + (x / 3) * 2) % 3 == 0 { 70 } else { 150 + (hash3(x, y, 9) % 60) as u8 };
+                        }
+                        if m == M::Chest {
+                            c.shade = if y == ry - 2 || (x - rx).abs() == 2 { 60 } else { 170 };
+                        }
+                        cells[i] = c;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Clouds and floating islands; the higher you go, the stranger they get.
+    fn stamp_sky(&self, cx: i32, cy: i32, cells: &mut [Cell], rng: &mut Rng) {
+        let (x0, y0) = (cx * CHUNK, cy * CHUNK);
+        let put = |x: i32, y: i32, m: M, shade: Option<u8>, cells: &mut [Cell], rng: &mut Rng| {
+            if x < x0 || y < y0 || x >= x0 + CHUNK || y >= y0 + CHUNK {
+                return;
+            }
+            let i = ((y - y0) as usize) * CU + (x - x0) as usize;
+            if cells[i].mat == M::Empty || m != M::Empty {
+                let mut c = Cell::new(m, rng);
+                if let Some(s) = shade {
+                    c.shade = s;
+                }
+                cells[i] = c;
+            }
+        };
+        // Cloud platforms.
+        const CG: i32 = 90;
+        for gy in (y0 - 10).div_euclid(CG)..=(y0 + CHUNK + 10).div_euclid(CG) {
+            for gx in (x0 - 30).div_euclid(CG)..=(x0 + CHUNK + 30).div_euclid(CG) {
+                let h = hash3(gx, gy, self.s ^ 0xC10D);
+                let (bx, by) = (gx * CG + (h % CG as u32) as i32, gy * CG + ((h >> 8) % CG as u32) as i32);
+                if by > self.surface(bx) - 110 || by < -520 || h >> 28 < 7 {
+                    continue;
+                }
+                let (rx, ry) = (10 + (h >> 16) as i32 % 14, 3 + (h >> 20) as i32 % 3);
+                for y in by - ry..=by + ry {
+                    for x in bx - rx..=bx + rx {
+                        let e = ((x - bx) as f32 / rx as f32).powi(2) + ((y - by) as f32 / ry as f32).powi(2);
+                        if e < 1.0 - value_noise(x as f32 * 0.3, y as f32 * 0.3, 5) * 0.4 {
+                            put(x, y, M::Cloud, None, cells, rng);
+                        }
+                    }
+                }
+            }
+        }
+        // Floating islands.
+        const IG: i32 = 150;
+        for gy in (y0 - 40).div_euclid(IG)..=(y0 + CHUNK + 40).div_euclid(IG) {
+            for gx in (x0 - 50).div_euclid(IG)..=(x0 + CHUNK + 50).div_euclid(IG) {
+                let h = hash3(gx, gy, self.s ^ 0x15EE);
+                let (ix, iy) = (gx * IG + 30 + (h % (IG as u32 - 60)) as i32, gy * IG + ((h >> 8) % (IG as u32 - 40)) as i32);
+                if iy > -260 || h >> 29 < 2 {
+                    continue;
+                }
+                let astral = iy < -520;
+                let (rx, depth) = (16 + (h >> 16) as i32 % 26, 10 + (h >> 22) as i32 % 16);
+                for x in ix - rx..=ix + rx {
+                    let t = ((x - ix) as f32 / rx as f32).abs();
+                    let top = iy - (value_noise(x as f32 * 0.15, 1.0, h) * 3.0) as i32;
+                    let bottom = iy + ((1.0 - t * t).max(0.0).powf(0.7) * depth as f32) as i32 - (value_noise(x as f32 * 0.4, 2.0, h) * 4.0) as i32;
+                    for y in top..=bottom {
+                        let k = y - top;
+                        let m = if astral {
+                            if k == 0 {
+                                M::AlienGrass
+                            } else if value_noise(x as f32 * 0.25, y as f32 * 0.25, h ^ 3) > 0.78 {
+                                M::Crystal
+                            } else {
+                                M::MoonRock
+                            }
+                        } else if k == 0 {
+                            M::Grass
+                        } else if k < 4 {
+                            M::Dirt
+                        } else {
+                            M::Stone
+                        };
+                        put(x, y, m, None, cells, rng);
+                    }
+                    let deco = hash3(x, top, h);
+                    if astral {
+                        if deco % 5 == 0 {
+                            for k in 1..=(1 + deco as i32 % 3) {
+                                put(x, top - k, M::Mushroom, None, cells, rng);
+                            }
+                        } else if deco % 11 == 0 {
+                            for k in 1..=(3 + deco as i32 % 5) {
+                                put(x, top - k, M::Crystal, None, cells, rng);
+                            }
+                        }
+                    } else if deco % 3 == 0 {
+                        put(x, top - 1, M::Plant, None, cells, rng);
+                    }
+                }
+                // A ruin with a chest on some islands.
+                if h % 3 == 0 {
+                    for x in ix - 2..=ix + 2 {
+                        for y in iy - 4..iy {
+                            put(x, y, M::Chest, Some(if y == iy - 2 || (x - ix).abs() == 2 { 60 } else { 170 }), cells, rng);
+                        }
+                    }
                 }
             }
         }

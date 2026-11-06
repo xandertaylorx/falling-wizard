@@ -1,7 +1,7 @@
 # Falling Wizard
 
-A Noita-style falling-sand game in Rust and [macroquad](https://github.com/not-fl3/macroquad), set in an infinite, procedurally generated world in the spirit of Terraria and Minecraft.
-There are no asset files: every pixel comes from the simulation, the font is drawn in code, and every sound is synthesised at startup.
+A creative, Noita-style falling-sand sandbox in Rust and [macroquad](https://github.com/not-fl3/macroquad), set in an infinite, procedurally generated world in the spirit of Terraria and Minecraft.
+There are no asset files: every pixel is simulated or drawn in code, the font is hand-made in code, and every sound is synthesised at startup.
 
 ```
 cargo run --release
@@ -9,61 +9,63 @@ cargo run --release
 
 ## The world
 
-- **Infinite** in every direction. It is generated chunk by chunk (64×64 cells) as you explore. Chunks you changed are kept; untouched ones are regenerated identically from the seed.
-- **Biomes:** forest (grass, oaks, flowers), desert (dunes, cacti) and tundra (snow, pines, ice, mountains).
-- **Layers:** topsoil, then stone with caves that widen with depth, then basalt and huge caverns with lava lakes. It gets darker as you go down.
-- **Underground:** coal, gold, sand and dirt pockets, gunpowder seams, water pools, sealed oil and gunpowder pockets, and acid pools.
+- **Infinite** in every direction, generated chunk by chunk as you explore.
+- **Surface biomes:** forest (grass, oaks, flowers), desert (dunes, cacti, quicksand) and tundra (snow, pines, ice, mountains).
+- **Going down:** caves that widen with depth, gravel that caves in, pockets of flammable gas, ruins holding chests and wand altars, and finally basalt caverns with lava lakes.
+- **Going up:** cloud platforms and grassy sky isles. Higher still, the sky fades into starry space with a ringed planet, and floating astral islands of moon rock, glowing crystals and glowshrooms.
+- **Weather:** a day/night cycle, rain that puts out fires and fills pools, and lightning storms that set trees alight.
 
-## Materials
+## Creatures
 
-Sand, dirt, grass (spreads over exposed dirt), snow, ice, glass, wood, leaves, plants, seeds (grow into plants on soil), coal, gold, water, oil, acid, lava, fire, smoke, steam (condenses back to rain) and gunpowder (chain-explodes).
-Lava ignites flammables, boils water into steam and cools into basalt, melts ice and turns sand into glass. Acid eats almost everything except glass.
+22 creatures, each drawn in code with its own behaviour, spawning by biome, depth, altitude and time of day:
+zombies, skeletons (throw bones), slimes, demon eyes that watch you, bats, fire imps, lions and tigers (they pounce), scorpions, snow wolves, yetis (throw snowballs), stone golems, lava salamanders, the burrowing Devourer worm, dragons that breathe fire, ghosts that pass through walls, star jellies, moon hoppers, void eyes, wisps, cloud sprites and mushlings.
+They burst into blood, goo, bones or rubble, and drop gold.
 
-## Spells
+## Wands and spells
 
-| Key | Spell | Notes |
-|---|---|---|
-| 1 | Spark Bolt | fast, small explosion |
-| 2 | Fireball | arcing, sets everything alight |
-| 3 | Bomb | bounces, big blast after a short fuse |
-| 4 | Digging Beam | hold to bore through rock (collects gold) |
-| 5 | Torrent | hold to spray water |
-| 6 | Frost | freezes water, turns lava to basalt, puts out fire |
-| 7 | Teleport | blink to where the bolt lands |
-| 8 | Seeds of Life | scatter seeds that grow into plants |
+Spells are cards you slot into wands (Tab opens the editor). Casting walks the wand left to right: modifiers stack onto the next spell.
 
-Spells cost mana, which regenerates. Your own explosions can hurt you. Fire, lava, acid and long falls all do damage.
+- **Spells:** Spark Bolt, Fireball, Bomb, Frost, Teleport, Acid Ball, Lightning, Digging Bolt, Digging Beam, Torrent, Seeds of Life.
+- **Modifiers:** Triple Cast, Bouncing, Homing, Heavy, Speed Up, Fire Trail, and **Trigger**: the spell carries the *next* spell and releases it where it lands. Trigger + Triple + Spark + Lightning sends lightning bolts out from wherever the sparks hit.
+
+Find more cards in chests (deeper and higher means rarer). Altars cost gold and add a wand slot; they also set your respawn point.
+
+## Movement
+
+Run, jump, wall-slide and wall-jump, fly while holding jump, dash (Shift), glide (S), and swing on a grappling vine (F).
+
+This is a creative game: there's no fall damage and no hunger. You can only be hurt by fire, lava, acid, explosions and creatures, and respawning is instant.
 
 ## Controls
 
 | Input | Action |
 |---|---|
-| A / D or arrows | Move |
-| W / Space | Jump; hold in the air to fly (flight refills on the ground) |
-| Left mouse | Cast the selected spell |
+| A / D | Move |
+| W / Space | Jump, wall-jump, hold to fly |
+| S | Glide |
+| Shift | Dash |
+| F | Grappling vine (press again to let go) |
+| Left mouse | Cast the current wand |
 | Right mouse | Dig |
-| 1–8, mouse wheel, Q / E | Choose a spell |
-| Tab | Sandbox mode: LMB paints, RMB erases, wheel sets brush size, 1–0 or Q/E choose material |
-| Esc | Pause (settings, controls, main menu) |
+| 1–4 / mouse wheel | Choose a wand |
+| Tab | Wand & spell editor |
+| E | Open chest / use altar |
+| B | Sandbox brush (paint any material; wheel = size, 1–0 / Z X = material) |
+| Esc | Pause, settings, controls |
 | F11 | Fullscreen |
 
-Settings (master/effects/ambience volume, screen shake, FPS counter, fullscreen) are saved to `~/.falling_wizard.cfg`.
+Settings (volumes, screen shake, FPS counter, fullscreen, lighting quality) are saved to `~/.falling_wizard.cfg`.
+
+## Rendering
+
+The CPU writes a colour image and a light image (emission + opacity) for the screen. On the GPU, a ray-marching pass casts rays from every cell through the light image, so sky light pours into cave mouths, lava and crystals light their surroundings, and terrain casts real shadows. A blur pass smooths it, and a composite pass adds the wizard's light, bloom, tone mapping and a vignette.
 
 ## Layout
 
-- `world.rs`: streaming chunk window, sleeping 16×16 sim chunks, all material rules
-- `worldgen.rs`: biomes, terrain layers, caves, ores, pools and trees
-- `materials.rs` and `cell.rs`: material properties and the per-cell state
-- `player.rs`: wizard physics, health, mana, flight
-- `spells.rs`: projectiles, beam and sprays
-- `fx.rs`: particles, explosions, freezing, digging
-- `render.rs`: camera view, sky with parallax mountains and clouds, light map and glow
-- `ui.rs`: pixel font, widgets, HUD
-- `audio.rs`: synthesised effects and ambience loops with volume channels
-- `settings.rs`, `game.rs`, `main.rs`: settings, game state, screens and input
+`world.rs` (streaming + simulation), `worldgen.rs` (biomes, layers, ruins, sky), `materials.rs`, `cell.rs`, `player.rs`, `spells.rs` (cards, wands, projectiles), `mobs.rs`, `weather.rs`, `fx.rs`, `render.rs` (lighting shaders), `ui.rs` (pixel font, HUD, wand editor), `audio.rs`, `settings.rs`, `game.rs`, `main.rs`.
 
 ## Dev tools
 
 - `cargo run --release -- --bench` runs a headless benchmark that flies across the world casting spells, plus material behaviour checks.
-- `cargo run --release -- --autotest 15 [dir]` runs a scripted, muted playthrough that prints FPS stats and optionally saves screenshots.
+- `cargo run --release -- --autotest 22 [dir]` runs a scripted, **muted** tour (surface, spells, wand editor, caves, lava, sky isles, space, night storm, another biome) that prints FPS stats and saves screenshots.
 - `--mute` starts the game without audio.

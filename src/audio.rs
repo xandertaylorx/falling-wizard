@@ -21,9 +21,13 @@ pub enum Sfx {
     Hurt,
     Click,
     Tick,
+    Hit,
+    Chime,
+    Dash,
+    Thunder,
 }
 
-const SFX_COUNT: usize = 12;
+const SFX_COUNT: usize = 16;
 
 impl Sfx {
     fn idx(self) -> usize {
@@ -44,6 +48,10 @@ impl Sfx {
             Sfx::Hurt => (0.5, 0.35),
             Sfx::Click => (0.35, 0.03),
             Sfx::Tick => (0.35, 0.06),
+            Sfx::Hit => (0.35, 0.05),
+            Sfx::Chime => (0.5, 0.2),
+            Sfx::Dash => (0.35, 0.1),
+            Sfx::Thunder => (1.0, 1.0),
         }
     }
 }
@@ -66,7 +74,7 @@ impl Audio {
     pub async fn new() -> Option<Audio> {
         let mut rng = Rng::new(7);
         let synths: [fn(&mut Rng) -> Vec<f32>; SFX_COUNT] =
-            [whoosh, fireball, throw, boom, pop, zap, freeze, splash, dig, hurt, click, tick];
+            [whoosh, fireball, throw, boom, pop, zap, freeze, splash, dig, hurt, click, tick, hit, chime, dash, thunder];
         let mut sounds = Vec::new();
         for f in synths {
             sounds.push(load_sound_from_bytes(&wav(&f(&mut rng))).await.ok()?);
@@ -292,6 +300,51 @@ fn tick(_: &mut Rng) -> Vec<f32> {
         .map(|i| {
             let t = i as f32 / RATE as f32;
             (TAU * 320.0 * t).sin() * (-t * 60.0).exp() * 0.6
+        })
+        .collect()
+}
+
+fn hit(rng: &mut Rng) -> Vec<f32> {
+    let n = samples(0.08);
+    let mut l = 0.0f32;
+    (0..n)
+        .map(|i| {
+            let t = i as f32 / n as f32;
+            l += (rng.f32() * 2.0 - 1.0 - l) * lp(1800.0);
+            (l * 1.5 + (TAU * 180.0 * i as f32 / RATE as f32).sin() * 0.3) * (1.0 - t).powi(2)
+        })
+        .collect()
+}
+
+/// Two bright bell partials: found something.
+fn chime(_: &mut Rng) -> Vec<f32> {
+    let n = samples(0.7);
+    (0..n)
+        .map(|i| {
+            let t = i as f32 / RATE as f32;
+            let a = if t < 0.09 { 880.0 } else { 1318.5 };
+            let local = if t < 0.09 { t } else { t - 0.09 };
+            ((TAU * a * t).sin() * 0.25 + (TAU * a * 2.0 * t).sin() * 0.08) * (-local * 5.0).exp()
+        })
+        .collect()
+}
+
+fn dash(rng: &mut Rng) -> Vec<f32> {
+    noise_sweep(rng, 0.15, 1800.0, 700.0, 0.02)
+}
+
+fn thunder(rng: &mut Rng) -> Vec<f32> {
+    let n = samples(2.2);
+    let mut l = 0.0f32;
+    let mut l2 = 0.0f32;
+    (0..n)
+        .map(|i| {
+            let t = i as f32 / RATE as f32;
+            l += (rng.f32() * 2.0 - 1.0 - l) * lp(250.0);
+            l2 += (rng.f32() * 2.0 - 1.0 - l2) * lp(3000.0);
+            let crack = l2 * (-t * 14.0).exp();
+            let roll = l * 3.0 * (-t * 1.6).exp() * (1.0 + (t * 9.0).sin() * 0.4);
+            (crack + roll).tanh() * 0.9
         })
         .collect()
 }

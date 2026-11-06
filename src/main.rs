@@ -3,12 +3,14 @@ mod cell;
 mod fx;
 mod game;
 mod materials;
+mod mobs;
 mod noise;
 mod player;
 mod render;
 mod settings;
 mod spells;
 mod ui;
+mod weather;
 mod world;
 mod worldgen;
 
@@ -21,7 +23,6 @@ use noise::Rng;
 use player::Input;
 use render::{Renderer, View};
 use settings::Settings;
-use spells::SPELLS;
 use ui::{Ui, ACCENT, DANGER, MUTED, TEXT};
 
 fn conf() -> Conf {
@@ -52,6 +53,7 @@ enum Screen {
     Settings,
     Controls,
     Dead,
+    Inventory,
 }
 
 fn random_seed() -> u64 {
@@ -72,8 +74,12 @@ fn bench() {
             game.player.y += if i % 400 == 199 { 150.0 } else { -100.0 };
         }
         let aim = (px + rng.rangef(-60.0, 60.0), py + rng.rangef(-20.0, 60.0));
-        game.spell = (i / 120) % SPELLS.len();
-        let ctl = Controls { input: Input { right: i % 300 < 150, ..Default::default() }, aim, primary: i % 7 == 0, secondary: false, paint: false };
+        game.wand = (i / 120) % game.wands.len();
+        if i % 600 == 0 {
+            game.mobs.spawn(mobs::MobKind::Dragon, px + 40.0, py - 30.0);
+            game.mobs.spawn(mobs::MobKind::Zombie, px + 20.0, py - 5.0);
+        }
+        let ctl = Controls { input: Input { right: i % 300 < 150, ..Default::default() }, aim, primary: i % 7 == 0, ..Default::default() };
         let t = Instant::now();
         game.update(game::STEP, &ctl, false);
         if game.player.dead() {
@@ -84,12 +90,13 @@ fn bench() {
         worst = worst.max(ms);
         if i % 400 == 0 {
             println!(
-                "frame {i:5}: pos ({:7.0},{:5.0}) active sim chunks {:4}  fire {:5}  particles {:5}",
+                "frame {i:5}: pos ({:7.0},{:5.0}) active sim chunks {:4}  fire {:5}  particles {:5}  mobs {:3}",
                 px,
                 py,
                 game.world.active_chunks,
                 game.world.fire_count,
-                game.fx.count()
+                game.fx.count(),
+                game.mobs.list.len()
             );
         }
     }
@@ -211,6 +218,7 @@ async fn run(args: Vec<String>) {
         app.fps = app.fps * 0.95 + (1.0 / get_frame_time().max(0.0001)) * 0.05;
         app.ui.begin();
 
+        app.renderer.rays = if app.settings.hq_light { 28.0 } else { 12.0 };
         if is_key_pressed(KeyCode::F11) {
             app.settings.fullscreen = !app.settings.fullscreen;
             set_fullscreen(app.settings.fullscreen);
@@ -227,11 +235,15 @@ async fn run(args: Vec<String>) {
             }
             let shots = [
                 (1.0, "menu"),
-                (4.2, "surface_spells"),
-                (7.6, "after_spells"),
-                (9.4, "caves"),
-                (11.4, "deep_lava"),
-                (13.0, "far_biome"),
+                (3.6, "surface_mobs"),
+                (6.4, "spells"),
+                (7.6, "inventory"),
+                (9.6, "caves"),
+                (11.6, "deep_lava"),
+                (13.6, "sky_isles"),
+                (15.6, "space"),
+                (17.6, "night_storm"),
+                (19.6, "far_biome"),
                 (secs - 0.4, "settings"),
             ];
             if shot_k < shots.len() && now >= shots[shot_k].0 {
@@ -274,51 +286,81 @@ fn script_controls(app: &mut App, t: f64, secs: f64) -> Controls {
     if t < 1.2 {
         return ctl;
     }
-    ctl.input.right = at(1.4, 3.0);
-    ctl.input.up = at(2.0, 2.6);
+    if at(1.3, 1.32) {
+        use mobs::MobKind::*;
+        for (k, kind) in [Zombie, Lion, Tiger, DemonEye, Slime, Skeleton].iter().enumerate() {
+            g.mobs.spawn(*kind, px + 30.0 + k as f32 * 16.0, py - 30.0);
+        }
+    }
+    ctl.input.right = at(1.4, 2.6);
+    ctl.input.up = at(2.0, 2.5);
     ctl.input.up_pressed = at(2.0, 2.05);
-    let fire = |spell: usize, aim: (f32, f32), g: &mut Game, ctl: &mut Controls| {
-        g.spell = spell;
+    ctl.input.dash = at(2.7, 2.72);
+    let fire = |wand: usize, aim: (f32, f32), g: &mut Game, ctl: &mut Controls| {
+        g.wand = wand;
         ctl.aim = aim;
         ctl.primary = true;
     };
-    if at(3.0, 3.1) {
-        fire(0, (px + 50.0, py + 10.0), g, &mut ctl);
-    } else if at(3.4, 3.5) {
-        fire(1, (px + 60.0, py - 5.0), g, &mut ctl);
-    } else if at(3.9, 4.0) {
-        fire(2, (px + 30.0, py - 10.0), g, &mut ctl);
-    } else if at(4.3, 5.3) {
-        fire(3, (px + 10.0, py + 40.0), g, &mut ctl);
-    } else if at(5.4, 5.9) {
-        fire(4, (px - 40.0, py - 10.0), g, &mut ctl);
-    } else if at(6.0, 6.1) {
-        fire(5, (px - 30.0, py + 5.0), g, &mut ctl);
-    } else if at(6.4, 6.5) {
-        fire(7, (px + 25.0, py - 20.0), g, &mut ctl);
-    } else if at(6.9, 7.0) {
-        fire(6, (px + 120.0, py - 30.0), g, &mut ctl);
+    if at(3.7, 4.4) {
+        fire(0, (px + 60.0, py - 6.0), g, &mut ctl);
+    } else if at(4.5, 4.6) {
+        fire(1, (px + 40.0, py - 10.0), g, &mut ctl);
+    } else if at(5.0, 5.8) {
+        fire(2, (px + 10.0, py + 40.0), g, &mut ctl);
     }
-    // Visit other depths and places to exercise streaming + worldgen.
-    let warp = |dx: f32, depth: f32, g: &mut Game| {
+    if at(6.6, 6.62) {
+        // Build a combo: Trigger + Triple + Spark -> Lightning.
+        g.wands[0].slots = vec![Some(spells::Card::Trigger), Some(spells::Card::Triple), Some(spells::Card::Spark), Some(spells::Card::Lightning)];
+    }
+    if at(6.7, 6.9) {
+        fire(0, (px + 80.0, py - 20.0), g, &mut ctl);
+    }
+    if at(7.0, 7.02) {
+        g.held = None;
+        app.screen = Screen::Inventory;
+    }
+    if at(7.9, 7.92) {
+        app.screen = Screen::Play;
+    }
+    let warp = |dx: f32, y: f32, surface_rel: bool, g: &mut Game| {
         let x = g.player.x + dx;
-        let y = g.world.gen.surface(x as i32) as f32 + depth;
+        let y = if surface_rel { g.world.gen.surface(x as i32) as f32 + y } else { y };
         g.world.recenter(x, y);
+        g.mobs.clear();
         g.fx.dissolve(&mut g.world, x + 1.5, y + 4.0, 7, 1.0);
         g.player.teleport(x, y + 6.0, &g.world);
-        g.player.hp = player::MAX_HP;
         g.cam = g.player.center();
     };
     if at(8.0, 8.02) {
-        warp(0.0, 110.0, g);
+        warp(0.0, 110.0, true, g);
     }
     if at(10.0, 10.02) {
-        warp(0.0, 300.0, g);
+        warp(0.0, 300.0, true, g);
     }
     if at(12.0, 12.02) {
-        warp(2600.0, -20.0, g);
+        warp(0.0, -330.0, false, g);
     }
-    g.player.hp = g.player.hp.max(20.0);
+    if at(14.0, 14.02) {
+        warp(0.0, -640.0, false, g);
+    }
+    if at(16.0, 16.02) {
+        warp(0.0, -20.0, true, g);
+        g.weather.time = 0.02;
+        g.weather.rain = 1.0;
+        g.weather.storm = true;
+    }
+    if at(18.0, 18.02) {
+        warp(2600.0, -20.0, true, g);
+        g.weather.time = 0.45;
+        g.weather.rain = 0.0;
+        g.weather.storm = false;
+    }
+    if t > 12.0 && t < 16.0 {
+        // Hover so the sky shots aren't of a falling wizard.
+        g.player.vy = g.player.vy.min(0.0);
+        g.player.flight = player::MAX_FLIGHT;
+    }
+    g.player.hp = g.player.hp.max(40.0);
     if t > secs - 1.0 && app.screen == Screen::Play {
         app.back = Screen::Pause;
         app.screen = Screen::Settings;
@@ -343,7 +385,7 @@ impl App {
         // ----- update -----
         match self.screen {
             Screen::Play => {
-                let view = View::new(self.game.cam.0, self.game.cam.1, sw, sh);
+                let view = View::new(self.game.cam.0, self.game.cam.1, sw, sh, self.game.zoom);
                 let ctl = match script {
                     Some(c) => c,
                     None => self.read_controls(&view),
@@ -354,6 +396,15 @@ impl App {
                 }
                 if self.take_esc() {
                     self.screen = Screen::Pause;
+                }
+                if is_key_pressed(KeyCode::Tab) && self.screen == Screen::Play {
+                    self.screen = Screen::Inventory;
+                }
+            }
+            Screen::Inventory => {
+                if is_key_pressed(KeyCode::Tab) || self.take_esc() {
+                    self.game.stow_held();
+                    self.screen = Screen::Play;
                 }
             }
             Screen::Menu => {
@@ -374,7 +425,7 @@ impl App {
         }
 
         // ----- draw world -----
-        let view = View::new(self.game.cam.0, self.game.cam.1, sw, sh);
+        let view = View::new(self.game.cam.0, self.game.cam.1, sw, sh, self.game.zoom);
         let shake = if self.settings.shake && self.game.fx.shake > 0.05 && self.screen == Screen::Play {
             let s = self.game.fx.shake;
             (self.shake_rng.rangef(-s, s), self.shake_rng.rangef(-s, s))
@@ -401,7 +452,7 @@ impl App {
         // ----- UI -----
         match self.screen {
             Screen::Play => {
-                self.ui.hud(&mut self.game, self.fps, self.settings.show_fps);
+                self.ui.hud(&mut self.game, &view, self.fps, self.settings.show_fps);
                 self.crosshair(&view);
                 show_mouse(false);
             }
@@ -410,9 +461,13 @@ impl App {
             Screen::Settings => self.settings_screen(),
             Screen::Controls => self.controls_screen(),
             Screen::Dead => self.dead(),
+            Screen::Inventory => {
+                self.ui.hud(&mut self.game, &view, self.fps, false);
+                self.ui.inventory(&mut self.game);
+            }
         }
         if self.screen != Screen::Play {
-            show_mouse(true);
+            show_mouse(self.screen != Screen::Inventory || self.game.held.is_none());
         }
         if self.ui.clicked {
             if let Some(a) = &mut self.audio {
@@ -430,7 +485,7 @@ impl App {
         let up = is_key_down(KeyCode::W) || is_key_down(KeyCode::Up) || (jump_key && is_key_down(KeyCode::Space));
         let up_pressed = is_key_pressed(KeyCode::W) || is_key_pressed(KeyCode::Up) || (jump_key && is_key_pressed(KeyCode::Space));
 
-        if is_key_pressed(KeyCode::Tab) {
+        if is_key_pressed(KeyCode::B) {
             g.sandbox = !g.sandbox;
         }
         let keys = [
@@ -449,21 +504,21 @@ impl App {
             if is_key_pressed(*key) {
                 if g.sandbox {
                     g.brush = k.min(PALETTE.len() - 1);
-                } else if k < SPELLS.len() {
-                    g.spell = k;
+                } else if k < g.wands.len() {
+                    g.wand = k;
                 }
             }
         }
         let wheel = mouse_wheel().1;
         let step = if wheel > 0.0 { -1 } else if wheel < 0.0 { 1 } else { 0 };
-        let qe = is_key_pressed(KeyCode::E) as i32 - is_key_pressed(KeyCode::Q) as i32;
+        let qe = is_key_pressed(KeyCode::X) as i32 - is_key_pressed(KeyCode::Z) as i32;
         if g.sandbox {
             g.brush_r = (g.brush_r - step).clamp(1, 20);
             if qe != 0 {
                 g.brush = (g.brush as i32 + qe).rem_euclid(PALETTE.len() as i32) as usize;
             }
         } else if step + qe != 0 {
-            g.spell = (g.spell as i32 + step + qe).rem_euclid(SPELLS.len() as i32) as usize;
+            g.wand = (g.wand as i32 + step + qe).rem_euclid(g.wands.len() as i32) as usize;
         }
 
         Controls {
@@ -472,11 +527,16 @@ impl App {
                 right: is_key_down(KeyCode::D) || is_key_down(KeyCode::Right),
                 up,
                 up_pressed,
+                down: is_key_down(KeyCode::S) || is_key_down(KeyCode::Down),
+                dash: is_key_pressed(KeyCode::LeftShift) || is_key_pressed(KeyCode::RightShift),
+                grapple: is_key_pressed(KeyCode::F),
+                aim,
             },
             aim,
             primary: is_mouse_button_down(MouseButton::Left) && !on_hud,
             secondary: is_mouse_button_down(MouseButton::Right),
             paint: is_mouse_button_down(MouseButton::Middle) || (g.sandbox && is_key_down(KeyCode::Space)),
+            interact: is_key_pressed(KeyCode::E),
         }
     }
 
@@ -484,7 +544,7 @@ impl App {
     fn ui_hover_hud(&self) -> bool {
         let (mx, my) = mouse_position();
         let (sw, sh) = (screen_width(), screen_height());
-        my > sh - 72.0 && (mx - sw * 0.5).abs() < 290.0
+        my > sh - 80.0 && (mx - sw * 0.5).abs() < 420.0
     }
 
     fn crosshair(&self, view: &View) {
@@ -545,7 +605,7 @@ impl App {
             std::process::exit(0);
         }
         self.ui.text(&format!("SEED {}", self.game.seed), 20.0, sh - 28.0, 1.0, MUTED);
-        self.ui.text_right("V0.2", sw - 20.0, sh - 28.0, 1.0, MUTED);
+        self.ui.text_right("V0.3", sw - 20.0, sh - 28.0, 1.0, MUTED);
     }
 
     fn pause(&mut self) {
@@ -582,7 +642,7 @@ impl App {
         self.title("SETTINGS", sh * 0.14, 5.0, TEXT);
         let (w, x) = (520.0, cx - 260.0);
         let mut y = sh * 0.3;
-        self.ui.panel(x - 24.0, y - 20.0, w + 48.0, 7.0 * 40.0 + 40.0);
+        self.ui.panel(x - 24.0, y - 20.0, w + 48.0, 8.0 * 40.0 + 40.0);
         self.ui.text("AUDIO", x, y - 6.0, 1.0, ACCENT);
         y += 12.0;
         let mut s = self.settings.clone();
@@ -601,6 +661,8 @@ impl App {
         if self.ui.toggle("FULLSCREEN  (F11)", x, y, w, &mut s.fullscreen) {
             set_fullscreen(s.fullscreen);
         }
+        y += 40.0;
+        self.ui.toggle("HIGH QUALITY LIGHTING", x, y, w, &mut s.hq_light);
         self.settings = s;
         y += 70.0;
         if self.ui.button("BACK", cx, y, 260.0) || self.take_esc() {
@@ -616,23 +678,25 @@ impl App {
         self.title("CONTROLS", sh * 0.1, 5.0, TEXT);
         let rows = [
             ("A D / ARROWS", "MOVE"),
-            ("W / SPACE", "JUMP, HOLD TO FLY"),
-            ("LEFT MOUSE", "CAST SPELL"),
+            ("W / SPACE", "JUMP, WALL JUMP, HOLD TO FLY"),
+            ("S", "GLIDE"),
+            ("SHIFT", "DASH"),
+            ("F", "GRAPPLING VINE"),
+            ("LEFT MOUSE", "CAST WAND"),
             ("RIGHT MOUSE", "DIG"),
-            ("1 - 8 / WHEEL / Q E", "CHOOSE SPELL"),
-            ("TAB", "SANDBOX MODE"),
-            ("SANDBOX: LMB / RMB", "PAINT / ERASE"),
-            ("SANDBOX: WHEEL", "BRUSH SIZE"),
-            ("ESC", "PAUSE"),
-            ("F11", "FULLSCREEN"),
+            ("1 - 4 / WHEEL", "CHOOSE WAND"),
+            ("TAB", "EDIT WANDS & SPELLS"),
+            ("E", "OPEN CHEST / USE ALTAR"),
+            ("B", "SANDBOX BRUSH"),
+            ("ESC  /  F11", "PAUSE  /  FULLSCREEN"),
         ];
         let (w, x) = (600.0, cx - 300.0);
         let mut y = sh * 0.24;
-        self.ui.panel(x - 24.0, y - 18.0, w + 48.0, rows.len() as f32 * 32.0 + 24.0);
+        self.ui.panel(x - 24.0, y - 18.0, w + 48.0, rows.len() as f32 * 28.0 + 24.0);
         for (k, a) in rows {
             self.ui.text(k, x, y, 2.0, ACCENT);
             self.ui.text_right(a, x + w, y, 2.0, TEXT);
-            y += 32.0;
+            y += 28.0;
         }
         if self.ui.button("BACK", cx, y + 30.0, 260.0) || self.take_esc() {
             self.screen = self.back;

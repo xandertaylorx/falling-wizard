@@ -21,6 +21,11 @@ pub struct Input {
     pub right: bool,
     pub up: bool,
     pub up_pressed: bool,
+    pub down: bool,
+    pub dash: bool,
+    pub grapple: bool,
+    /// Aim point, for the grappling vine.
+    pub aim: (f32, f32),
 }
 
 pub struct Player {
@@ -39,6 +44,11 @@ pub struct Player {
     pub hurt_now: f32,
     facing: f32,
     walk_t: f32,
+    dash_t: f32,
+    dash_cd: f32,
+    pub grapple: Option<(f32, f32)>,
+    /// Wall the wizard is sliding on (-1 left, 1 right, 0 none).
+    wall: f32,
 }
 
 // Drawn facing right. h hat, s star, f face, e eye, w beard, r robe, b boots.
@@ -61,6 +71,10 @@ impl Player {
             hurt_now: 0.0,
             facing: 1.0,
             walk_t: 0.0,
+            dash_t: 0.0,
+            dash_cd: 0.0,
+            grapple: None,
+            wall: 0.0,
         }
     }
 
@@ -88,7 +102,7 @@ impl Player {
     }
 
     pub fn hurt(&mut self, amount: f32) {
-        if amount <= 0.0 || self.dead() {
+        if amount <= 0.0 || self.dead() || self.dash_t > 0.0 {
             return;
         }
         self.hp -= amount;
@@ -126,7 +140,7 @@ impl Player {
         self.unstick(world);
 
         // What are we touching?
-        let (mut fire, mut lava, mut acid, mut water) = (false, false, false, false);
+        let (mut fire, mut lava, mut acid, mut water, mut sink) = (false, false, false, false, false);
         let (x0, y0) = (self.x.floor() as i32, self.y.floor() as i32);
         for cy in y0..y0 + PH as i32 {
             for cx in x0..x0 + PW as i32 {
@@ -135,6 +149,7 @@ impl Player {
                     M::Lava => lava = true,
                     M::Acid => acid = true,
                     M::Water => water = true,
+                    M::Quicksand => sink = true,
                     _ => {}
                 }
             }
@@ -162,12 +177,59 @@ impl Player {
         if dir != 0.0 {
             self.facing = dir;
         }
+        self.dash_t = (self.dash_t - dt).max(0.0);
+        self.dash_cd = (self.dash_cd - dt).max(0.0);
+        if input.dash && self.dash_cd <= 0.0 {
+            let d = if dir != 0.0 { dir } else { self.facing };
+            self.vx = d * 230.0;
+            self.vy = self.vy.min(0.0) * 0.2;
+            self.dash_t = 0.16;
+            self.dash_cd = 0.55;
+            self.grapple = None;
+        }
+        if input.grapple {
+            self.grapple = if self.grapple.is_some() { None } else { self.cast_vine(world, input.aim) };
+        }
         let accel = if self.on_ground { 700.0 } else { 380.0 };
-        self.vx += (dir * WALK - self.vx).clamp(-accel * dt, accel * dt);
+        if self.dash_t <= 0.0 {
+            self.vx += (dir * WALK - self.vx).clamp(-accel * dt, accel * dt);
+        }
 
         let (cx, cy) = ((self.x + PW * 0.5) as i32, (self.y + PH * 0.6) as i32);
         let swimming = world.mat(cx, cy).kind() == Kind::Liquid;
-        self.vy += GRAVITY * dt * if swimming { 0.35 } else { 1.0 };
+        if self.dash_t <= 0.0 {
+            self.vy += GRAVITY * dt * if swimming { 0.35 } else { 1.0 };
+        }
+        if let Some((ax, ay)) = self.grapple {
+            let (cx, cy) = self.center();
+            let (gx, gy) = (ax - cx, ay - cy);
+            let d = (gx * gx + gy * gy).sqrt();
+            if d < 4.0 || input.up_pressed {
+                self.grapple = None;
+                if input.up_pressed {
+                    self.vy = -JUMP * 0.8;
+                }
+            } else {
+                self.vx += gx / d * 700.0 * dt;
+                self.vy += gy / d * 700.0 * dt - GRAVITY * dt * 0.8;
+                self.vx *= 1.0 - 2.0 * dt;
+                self.vy *= 1.0 - 2.0 * dt;
+            }
+        }
+        if sink {
+            self.vx *= 1.0 - 8.0 * dt;
+            self.vy = self.vy.min(8.0);
+        }
+        // Wall slide and wall jump.
+        self.wall = 0.0;
+        if !self.on_ground && dir != 0.0 && Self::overlaps(world, self.x + dir * 0.6, self.y) {
+            self.wall = dir;
+            self.vy = self.vy.min(28.0);
+        }
+        // Glide: hold down to drift gently.
+        if input.down && !self.on_ground && self.vy > 30.0 {
+            self.vy = 30.0;
+        }
         if swimming {
             self.vx *= 1.0 - 3.0 * dt;
             self.vy *= 1.0 - 3.0 * dt;
@@ -175,8 +237,12 @@ impl Player {
                 self.vy -= 420.0 * dt;
             }
         }
-        if input.up_pressed && self.on_ground {
-            self.vy = -JUMP;
+        if input.up_pressed && (self.on_ground || sink) {
+            self.vy = if sink { -JUMP * 0.5 } else { -JUMP };
+        } else if input.up_pressed && self.wall != 0.0 {
+            self.vy = -JUMP * 0.95;
+            self.vx = -self.wall * 95.0;
+            self.flight = (self.flight + 10.0).min(MAX_FLIGHT);
         } else if input.up && !self.on_ground && !swimming && self.flight > 0.0 && self.vy > -75.0 {
             self.vy -= 580.0 * dt;
             self.flight -= 38.0 * dt;
@@ -189,6 +255,9 @@ impl Player {
             self.hp = (self.hp + 1.5 * dt).min(MAX_HP);
         }
         self.vy = self.vy.min(190.0);
+        if self.dash_t <= 0.0 && self.grapple.is_none() {
+            self.vx = self.vx.clamp(-120.0, 120.0);
+        }
 
         let total = self.vx * dt;
         let n = total.abs().ceil().max(1.0) as i32;
@@ -206,7 +275,6 @@ impl Player {
             }
         }
 
-        let impact = self.vy;
         let total = self.vy * dt;
         let n = total.abs().ceil().max(1.0) as i32;
         let step = total / n as f32;
@@ -215,13 +283,8 @@ impl Player {
             if !Self::overlaps(world, self.x, ny) {
                 self.y = ny;
             } else {
-                if step > 0.0 {
-                    if !Self::overlaps(world, self.x, ny.floor()) {
-                        self.y = ny.floor();
-                    }
-                    if impact > 175.0 && !swimming {
-                        self.hurt((impact - 175.0) * 0.9);
-                    }
+                if step > 0.0 && !Self::overlaps(world, self.x, ny.floor()) {
+                    self.y = ny.floor();
                 }
                 self.vy = 0.0;
                 break;
@@ -232,6 +295,24 @@ impl Player {
         if self.on_ground && dir != 0.0 {
             self.walk_t += dt * 10.0;
         }
+    }
+
+    fn cast_vine(&self, world: &World, aim: (f32, f32)) -> Option<(f32, f32)> {
+        let (hx, hy) = self.hand();
+        let (dx, dy) = (aim.0 - hx, aim.1 - hy);
+        let l = (dx * dx + dy * dy).sqrt().max(0.001);
+        for k in 0..160 {
+            let t = k as f32 * 0.5;
+            let (x, y) = (hx + dx / l * t, hy + dy / l * t);
+            if world.mat(x.floor() as i32, y.floor() as i32).solid() {
+                return Some((x, y));
+            }
+        }
+        None
+    }
+
+    pub fn dashing(&self) -> bool {
+        self.dash_t > 0.0
     }
 
     /// Fling the wizard away from an explosion and hurt them a bit (your spells can hurt you).
@@ -295,6 +376,14 @@ impl Player {
             }
         }
         let (hx, hy) = self.hand();
+        if let Some((gx, gy)) = self.grapple {
+            let n = ((gx - hx).abs().max((gy - hy).abs()) as i32).max(1);
+            for k in 0..=n {
+                let t = k as f32 / n as f32;
+                let sway = ((k as f32) * 0.8).sin() * 0.5;
+                cv.put((hx + (gx - hx) * t + sway) as i32, (hy + (gy - hy) * t) as i32, if k % 3 == 0 { [90, 170, 60] } else { [60, 130, 50] });
+            }
+        }
         let (dx, dy) = (ax - hx, ay - hy);
         let l = (dx * dx + dy * dy).sqrt().max(0.001);
         for s in 0..5 {

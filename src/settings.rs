@@ -10,11 +10,12 @@ pub struct Settings {
     pub shake: bool,
     pub show_fps: bool,
     pub fullscreen: bool,
+    pub hq_light: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { master: 0.8, effects: 0.8, ambience: 0.7, shake: true, show_fps: true, fullscreen: false }
+        Self { master: 0.8, effects: 0.8, ambience: 0.7, shake: true, show_fps: true, fullscreen: false, hq_light: true }
     }
 }
 
@@ -38,6 +39,7 @@ impl Settings {
                 "shake" => s.shake = b,
                 "show_fps" => s.show_fps = b,
                 "fullscreen" => s.fullscreen = b,
+                "hq_light" => s.hq_light = b,
                 _ => {}
             }
         }
@@ -47,8 +49,8 @@ impl Settings {
     pub fn save(&self) {
         if let Some(p) = path() {
             let text = format!(
-                "master={:.2}\neffects={:.2}\nambience={:.2}\nshake={}\nshow_fps={}\nfullscreen={}\n",
-                self.master, self.effects, self.ambience, self.shake, self.show_fps, self.fullscreen
+                "master={:.2}\neffects={:.2}\nambience={:.2}\nshake={}\nshow_fps={}\nfullscreen={}\nhq_light={}\n",
+                self.master, self.effects, self.ambience, self.shake, self.show_fps, self.fullscreen, self.hq_light
             );
             let _ = std::fs::write(p, text);
         }

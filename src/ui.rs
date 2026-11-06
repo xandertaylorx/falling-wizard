@@ -4,8 +4,8 @@ use macroquad::prelude::*;
 
 use crate::game::{Game, PALETTE};
 use crate::player::{MAX_FLIGHT, MAX_HP, MAX_MANA};
-use crate::render::shade;
-use crate::spells::SPELLS;
+use crate::render::{shade, View};
+use crate::spells::Card;
 
 pub const TEXT: Color = Color::new(0.92, 0.89, 0.84, 1.0);
 pub const MUTED: Color = Color::new(0.6, 0.57, 0.55, 1.0);
@@ -252,57 +252,110 @@ impl Ui {
         }
     }
 
-    /// Hotbar slot hit-test that also marks the HUD as hovered.
-    fn slot(&mut self, x: f32, y: f32, size: f32) -> bool {
-        let hot = self.over(x, y, size, size);
+    fn hot(&mut self, x: f32, y: f32, w: f32, h: f32) -> bool {
+        let hot = self.over(x, y, w, h);
         if hot {
             self.hovering = true;
         }
-        hot && self.pressed
+        hot
     }
 
-    pub fn hud(&mut self, game: &mut Game, fps: f32, show_fps: bool) {
+    fn card_box(&mut self, card: Option<Card>, x: f32, y: f32, size: f32, sel: bool) -> bool {
+        let hot = self.hot(x, y, size, size);
+        draw_rectangle(x, y, size, size, PANEL);
+        if let Some(c) = card {
+            let (rows, main, acc) = c.icon();
+            let s = ((size - 8.0) / 7.0).floor();
+            let off = (size - s * 7.0) * 0.5;
+            if c.is_mod() {
+                draw_rectangle(x + 2.0, y + 2.0, size - 4.0, size - 4.0, Color::new(0.35, 0.25, 0.5, 0.35));
+            }
+            self.icon(&rows, main, acc, x + off, y + off, s, 1.0);
+        }
+        let border = if sel { ACCENT } else if hot { Color::new(1.0, 1.0, 1.0, 0.35) } else { LINE };
+        draw_rectangle_lines(x, y, size, size, if sel { 2.0 } else { 1.0 }, border);
+        hot
+    }
+
+    fn tooltip(&self, c: Card, x: f32, y: f32) {
+        let lines = [c.name().to_uppercase(), c.desc().to_uppercase(), format!("MANA {}   {}", c.mana() as i32, if c.is_mod() { "MODIFIER" } else { "SPELL" })];
+        let w = lines.iter().map(|l| self.font.width(l, 1.0)).fold(0.0f32, f32::max) + 20.0;
+        let (x, y) = (x.min(screen_width() - w - 8.0), y - 48.0);
+        self.panel(x, y, w, 44.0);
+        self.text(&lines[0], x + 10.0, y + 8.0, 1.0, ACCENT);
+        self.text(&lines[1], x + 10.0, y + 20.0, 1.0, TEXT);
+        self.text(&lines[2], x + 10.0, y + 32.0, 1.0, MUTED);
+    }
+
+    pub fn hud(&mut self, game: &mut Game, view: &View, fps: f32, show_fps: bool) {
         let (sw, sh) = (screen_width(), screen_height());
         let p = &game.player;
 
         // Vitals, top-left.
         let bars = [
-            (p.hp / MAX_HP, Color::new(0.88, 0.3, 0.3, 1.0), p.hp),
-            (p.mana / MAX_MANA, Color::new(0.38, 0.56, 1.0, 1.0), p.mana),
-            (p.flight / MAX_FLIGHT, Color::new(0.86, 0.86, 0.78, 1.0), p.flight),
+            (p.hp / MAX_HP, Color::new(0.88, 0.3, 0.3, 1.0)),
+            (p.mana / MAX_MANA, if game.fizzle > 0.0 { Color::new(1.0, 1.0, 1.0, 1.0) } else { Color::new(0.38, 0.56, 1.0, 1.0) }),
+            (p.flight / MAX_FLIGHT, Color::new(0.86, 0.86, 0.78, 1.0)),
         ];
-        for (k, (v, col, n)) in bars.iter().enumerate() {
-            let y = 20.0 + k as f32 * 14.0;
-            draw_rectangle(20.0, y, 160.0, 6.0, Color::new(0.0, 0.0, 0.0, 0.5));
-            draw_rectangle(20.0, y, 160.0 * v.clamp(0.0, 1.0), 6.0, *col);
-            self.font.draw_shadowed(&format!("{}", n.max(0.0).round() as i32), 188.0, y - 1.0, 1.0, MUTED);
+        for (k, (v, col)) in bars.iter().enumerate() {
+            let y = 20.0 + k as f32 * 12.0;
+            draw_rectangle(20.0, y, 150.0, 5.0, Color::new(0.0, 0.0, 0.0, 0.5));
+            draw_rectangle(20.0, y, 150.0 * v.clamp(0.0, 1.0), 5.0, *col);
         }
-        draw_rectangle(20.0, 66.0, 8.0, 8.0, Color::from_rgba(236, 190, 64, 255));
-        draw_rectangle(22.0, 68.0, 2.0, 2.0, Color::from_rgba(255, 248, 210, 255));
-        self.text(&format!("{}", p.gold), 34.0, 67.0, 1.0, TEXT);
+        draw_rectangle(20.0, 60.0, 8.0, 8.0, Color::from_rgba(236, 190, 64, 255));
+        draw_rectangle(22.0, 62.0, 2.0, 2.0, Color::from_rgba(255, 248, 210, 255));
+        self.text(&format!("{}", p.gold), 34.0, 61.0, 1.0, TEXT);
 
-        // Location + FPS, top-right.
+        // Place, time and weather, top-right.
         let (px, py) = p.center();
         let surf = game.world.surface_at(px as i32);
         let depth = ((py - surf as f32) / 4.0).round() as i32;
-        let place = game.world.gen.biome(px as i32).name();
-        let loc = if depth <= 1 { format!("{}  SURFACE", place) } else { format!("DEPTH {}M", depth) };
-        self.text_right(&loc, sw - 20.0, 20.0, 2.0, TEXT);
+        let place = if py < -520.0 {
+            "ASTRAL EXPANSE".to_string()
+        } else if py < -240.0 {
+            "SKY ISLES".to_string()
+        } else if depth > 1 {
+            format!("DEPTH {}M", depth)
+        } else if depth < -12 {
+            format!("{}  ALT {}M", game.world.gen.biome(px as i32).name().to_uppercase(), -depth)
+        } else {
+            game.world.gen.biome(px as i32).name().to_uppercase()
+        };
+        self.text_right(&place, sw - 20.0, 20.0, 2.0, TEXT);
+        self.text_right(game.weather.label(), sw - 20.0, 40.0, 1.0, MUTED);
         if show_fps {
-            self.text_right(&format!("{} FPS  SIM {:.1}MS", fps.round() as i32, game.sim_ms), sw - 20.0, 42.0, 1.0, MUTED);
+            self.text_right(&format!("{} FPS  SIM {:.1}MS", fps.round() as i32, game.sim_ms), sw - 20.0, 54.0, 1.0, MUTED);
         }
 
-        // Hotbar, bottom-centre.
+        // Floating damage numbers and gold.
+        for pop in &game.mobs.popups {
+            let (x, y) = view.to_screen(pop.x, pop.y);
+            let a = (1.0 - pop.t).clamp(0.0, 1.0);
+            let c = Color::from_rgba(pop.color[0], pop.color[1], pop.color[2], (a * 255.0) as u8);
+            self.text_center(&pop.text, x, y, 1.0, c);
+        }
+
+        // Toasts and the interaction prompt.
+        for (k, t) in game.toasts.iter().enumerate() {
+            let a = (1.0 - (t.t - 2.2).max(0.0) / 0.8).clamp(0.0, 1.0);
+            let c = Color::from_rgba(t.color[0], t.color[1], t.color[2], (a * 255.0) as u8);
+            self.text_center(&t.text, sw * 0.5, sh * 0.2 + k as f32 * 22.0, 2.0, c);
+        }
+        if let Some(pr) = &game.prompt {
+            self.text_center(pr, sw * 0.5, sh * 0.62, 2.0, TEXT);
+        }
+
         if game.sandbox {
             let n = PALETTE.len();
-            let size = 34.0;
+            let size = 32.0;
             let gap = 4.0;
             let total = n as f32 * size + (n - 1) as f32 * gap;
             let x0 = (sw - total) * 0.5;
             let y = sh - size - 20.0;
             for (k, m) in PALETTE.iter().enumerate() {
                 let x = x0 + k as f32 * (size + gap);
-                if self.slot(x, y, size) {
+                let hot = self.hot(x, y, size, size);
+                if hot && self.pressed {
                     game.brush = k;
                     self.clicked = true;
                 }
@@ -316,32 +369,121 @@ impl Ui {
                 draw_rectangle_lines(x, y, size, size, if sel { 2.0 } else { 1.0 }, if sel { ACCENT } else { LINE });
             }
             let label = format!("{}   SIZE {}", PALETTE[game.brush].name(), game.brush_r);
-            self.text_center(&label, sw * 0.5, y - 22.0, 2.0, TEXT);
-            self.text(&"SANDBOX - TAB TO RETURN".to_string(), x0, y - 22.0, 1.0, ACCENT);
-        } else {
-            let n = SPELLS.len();
-            let size = 46.0;
-            let gap = 6.0;
-            let total = n as f32 * size + (n - 1) as f32 * gap;
-            let x0 = (sw - total) * 0.5;
-            let y = sh - size - 20.0;
-            for (k, sp) in SPELLS.iter().enumerate() {
-                let x = x0 + k as f32 * (size + gap);
-                if self.slot(x, y, size) {
-                    game.spell = k;
-                    self.clicked = true;
-                }
-                let sel = k == game.spell;
-                draw_rectangle(x, y, size, size, PANEL);
-                draw_rectangle_lines(x, y, size, size, if sel { 2.0 } else { 1.0 }, if sel { ACCENT } else { LINE });
-                let (rows, main, acc) = sp.icon();
-                let afford = game.player.mana >= if sp.continuous() { 1.0 } else { sp.cost() };
-                self.icon(&rows, main, acc, x + 9.0, y + 9.0, 4.0, if afford { 1.0 } else { 0.3 });
-                self.font.draw(&format!("{}", k + 1), x + 3.0, y + 3.0, 1.0, if sel { ACCENT } else { MUTED });
+            self.text_center(&label.to_uppercase(), sw * 0.5, y - 22.0, 2.0, TEXT);
+            self.text(&"SANDBOX  -  B TO RETURN".to_string(), x0, y - 22.0, 1.0, ACCENT);
+            return;
+        }
+
+        // Wands, bottom-centre.
+        let size = 30.0;
+        let gap = 14.0;
+        let widths: Vec<f32> = game.wands.iter().map(|w| w.slots.len() as f32 * (size + 2.0) + 12.0).collect();
+        let total: f32 = widths.iter().sum::<f32>() + gap * (widths.len() - 1) as f32;
+        let mut x = (sw - total) * 0.5;
+        let y = sh - size - 26.0;
+        for (wi, wand) in game.wands.iter().enumerate() {
+            let w = widths[wi];
+            let sel = wi == game.wand;
+            if self.hot(x, y - 6.0, w, size + 12.0) && self.pressed {
+                game.wand = wi;
+                self.clicked = true;
             }
-            let sp = game.current_spell();
-            let cost = if sp.continuous() { format!("{}/S", sp.cost() as i32) } else { format!("{}", sp.cost() as i32) };
-            self.text_center(&format!("{}  -  {} MANA", sp.name(), cost), sw * 0.5, y - 22.0, 2.0, TEXT);
+            draw_rectangle(x, y - 6.0, w, size + 12.0, Color::new(0.03, 0.03, 0.06, if sel { 0.85 } else { 0.55 }));
+            draw_rectangle(x, y - 6.0, w, 2.0, Color::from_rgba(wand.tint[0], wand.tint[1], wand.tint[2], if sel { 255 } else { 90 }));
+            self.font.draw(&format!("{}", wi + 1), x + 3.0, y - 2.0, 1.0, if sel { ACCENT } else { MUTED });
+            for (k, slot) in wand.slots.iter().enumerate() {
+                let sx = x + 8.0 + k as f32 * (size + 2.0);
+                draw_rectangle(sx, y, size, size, Color::new(1.0, 1.0, 1.0, 0.04));
+                if let Some(c) = slot {
+                    let (rows, main, acc) = c.icon();
+                    self.icon(&rows, main, acc, sx + 4.0, y + 4.0, 3.0, if sel { 1.0 } else { 0.55 });
+                }
+            }
+            if sel {
+                draw_rectangle_lines(x, y - 6.0, w, size + 12.0, 1.0, ACCENT);
+            }
+            x += w + gap;
+        }
+        self.text_center("TAB  WANDS & SPELLS", sw * 0.5, y - 22.0, 1.0, MUTED);
+    }
+
+    /// The wand editor: drag spell cards between your bag and wand slots.
+    pub fn inventory(&mut self, game: &mut Game) {
+        let (sw, sh) = (screen_width(), screen_height());
+        draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.02, 0.01, 0.04, 0.6));
+        let (pw, ph) = (760.0f32.min(sw - 40.0), 520.0f32.min(sh - 40.0));
+        let (x0, y0) = ((sw - pw) * 0.5, (sh - ph) * 0.5);
+        self.panel(x0, y0, pw, ph);
+        self.text("WANDS", x0 + 24.0, y0 + 20.0, 2.0, ACCENT);
+        self.text_right("CLICK TO PICK UP AND PLACE  -  RIGHT CLICK RETURNS TO BAG  -  TAB TO CLOSE", x0 + pw - 24.0, y0 + 24.0, 1.0, MUTED);
+        let size = 40.0;
+        let mut tip: Option<(Card, f32, f32)> = None;
+        let right = is_mouse_button_pressed(MouseButton::Right);
+        let mut y = y0 + 52.0;
+        for wi in 0..game.wands.len() {
+            let tint = game.wands[wi].tint;
+            draw_rectangle(x0 + 24.0, y + 4.0, 4.0, size - 8.0, Color::from_rgba(tint[0], tint[1], tint[2], 255));
+            self.text(&format!("{}", wi + 1), x0 + 36.0, y + 14.0, 2.0, if wi == game.wand { ACCENT } else { TEXT });
+            for k in 0..game.wands[wi].slots.len() {
+                let sx = x0 + 60.0 + k as f32 * (size + 4.0);
+                let card = game.wands[wi].slots[k];
+                if self.card_box(card, sx, y, size, false) {
+                    if let Some(c) = card {
+                        tip = Some((c, sx, y));
+                    }
+                    if self.pressed {
+                        let held = game.held.take();
+                        game.held = game.wands[wi].slots[k].take();
+                        game.wands[wi].slots[k] = held;
+                        self.clicked = true;
+                    } else if right {
+                        if let Some(c) = game.wands[wi].slots[k].take() {
+                            game.bag.push(c);
+                            self.clicked = true;
+                        }
+                    }
+                }
+            }
+            y += size + 10.0;
+        }
+        y += 8.0;
+        self.text("SPELLS", x0 + 24.0, y, 2.0, ACCENT);
+        y += 26.0;
+        let cols = ((pw - 48.0) / (size + 4.0)).floor() as usize;
+        let bag_y = y;
+        let mut take: Option<usize> = None;
+        for (i, c) in game.bag.iter().enumerate() {
+            let (cx, cy) = (x0 + 24.0 + (i % cols) as f32 * (size + 4.0), y + (i / cols) as f32 * (size + 4.0));
+            if self.card_box(Some(*c), cx, cy, size, false) {
+                tip = Some((*c, cx, cy));
+                if self.pressed {
+                    take = Some(i);
+                }
+            }
+        }
+        let rows = (game.bag.len() + cols) / cols;
+        let bag_rect = (x0 + 24.0, bag_y, cols as f32 * (size + 4.0), rows.max(1) as f32 * (size + 4.0));
+        if let Some(i) = take {
+            let c = game.bag.remove(i);
+            if let Some(h) = game.held.replace(c) {
+                game.bag.insert(i, h);
+            }
+            self.clicked = true;
+        } else if self.pressed && game.held.is_some() && self.over(bag_rect.0, bag_rect.1, bag_rect.2, bag_rect.3 + size) {
+            game.stow_held();
+            self.clicked = true;
+        }
+        if right {
+            game.stow_held();
+        }
+        if let Some((c, x, y)) = tip {
+            if game.held.is_none() {
+                self.tooltip(c, x, y);
+            }
+        }
+        if let Some(c) = game.held {
+            let (rows, main, acc) = c.icon();
+            self.icon(&rows, main, acc, self.mouse.x - 14.0, self.mouse.y - 14.0, 4.0, 0.9);
         }
     }
 }

@@ -323,6 +323,13 @@ impl World {
                     self.explosions.push((x + self.ox, y + self.oy, 5));
                 }
             }
+            M::Gas => {
+                let f = Cell::fire(&mut self.rng);
+                self.lset(x, y, f);
+                if self.rng.chance(0.04) && self.explosions.len() < 200 {
+                    self.explosions.push((x + self.ox, y + self.oy, 4));
+                }
+            }
             M::Grass => {
                 let mut d = Cell::new(M::Dirt, &mut self.rng);
                 d.shade = self.cells[Self::li(x, y)].shade;
@@ -563,6 +570,15 @@ impl World {
     }
 
     fn update_gas(&mut self, x: i32, y: i32, c: Cell) {
+        if c.mat == M::Gas {
+            // Cave gas lingers and drifts slowly; it only goes away by burning.
+            let r = self.rng.f32();
+            let (dx, dy) = if r < 0.25 { (0, -1) } else if r < 0.5 { (self.rng.sign(), 0) } else if r < 0.6 { (0, 1) } else { return };
+            if self.lm(x + dx, y + dy) == M::Empty {
+                self.swap(x, y, x + dx, y + dy);
+            }
+            return;
+        }
         let steam = c.mat == M::Steam;
         let decay = if self.rng.chance(if steam { 0.8 } else { 0.6 }) { 1 } else { 0 };
         let life = c.life.saturating_sub(decay);

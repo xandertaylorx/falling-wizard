@@ -32,6 +32,23 @@ pub enum Material {
     Gunpowder,
     /// Stone debris thrown out by explosions.
     Rubble,
+    /// Loose rock in cave ceilings; collapses when disturbed.
+    Gravel,
+    /// Flammable cave gas that flashes into fire.
+    Gas,
+    /// Sand you sink into.
+    Quicksand,
+    Blood,
+    Goo,
+    Bone,
+    MoonRock,
+    Crystal,
+    AlienGrass,
+    Mushroom,
+    Brick,
+    Chest,
+    Altar,
+    Cloud,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -62,12 +79,11 @@ impl Material {
     pub const fn kind(self) -> Kind {
         match self {
             M::Empty => Kind::Empty,
-            M::Stone | M::Basalt | M::Dirt | M::Grass | M::Ice | M::Glass | M::Wood | M::Leaves | M::Plant | M::Coal | M::Gold => {
-                Kind::Static
-            }
-            M::Sand | M::Snow | M::Seed | M::Gunpowder | M::Rubble => Kind::Powder,
-            M::Water | M::Oil | M::Acid | M::Lava => Kind::Liquid,
-            M::Smoke | M::Steam => Kind::Gas,
+            M::Stone | M::Basalt | M::Dirt | M::Grass | M::Ice | M::Glass | M::Wood | M::Leaves | M::Plant | M::Coal | M::Gold
+            | M::MoonRock | M::Crystal | M::AlienGrass | M::Mushroom | M::Brick | M::Chest | M::Altar | M::Cloud => Kind::Static,
+            M::Sand | M::Snow | M::Seed | M::Gunpowder | M::Rubble | M::Gravel | M::Quicksand | M::Bone => Kind::Powder,
+            M::Water | M::Oil | M::Acid | M::Lava | M::Blood | M::Goo => Kind::Liquid,
+            M::Smoke | M::Steam | M::Gas => Kind::Gas,
             M::Fire => Kind::Fire,
             M::Sprout => Kind::Life,
         }
@@ -77,7 +93,12 @@ impl Material {
     pub const fn density(self) -> u8 {
         match self {
             M::Empty => 0,
-            M::Smoke | M::Steam => 1,
+            M::Smoke | M::Steam | M::Gas => 1,
+            M::Blood => 11,
+            M::Goo => 13,
+            M::Bone => 17,
+            M::Quicksand => 21,
+            M::Gravel => 23,
             M::Fire => 2,
             M::Oil => 8,
             M::Water => 10,
@@ -95,8 +116,9 @@ impl Material {
     #[inline]
     pub const fn dispersion(self) -> i32 {
         match self {
-            M::Water => 6,
+            M::Water | M::Blood => 6,
             M::Oil | M::Acid => 4,
+            M::Goo => 1,
             M::Lava => 2,
             _ => 0,
         }
@@ -112,6 +134,9 @@ impl Material {
             M::Coal => Some(Burn { ignite: 220, lo: 200, hi: 255, falls: false }),
             M::Seed => Some(Burn { ignite: 50, lo: 4, hi: 10, falls: false }),
             M::Gunpowder => Some(Burn { ignite: 20, lo: 1, hi: 2, falls: false }),
+            M::Gas => Some(Burn { ignite: 10, lo: 3, hi: 9, falls: false }),
+            M::Mushroom => Some(Burn { ignite: 70, lo: 20, hi: 40, falls: false }),
+            M::AlienGrass => Some(Burn { ignite: 150, lo: 8, hi: 18, falls: false }),
             _ => None,
         }
     }
@@ -128,7 +153,9 @@ impl Material {
             M::Stone => 1.0,
             M::Basalt => 0.25,
             M::Gold => 0.5,
-            M::Dirt | M::Grass | M::Sand | M::Snow | M::Ice | M::Rubble | M::Coal | M::Seed | M::Gunpowder => 1.6,
+            M::Dirt | M::Grass | M::Sand | M::Snow | M::Ice | M::Rubble | M::Coal | M::Seed | M::Gunpowder | M::Gravel | M::Quicksand | M::Bone => 1.6,
+            M::MoonRock | M::Brick => 0.6,
+            M::AlienGrass | M::Mushroom => 2.0,
             M::Wood | M::Leaves | M::Plant | M::Sprout => 2.0,
             _ => 0.0,
         }
@@ -137,13 +164,13 @@ impl Material {
     /// Spells and particles fly through these.
     #[inline]
     pub const fn passable(self) -> bool {
-        matches!(self, M::Empty | M::Smoke | M::Steam | M::Fire | M::Leaves | M::Plant | M::Sprout)
+        matches!(self, M::Empty | M::Smoke | M::Steam | M::Gas | M::Fire | M::Leaves | M::Plant | M::Sprout | M::Mushroom)
     }
 
     /// The wizard collides with these (foliage is walk-through).
     #[inline]
     pub const fn solid(self) -> bool {
-        matches!(self.kind(), Kind::Static | Kind::Powder) && !matches!(self, M::Leaves | M::Plant)
+        matches!(self.kind(), Kind::Static | Kind::Powder) && !matches!(self, M::Leaves | M::Plant | M::Mushroom | M::Quicksand)
     }
 
     pub const fn base_color(self) -> [u8; 3] {
@@ -173,6 +200,20 @@ impl Material {
             M::Steam => [214, 220, 230],
             M::Gunpowder => [72, 68, 76],
             M::Rubble => [124, 114, 112],
+            M::Gravel => [110, 102, 98],
+            M::Gas => [120, 170, 90],
+            M::Quicksand => [196, 160, 96],
+            M::Blood => [150, 20, 28],
+            M::Goo => [90, 210, 110],
+            M::Bone => [226, 220, 196],
+            M::MoonRock => [150, 146, 170],
+            M::Crystal => [140, 220, 255],
+            M::AlienGrass => [190, 90, 230],
+            M::Mushroom => [90, 230, 210],
+            M::Brick => [120, 70, 60],
+            M::Chest => [176, 120, 52],
+            M::Altar => [230, 200, 120],
+            M::Cloud => [246, 248, 255],
         }
     }
 
@@ -198,7 +239,18 @@ impl Material {
             M::Acid => 0.22,
             M::Lava => 0.3,
             M::Gunpowder => 0.6,
-            M::Rubble => 0.4,
+            M::Rubble | M::Gravel => 0.4,
+            M::Quicksand => 0.25,
+            M::Blood | M::Goo => 0.2,
+            M::Bone => 0.15,
+            M::MoonRock => 0.35,
+            M::Crystal => 0.3,
+            M::AlienGrass => 0.3,
+            M::Mushroom => 0.3,
+            M::Brick => 0.3,
+            M::Chest => 0.2,
+            M::Altar => 0.2,
+            M::Cloud => 0.06,
             _ => 0.0,
         }
     }
@@ -208,6 +260,10 @@ impl Material {
         match self {
             M::Lava => Some([1.0, 0.42, 0.08]),
             M::Acid => Some([0.03, 0.11, 0.02]),
+            M::Crystal => Some([0.25, 0.55, 0.8]),
+            M::Mushroom => Some([0.15, 0.6, 0.55]),
+            M::Altar => Some([0.9, 0.7, 0.3]),
+            M::Goo => Some([0.04, 0.16, 0.06]),
             _ => None,
         }
     }
@@ -216,6 +272,7 @@ impl Material {
         match self {
             M::Smoke => rng.range(70, 150) as u8,
             M::Steam => rng.range(40, 90) as u8,
+            M::Gas => 255,
             M::Fire => rng.range(6, 20) as u8,
             M::Acid => 5,
             M::Sprout => rng.range(10, 28) as u8,
@@ -250,6 +307,20 @@ impl Material {
             M::Steam => "Steam",
             M::Gunpowder => "Gunpowder",
             M::Rubble => "Rubble",
+            M::Gravel => "Gravel",
+            M::Gas => "Gas",
+            M::Quicksand => "Quicksand",
+            M::Blood => "Blood",
+            M::Goo => "Goo",
+            M::Bone => "Bone",
+            M::MoonRock => "Moon Rock",
+            M::Crystal => "Crystal",
+            M::AlienGrass => "Star Moss",
+            M::Mushroom => "Glowshroom",
+            M::Brick => "Brick",
+            M::Chest => "Chest",
+            M::Altar => "Altar",
+            M::Cloud => "Cloud",
         }
     }
 }

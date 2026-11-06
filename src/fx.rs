@@ -25,6 +25,8 @@ pub struct Particle {
 pub struct Fx {
     particles: Vec<Particle>,
     pub shake: f32,
+    /// Full-screen flash (lightning), decays quickly.
+    pub flash: f32,
     /// Explosions this step as (x, y, radius), consumed by the game for sound/damage.
     pub explosions: Vec<(f32, f32, i32)>,
     pub rng: Rng,
@@ -33,10 +35,11 @@ pub struct Fx {
 pub const SPARK: [u8; 3] = [255, 200, 90];
 pub const FROST: [u8; 3] = [170, 230, 255];
 pub const MAGIC: [u8; 3] = [200, 140, 255];
+pub const RAIN: [u8; 3] = [150, 180, 230];
 
 impl Fx {
     pub fn new(seed: u64) -> Self {
-        Self { particles: Vec::with_capacity(MAX_PARTICLES), shake: 0.0, explosions: Vec::new(), rng: Rng::new(seed ^ 0xF00D) }
+        Self { particles: Vec::with_capacity(MAX_PARTICLES), shake: 0.0, flash: 0.0, explosions: Vec::new(), rng: Rng::new(seed ^ 0xF00D) }
     }
 
     pub fn spark(&mut self, x: f32, y: f32, vx: f32, vy: f32, life: f32, col: [u8; 3]) {
@@ -80,6 +83,21 @@ impl Fx {
                     return false;
                 }
                 let m = world.mat(cx, cy);
+                if p.col == RAIN && p.mat == M::Empty {
+                    if m == M::Fire {
+                        world.set(cx, cy, Cell::EMPTY);
+                        return false;
+                    }
+                    if !m.passable() || m.kind() == Kind::Liquid {
+                        if self.rng.chance(0.02) && world.mat(cx, cy - 1) == M::Empty {
+                            world.place(cx, cy - 1, M::Water);
+                        }
+                        return false;
+                    }
+                    p.x = nx;
+                    p.y = ny;
+                    continue;
+                }
                 let blocked = if p.mat == M::Empty { !m.passable() || m.flammable() } else { !m.passable() };
                 if blocked {
                     if p.mat == M::Empty {
@@ -108,6 +126,13 @@ impl Fx {
         ps.append(&mut self.particles);
         self.particles = ps;
         self.shake *= (1.0 - 7.0 * dt).max(0.0);
+        self.flash = (self.flash - dt * 3.0).max(0.0);
+    }
+
+    pub fn rain_drop(&mut self, x: f32, y: f32, wind: f32) {
+        if self.particles.len() < MAX_PARTICLES {
+            self.particles.push(Particle { x, y, vx: wind, vy: 260.0, mat: M::Empty, shade: 0, life: 2.0, col: RAIN, glow: 0.0, gravity: 0.0 });
+        }
     }
 
     /// Blast a circle out of the world, flinging debris and lighting fires.

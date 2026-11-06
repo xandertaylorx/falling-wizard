@@ -1,21 +1,25 @@
-//! Turns the world into pixels: one RGBA image for the cells, a low-res light map drawn
-//! with multiply blending (darkness underground), and an additive glow for hot things.
+//! Rendering. The CPU writes two images for the visible area (plus a margin):
+//! colour (albedo) and light (emission + opacity). On the GPU, a ray-marching pass
+//! casts rays from every cell through the light image, so sky light pours into cave
+//! mouths, lava lights up caverns, and terrain casts real shadows. A blur pass smooths
+//! the rays, and a composite pass combines everything with tone mapping, bloom and
+//! a vignette.
 
-use macroquad::miniquad::{BlendFactor, BlendState, BlendValue, Equation, PipelineParams, ShaderSource};
+use macroquad::miniquad::{PipelineParams, ShaderSource, UniformType};
 use macroquad::prelude::*;
 
 use crate::cell::FIRE_FUEL;
 use crate::game::Game;
-use crate::materials::Material as M;
+use crate::materials::{Kind, Material as M};
 use crate::noise::{fbm, hash3, value_noise};
 use crate::world::{WH, WW};
 
-/// Target view height in cells; the pixel scale is chosen to fit it.
 pub const VIEW_CELLS_H: f32 = 180.0;
-/// World cells per light-map texel.
-const LS: i32 = 4;
+/// Extra cells rendered around the view so off-screen lights still shine in.
+const MARGIN: i32 = 28;
+/// Emission is stored divided by this so bright lights fit in 8 bits.
+const E: f32 = 4.0;
 
-/// A pixel buffer addressed in world coordinates.
 pub struct Canvas<'a> {
     pub px: &'a mut [u8],
     pub w: usize,
@@ -25,6 +29,18 @@ pub struct Canvas<'a> {
 }
 
 impl Canvas<'_> {
+    #[inline]
+    pub fn blend(&mut self, gx: i32, gy: i32, rgb: [u8; 3], a: f32) {
+        let (x, y) = (gx - self.x0, gy - self.y0);
+        if x < 0 || y < 0 || x as usize >= self.w || y as usize >= self.h {
+            return;
+        }
+        let o = (y as usize * self.w + x as usize) * 4;
+        for k in 0..3 {
+            self.px[o + k] = (self.px[o + k] as f32 * (1.0 - a) + rgb[k] as f32 * a) as u8;
+        }
+    }
+
     #[inline]
     pub fn put(&mut self, gx: i32, gy: i32, rgb: [u8; 3]) {
         let (x, y) = (gx - self.x0, gy - self.y0);
@@ -38,7 +54,6 @@ impl Canvas<'_> {
     }
 }
 
-/// What part of the world is on screen.
 #[derive(Clone, Copy)]
 pub struct View {
     pub scale: f32,
@@ -51,23 +66,19 @@ pub struct View {
 }
 
 impl View {
-    pub fn new(cx: f32, cy: f32, sw: f32, sh: f32) -> Self {
-        let scale = (sh / VIEW_CELLS_H).floor().max(1.0);
+    pub fn new(cx: f32, cy: f32, sw: f32, sh: f32, zoom: f32) -> Self {
+        let scale = (sh / VIEW_CELLS_H).floor().max(1.0) * zoom;
         let (vw, vh) = (sw / scale, sh / scale);
         let (left, top) = (cx - vw * 0.5, cy - vh * 0.5);
-        Self {
-            scale,
-            left,
-            top,
-            x0: left.floor() as i32,
-            y0: top.floor() as i32,
-            w: vw.ceil() as usize + 1,
-            h: vh.ceil() as usize + 1,
-        }
+        Self { scale, left, top, x0: left.floor() as i32, y0: top.floor() as i32, w: vw.ceil() as usize + 1, h: vh.ceil() as usize + 1 }
     }
 
     pub fn to_world(&self, sx: f32, sy: f32) -> (f32, f32) {
         (self.left + sx / self.scale, self.top + sy / self.scale)
+    }
+
+    pub fn to_screen(&self, wx: f32, wy: f32) -> (f32, f32) {
+        ((wx - self.left) * self.scale, (wy - self.top) * self.scale)
     }
 }
 
@@ -82,277 +93,375 @@ void main() {
     uv = texcoord;
 }"#;
 
-const FRAGMENT: &str = r#"#version 100
+const GI_FRAG: &str = r#"#version 100
+precision highp float;
 varying lowp vec2 uv;
 uniform sampler2D Texture;
+uniform vec2 u_texel;
+uniform float u_rays;
+uniform float u_seed;
+float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233)) + u_seed) * 43758.5453); }
 void main() {
-    gl_FragColor = texture2D(Texture, uv);
+    vec2 p0 = uv;
+    vec3 acc = vec3(0.0);
+    float jitter = hash(floor(uv / u_texel));
+    for (int r = 0; r < 40; r++) {
+        if (float(r) >= u_rays) break;
+        float a = (float(r) + jitter) * 6.2831853 / u_rays;
+        vec2 dir = vec2(cos(a), sin(a)) * u_texel;
+        vec2 p = p0;
+        float trans = 1.0;
+        float stp = 1.0;
+        for (int s = 0; s < 40; s++) {
+            p += dir * stp;
+            if (p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0) break;
+            vec4 c = texture2D(Texture, p);
+            acc += c.rgb * trans * min(stp, 2.0);
+            trans *= pow(1.0 - c.a, stp);
+            if (trans < 0.02) break;
+            stp *= 1.08;
+        }
+    }
+    gl_FragColor = vec4(acc / u_rays * 0.5, 1.0);
 }"#;
 
-fn blend_material(blend: BlendState) -> Material {
+const BLUR_FRAG: &str = r#"#version 100
+precision mediump float;
+varying lowp vec2 uv;
+uniform sampler2D Texture;
+uniform vec2 u_texel;
+void main() {
+    vec2 o = u_texel * 1.5;
+    vec3 c = texture2D(Texture, uv).rgb * 0.25;
+    c += (texture2D(Texture, uv + vec2(o.x, 0.0)).rgb + texture2D(Texture, uv - vec2(o.x, 0.0)).rgb
+        + texture2D(Texture, uv + vec2(0.0, o.y)).rgb + texture2D(Texture, uv - vec2(0.0, o.y)).rgb) * 0.125;
+    c += (texture2D(Texture, uv + o).rgb + texture2D(Texture, uv - o).rgb
+        + texture2D(Texture, uv + vec2(o.x, -o.y)).rgb + texture2D(Texture, uv + vec2(-o.x, o.y)).rgb) * 0.0625;
+    gl_FragColor = vec4(c, 1.0);
+}"#;
+
+const COMP_FRAG: &str = r#"#version 100
+precision mediump float;
+varying lowp vec2 uv;
+uniform sampler2D Texture;
+uniform sampler2D Light;
+uniform sampler2D Emit;
+uniform vec2 u_size;
+uniform vec2 u_player;
+uniform float u_flash;
+uniform float u_ambient;
+uniform float u_flip;
+void main() {
+    vec4 alb = texture2D(Texture, uv);
+    vec4 em = texture2D(Emit, uv);
+    vec2 luv = vec2(uv.x, mix(uv.y, 1.0 - uv.y, u_flip));
+    vec3 L = texture2D(Light, luv).rgb * 8.0;
+    float d = length((uv - u_player) * u_size);
+    float torch = max(0.0, 1.0 - d / 64.0);
+    L += vec3(1.0, 0.86, 0.66) * torch * torch * 0.95;
+    L = max(L, vec3(alb.a * 0.97, alb.a, alb.a * 1.03));
+    L += vec3(u_flash);
+    L = max(L, vec3(u_ambient));
+    vec3 col;
+    if (abs(em.a - 0.5) < 0.03) {
+        col = alb.rgb + max(L - 1.0, 0.0) * 0.15;
+    } else {
+        col = alb.rgb * L * 1.35;
+        col += em.rgb * 3.2 * (0.6 + 0.4 * alb.rgb);
+        col += max(L - 1.1, 0.0) * 0.18;
+        col = 1.0 - exp(-col * 1.25);
+    }
+    vec2 q = uv * 2.0 - 1.0;
+    float vig = 1.0 - 0.28 * pow(clamp(length(q * vec2(0.85, 1.0)), 0.0, 1.5), 2.6);
+    gl_FragColor = vec4(col * vig, 1.0);
+}"#;
+
+fn material(frag: &str, uniforms: &[(&str, UniformType)], textures: &[&str]) -> Material {
     load_material(
-        ShaderSource::Glsl { vertex: VERTEX, fragment: FRAGMENT },
-        MaterialParams { pipeline_params: PipelineParams { color_blend: Some(blend), ..Default::default() }, ..Default::default() },
+        ShaderSource::Glsl { vertex: VERTEX, fragment: frag },
+        MaterialParams {
+            pipeline_params: PipelineParams::default(),
+            uniforms: uniforms.iter().map(|(n, t)| UniformDesc::new(n, *t)).collect(),
+            textures: textures.iter().map(|s| s.to_string()).collect(),
+        },
     )
-    .expect("blend material")
+    .unwrap_or_else(|e| panic!("shader failed to compile: {e:?}"))
 }
 
 pub struct Renderer {
-    img: Image,
-    tex: Texture2D,
-    dark: Image,
-    dark_tex: Texture2D,
-    glow: Image,
-    glow_tex: Texture2D,
-    multiply: Material,
-    additive: Material,
-    em: Vec<[f32; 3]>,
-    tmp: Vec<[f32; 3]>,
+    albedo: Image,
+    emit: Image,
+    alb_tex: Texture2D,
+    emit_tex: Texture2D,
+    light_rt: RenderTarget,
+    blur_rt: RenderTarget,
+    gi: Material,
+    blur: Material,
+    comp: Material,
     far: Vec<f32>,
     near: Vec<f32>,
-    gw: usize,
-    gh: usize,
+    w: usize,
+    h: usize,
     pub fire_visible: usize,
     pub lava_visible: usize,
+    pub rays: f32,
+    pub flip: f32,
 }
 
 impl Renderer {
     pub fn new() -> Self {
         let img = Image::gen_image_color(4, 4, BLACK);
-        let tex = Texture2D::from_image(&img);
         Self {
-            dark: img.clone(),
-            dark_tex: Texture2D::from_image(&img),
-            glow: img.clone(),
-            glow_tex: Texture2D::from_image(&img),
-            img,
-            tex,
-            multiply: blend_material(BlendState::new(Equation::Add, BlendFactor::Zero, BlendFactor::Value(BlendValue::SourceColor))),
-            additive: blend_material(BlendState::new(Equation::Add, BlendFactor::One, BlendFactor::One)),
-            em: Vec::new(),
-            tmp: Vec::new(),
+            alb_tex: Texture2D::from_image(&img),
+            emit_tex: Texture2D::from_image(&img),
+            albedo: img.clone(),
+            emit: img,
+            light_rt: render_target(4, 4),
+            blur_rt: render_target(4, 4),
+            gi: material(GI_FRAG, &[("u_texel", UniformType::Float2), ("u_rays", UniformType::Float1), ("u_seed", UniformType::Float1)], &[]),
+            blur: material(BLUR_FRAG, &[("u_texel", UniformType::Float2)], &[]),
+            comp: material(
+                COMP_FRAG,
+                &[
+                    ("u_size", UniformType::Float2),
+                    ("u_player", UniformType::Float2),
+                    ("u_flash", UniformType::Float1),
+                    ("u_ambient", UniformType::Float1),
+                    ("u_flip", UniformType::Float1),
+                ],
+                &["Light", "Emit"],
+            ),
             far: Vec::new(),
             near: Vec::new(),
-            gw: 0,
-            gh: 0,
+            w: 0,
+            h: 0,
             fire_visible: 0,
             lava_visible: 0,
+            rays: 24.0,
+            flip: 0.0,
         }
     }
 
-    fn ensure(&mut self, w: usize, h: usize, gw: usize, gh: usize) {
-        if self.img.width as usize != w || self.img.height as usize != h {
-            self.img = Image::gen_image_color(w as u16, h as u16, BLACK);
-            self.tex = Texture2D::from_image(&self.img);
-            self.tex.set_filter(FilterMode::Nearest);
-            self.far = vec![0.0; w];
-            self.near = vec![0.0; w];
+    fn ensure(&mut self, w: usize, h: usize) {
+        if self.w == w && self.h == h {
+            return;
         }
-        if self.gw != gw || self.gh != gh {
-            self.gw = gw;
-            self.gh = gh;
-            self.dark = Image::gen_image_color(gw as u16, gh as u16, WHITE);
-            self.glow = Image::gen_image_color(gw as u16, gh as u16, BLACK);
-            self.dark_tex = Texture2D::from_image(&self.dark);
-            self.glow_tex = Texture2D::from_image(&self.glow);
-            self.dark_tex.set_filter(FilterMode::Linear);
-            self.glow_tex.set_filter(FilterMode::Linear);
-            self.em = vec![[0.0; 3]; gw * gh];
-            self.tmp = vec![[0.0; 3]; gw * gh];
-        }
+        self.w = w;
+        self.h = h;
+        self.albedo = Image::gen_image_color(w as u16, h as u16, BLACK);
+        self.emit = Image::gen_image_color(w as u16, h as u16, BLACK);
+        self.alb_tex = Texture2D::from_image(&self.albedo);
+        self.alb_tex.set_filter(FilterMode::Nearest);
+        self.emit_tex = Texture2D::from_image(&self.emit);
+        self.emit_tex.set_filter(FilterMode::Nearest);
+        self.light_rt = render_target(w as u32, h as u32);
+        self.light_rt.texture.set_filter(FilterMode::Linear);
+        self.blur_rt = render_target(w as u32, h as u32);
+        self.blur_rt.texture.set_filter(FilterMode::Linear);
+        self.far = vec![0.0; w];
+        self.near = vec![0.0; w];
     }
 
     pub fn draw(&mut self, game: &mut Game, view: &View, shake: (f32, f32), time: f32) {
-        let (w, h) = (view.w, view.h);
-        let lgx0 = view.x0.div_euclid(LS) - 2;
-        let lgy0 = view.y0.div_euclid(LS) - 2;
-        let gw = w / LS as usize + 5;
-        let gh = h / LS as usize + 5;
-        self.ensure(w, h, gw, gh);
-        self.em.fill([0.0; 3]);
+        let (x0, y0) = (view.x0 - MARGIN, view.y0 - MARGIN);
+        let (w, h) = (view.w + 2 * MARGIN as usize, view.h + 2 * MARGIN as usize);
+        self.ensure(w, h);
 
         let world = &game.world;
         let frame = world.frame;
+        let day = game.weather.daylight();
+        let tod = game.weather.time;
+        let rain = game.weather.rain;
 
-        // Emissive cells over the light map's (slightly larger) area.
-        for ly in 0..gh as i32 * LS {
-            let gy = lgy0 * LS + ly;
-            let wy = gy - world.oy;
-            if wy < 0 || wy as usize >= WH {
-                continue;
-            }
-            for lx in 0..gw as i32 * LS {
-                let gx = lgx0 * LS + lx;
-                let wx = gx - world.ox;
-                if wx < 0 || wx as usize >= WW {
-                    continue;
-                }
-                let c = &world.cells[wy as usize * WW + wx as usize];
-                let e = match c.mat {
-                    M::Fire => {
-                        let k = if c.temp >= FIRE_FUEL { 1.0 } else { 0.7 };
-                        [k, 0.48 * k, 0.12 * k]
-                    }
-                    m => match m.emissive() {
-                        Some(e) => e,
-                        None => continue,
-                    },
-                };
-                let v = &mut self.em[(ly / LS) as usize * gw + (lx / LS) as usize];
-                v[0] += e[0];
-                v[1] += e[1];
-                v[2] += e[2];
-            }
-        }
-
-        // Sky parallax silhouettes per column.
         for vx in 0..w {
-            let fx = view.left * 0.45 + vx as f32;
-            let nx = view.left * 0.7 + vx as f32;
+            let fx = view.left * 0.45 + (vx as i32 - MARGIN) as f32;
+            let nx = view.left * 0.7 + (vx as i32 - MARGIN) as f32;
             self.far[vx] = -30.0 - fbm(fx * 0.006, 1.0, 3, 31) * 90.0;
             self.near[vx] = 12.0 - fbm(nx * 0.011, 2.0, 3, 37) * 70.0;
         }
+        let sky_ctx = SkyCtx { view: *view, day, tod, rain, time, far: &self.far, near: &self.near };
+        let sky_light = [0.92 * day + 0.04, 0.95 * day + 0.05, 1.0 * day + 0.09];
 
         let (mut fire, mut lava) = (0, 0);
-        let px = &mut self.img.bytes;
+        let alb = &mut self.albedo.bytes;
+        let emit = &mut self.emit.bytes;
         for vy in 0..h {
-            let gy = view.y0 + vy as i32;
+            let gy = y0 + vy as i32;
             let wy = gy - world.oy;
             for vx in 0..w {
-                let gx = view.x0 + vx as i32;
+                let gx = x0 + vx as i32;
                 let wx = gx - world.ox;
                 let o = (vy * w + vx) * 4;
                 if wx < 0 || wy < 0 || wx as usize >= WW || wy as usize >= WH {
-                    px[o..o + 4].copy_from_slice(&[0, 0, 0, 255]);
+                    alb[o..o + 4].copy_from_slice(&[0, 0, 0, 255]);
+                    emit[o..o + 4].copy_from_slice(&[0, 0, 0, 255]);
                     continue;
                 }
                 let i = wy as usize * WW + wx as usize;
                 let c = world.cells[i];
+                let wall = world.wall[i];
+                let is_sky = c.mat == M::Empty && wall == 0;
                 let bg = || {
-                    let wall = world.wall[i];
                     if wall == 0 {
-                        sky(view, vx, vy, &self.far, &self.near, time)
+                        sky(&sky_ctx, vx, vy, gy)
                     } else {
                         let depth = (gy - world.surf[wx as usize]) as f32;
                         let base = if depth < 30.0 {
-                            lerp3([76, 56, 44], [56, 52, 64], depth / 30.0)
+                            lerp3([86, 64, 50], [64, 60, 72], depth / 30.0)
                         } else {
-                            lerp3([56, 52, 64], [38, 32, 46], (depth - 220.0) / 80.0)
+                            lerp3([64, 60, 72], [44, 38, 54], (depth - 220.0) / 80.0)
                         };
-                        shade(base, wall, 0.55)
+                        shade(base, wall, 0.5)
                     }
                 };
-                let rgb = match c.mat {
-                    M::Empty => bg(),
-                    M::Smoke => lerp3(bg(), M::Smoke.base_color(), (c.life as f32 / 90.0).min(1.0) * 0.85),
-                    M::Steam => lerp3(bg(), M::Steam.base_color(), (c.life as f32 / 60.0).min(1.0) * 0.6),
-                    M::Glass => lerp3(bg(), shade(M::Glass.base_color(), c.shade, 0.1), 0.45),
+                // Colour, emitted light (0..E) and opacity.
+                let (mut rgb, mut e, a): ([u8; 3], [f32; 3], f32) = match c.mat {
+                    M::Empty => (bg(), if is_sky { sky_light } else { [0.0; 3] }, if is_sky { 0.5 } else { 0.0 }),
+                    M::Smoke => (lerp3(bg(), M::Smoke.base_color(), (c.life as f32 / 90.0).min(1.0) * 0.85), [0.0; 3], 0.12),
+                    M::Steam => (lerp3(bg(), M::Steam.base_color(), (c.life as f32 / 60.0).min(1.0) * 0.6), [0.0; 3], 0.05),
+                    M::Gas => (lerp3(bg(), M::Gas.base_color(), 0.22), [0.0; 3], 0.02),
+                    M::Glass => (lerp3(bg(), shade(M::Glass.base_color(), c.shade, 0.1), 0.45), [0.0; 3], 0.05),
                     M::Water => {
                         let tw = (hash3(gx, gy, (frame / 8) as u32) & 15) as u8;
-                        lerp3(bg(), shade(M::Water.base_color(), c.shade.saturating_add(tw), 0.14), 0.88)
+                        (lerp3(bg(), shade(M::Water.base_color(), c.shade.saturating_add(tw), 0.14), 0.85), [0.0; 3], 0.1)
                     }
                     M::Fire => {
                         fire += 1;
                         let hh = hash3(gx, gy, (frame / 2) as u32 ^ ((c.life as u32) << 8));
                         let heat = if c.temp >= FIRE_FUEL { 0.3 } else { 0.0 } + (c.life as f32 / 25.0).min(1.0) * 0.35;
                         let v = (hh & 255) as f32 / 255.0 * 0.6 + heat;
-                        FIRE_PAL[((v * 5.0) as usize).min(4)]
+                        let col = FIRE_PAL[((v * 5.0) as usize).min(4)];
+                        (col, [col[0] as f32 / 255.0 * 1.6, col[1] as f32 / 255.0 * 1.2, col[2] as f32 / 255.0 * 0.6], 0.15)
                     }
                     M::Lava => {
                         lava += 1;
                         let hh = hash3(gx.div_euclid(2), gy.div_euclid(2), (frame / 9) as u32);
                         let v = (hh & 255) as f32 / 255.0 * 0.6 + c.shade as f32 / 255.0 * 0.4;
-                        lerp3([196, 46, 8], [255, 176, 48], v)
+                        (lerp3([196, 46, 8], [255, 176, 48], v), [2.0, 0.8, 0.15], 1.0)
                     }
-                    M::Gold if hash3(gx, gy, (frame / 6) as u32) % 97 == 0 => [255, 250, 215],
-                    M::Plant if c.shade > 248 => [232, 84, 96],
-                    M::Plant if c.shade > 241 => [250, 220, 84],
-                    M::Oil if c.temp > 20 => shade(lerp3(M::Oil.base_color(), [150, 60, 30], c.temp as f32 / 120.0), c.shade, 0.3),
-                    m => shade(m.base_color(), c.shade, m.variation()),
+                    M::Gold if hash3(gx, gy, (frame / 6) as u32) % 97 == 0 => ([255, 250, 215], [0.6, 0.55, 0.3], 1.0),
+                    M::Plant if c.shade > 248 => ([232, 84, 96], [0.0; 3], 0.3),
+                    M::Plant if c.shade > 241 => ([250, 220, 84], [0.0; 3], 0.3),
+                    M::Oil if c.temp > 20 => (shade(lerp3(M::Oil.base_color(), [150, 60, 30], c.temp as f32 / 120.0), c.shade, 0.3), [0.0; 3], 0.6),
+                    m => {
+                        let col = shade(m.base_color(), c.shade, m.variation());
+                        let em = m.emissive().map(|e| [e[0] * 1.5, e[1] * 1.5, e[2] * 1.5]).unwrap_or([0.0; 3]);
+                        let a = match m {
+                            M::Leaves => 0.45,
+                            M::Plant | M::Mushroom | M::Sprout => 0.3,
+                            M::Cloud => 0.15,
+                            M::Acid | M::Blood | M::Goo | M::Oil => 0.35,
+                            _ => 1.0,
+                        };
+                        (col, em, a)
+                    }
                 };
-                px[o] = rgb[0];
-                px[o + 1] = rgb[1];
-                px[o + 2] = rgb[2];
-                px[o + 3] = 255;
+                // Bevel solid edges: lit tops, shaded undersides.
+                if a >= 1.0 && matches!(c.mat.kind(), Kind::Static | Kind::Powder) {
+                    let up = world.mat(gx, gy - 1);
+                    let dn = world.mat(gx, gy + 1);
+                    let k = if !up.solid() && up.kind() != Kind::Liquid {
+                        1.22
+                    } else if !dn.solid() && dn.kind() != Kind::Liquid {
+                        0.78
+                    } else if !world.mat(gx - 1, gy).solid() || !world.mat(gx + 1, gy).solid() {
+                        1.06
+                    } else {
+                        1.0
+                    };
+                    rgb = [(rgb[0] as f32 * k).min(255.0) as u8, (rgb[1] as f32 * k).min(255.0) as u8, (rgb[2] as f32 * k).min(255.0) as u8];
+                }
+                if is_sky {
+                    e = sky_light;
+                }
+                // Ambient sky light: full outdoors, fading with depth below the surface.
+                let depth = (gy - world.surf[wx as usize]) as f32;
+                let open = if gy < -260 { 0.9 } else { day * 0.85 + 0.15 } * (1.0 - rain * 0.25);
+                let amb = if depth <= 3.0 { 1.0 } else { (1.0 - (depth - 3.0) / 45.0).max(0.0) } * open;
+                alb[o] = rgb[0];
+                alb[o + 1] = rgb[1];
+                alb[o + 2] = rgb[2];
+                alb[o + 3] = (amb * 255.0) as u8;
+                emit[o] = ((e[0] / E).min(1.0) * 255.0) as u8;
+                emit[o + 1] = ((e[1] / E).min(1.0) * 255.0) as u8;
+                emit[o + 2] = ((e[2] / E).min(1.0) * 255.0) as u8;
+                emit[o + 3] = (a * 255.0) as u8;
             }
         }
         self.fire_visible = fire;
         self.lava_visible = lava;
 
-        // Moving things on top.
-        let mut cv = Canvas { px: &mut self.img.bytes, w, h, x0: view.x0, y0: view.y0 };
-        game.fx.draw(&mut cv);
-        game.spells.draw(&mut cv, time);
-        let ready = game.cast_ready();
-        let (ax, ay) = game.aim;
-        game.player.draw(&mut cv, ax, ay, ready);
-
-        // Dynamic lights.
+        // Moving things.
         {
-            let (gw_i, gh_i) = (gw as i32, gh as i32);
-            let em = &mut self.em;
+            let mut cv = Canvas { px: &mut self.albedo.bytes, w, h, x0, y0 };
+            game.fx.draw(&mut cv);
+            game.weather.draw(&mut cv);
+            let (ppx, ppy) = game.player.center();
+            game.mobs.draw(&mut cv, ppx, ppy);
+            game.spells.draw(&mut cv, time);
+            let ready = game.cast_ready();
+            let (ax, ay) = game.aim;
+            game.player.draw(&mut cv, ax, ay, ready);
+        }
+        {
+            let emit = &mut self.emit.bytes;
             let mut add = |x: f32, y: f32, c: [f32; 3]| {
-                let (lx, ly) = ((x.floor() as i32).div_euclid(LS) - lgx0, (y.floor() as i32).div_euclid(LS) - lgy0);
-                if lx >= 0 && ly >= 0 && lx < gw_i && ly < gh_i {
-                    let v = &mut em[(ly * gw_i + lx) as usize];
-                    v[0] += c[0];
-                    v[1] += c[1];
-                    v[2] += c[2];
+                let (lx, ly) = (x.floor() as i32 - x0, y.floor() as i32 - y0);
+                if lx < 0 || ly < 0 || lx as usize >= w || ly as usize >= h {
+                    return;
+                }
+                let o = (ly as usize * w + lx as usize) * 4;
+                for k in 0..3 {
+                    let v = emit[o + k] as f32 + (c[k] * 0.35 / E).min(1.0) * 255.0;
+                    emit[o + k] = v.min(255.0) as u8;
                 }
             };
             game.fx.lights(&mut add);
             game.spells.lights(&mut add);
-        }
-        for _ in 0..3 {
-            blur(&self.em, &mut self.tmp, gw, gh, 1, 0);
-            blur(&self.tmp, &mut self.em, gw, gh, 0, 1);
+            game.mobs.lights(&mut add);
+            game.weather.lights(&mut add);
         }
 
-        // Compose the darkness and glow maps.
-        let (pcx, pcy) = game.player.center();
-        let alive = !game.player.dead();
-        for j in 0..gh {
-            for i in 0..gw {
-                let wx = (lgx0 + i as i32) * LS + LS / 2;
-                let wy = (lgy0 + j as i32) * LS + LS / 2;
-                let depth = (wy - world.surface_at(wx)) as f32;
-                let amb = if depth < 4.0 { 1.0 } else { (1.0 - (depth - 4.0) / 70.0).max(0.2) };
-                let torch = if alive {
-                    let d = ((wx as f32 - pcx).powi(2) + (wy as f32 - pcy).powi(2)).sqrt();
-                    (1.0 - d / 48.0).max(0.0).powf(1.3) * 0.8
-                } else {
-                    0.0
-                };
-                let e = self.em[j * gw + i];
-                let o = (j * gw + i) * 4;
-                let l = [
-                    amb + torch + e[0] * 0.35,
-                    amb + torch * 0.85 + e[1] * 0.35,
-                    amb * (0.92 + 0.08 * amb) + torch * 0.65 + e[2] * 0.35,
-                ];
-                for k in 0..3 {
-                    self.dark.bytes[o + k] = (l[k].min(1.0) * 255.0) as u8;
-                    self.glow.bytes[o + k] = ((1.0 - (-e[k] * 0.06).exp()) * 200.0) as u8;
-                }
-                self.dark.bytes[o + 3] = 255;
-                self.glow.bytes[o + 3] = 255;
-            }
-        }
+        self.alb_tex.update(&self.albedo);
+        self.emit_tex.update(&self.emit);
 
-        self.tex.update(&self.img);
-        self.dark_tex.update(&self.dark);
-        self.glow_tex.update(&self.glow);
+        // GPU: rays -> blur -> composite.
+        let (wf, hf) = (w as f32, h as f32);
+        let texel = vec2(1.0 / wf, 1.0 / hf);
+        let cam = |rt: &RenderTarget| {
+            let mut c = Camera2D::from_display_rect(Rect::new(0.0, 0.0, wf, hf));
+            c.render_target = Some(rt.clone());
+            c
+        };
+        set_camera(&cam(&self.light_rt));
+        clear_background(BLACK);
+        gl_use_material(&self.gi);
+        self.gi.set_uniform("u_texel", texel);
+        self.gi.set_uniform("u_rays", self.rays);
+        self.gi.set_uniform("u_seed", (frame % 64) as f32 * 0.37);
+        draw_texture_ex(&self.emit_tex, 0.0, 0.0, WHITE, DrawTextureParams { dest_size: Some(vec2(wf, hf)), ..Default::default() });
+        set_camera(&cam(&self.blur_rt));
+        clear_background(BLACK);
+        gl_use_material(&self.blur);
+        self.blur.set_uniform("u_texel", texel);
+        draw_texture_ex(&self.light_rt.texture, 0.0, 0.0, WHITE, DrawTextureParams { dest_size: Some(vec2(wf, hf)), ..Default::default() });
+        gl_use_default_material();
+        set_default_camera();
 
         let s = view.scale;
-        let (ox, oy) = ((view.x0 as f32 - view.left) * s + shake.0, (view.y0 as f32 - view.top) * s + shake.1);
-        draw_texture_ex(&self.tex, ox, oy, WHITE, DrawTextureParams { dest_size: Some(vec2(w as f32 * s, h as f32 * s)), ..Default::default() });
-        let lx = ((lgx0 * LS) as f32 - view.left) * s + shake.0;
-        let ly = ((lgy0 * LS) as f32 - view.top) * s + shake.1;
-        let size = Some(vec2((gw as i32 * LS) as f32 * s, (gh as i32 * LS) as f32 * s));
-        gl_use_material(&self.multiply);
-        draw_texture_ex(&self.dark_tex, lx, ly, WHITE, DrawTextureParams { dest_size: size, ..Default::default() });
-        gl_use_material(&self.additive);
-        draw_texture_ex(&self.glow_tex, lx, ly, WHITE, DrawTextureParams { dest_size: size, ..Default::default() });
+        let ox = (x0 as f32 - view.left) * s + shake.0;
+        let oy = (y0 as f32 - view.top) * s + shake.1;
+        let (ppx, ppy) = game.player.center();
+        let pu = if game.player.dead() { vec2(-10.0, -10.0) } else { vec2((ppx - x0 as f32) / wf, (ppy - y0 as f32) / hf) };
+        gl_use_material(&self.comp);
+        self.comp.set_texture("Light", self.blur_rt.texture.clone());
+        self.comp.set_texture("Emit", self.emit_tex.clone());
+        self.comp.set_uniform("u_size", vec2(wf, hf));
+        self.comp.set_uniform("u_player", pu);
+        self.comp.set_uniform("u_flash", game.fx.flash);
+        self.comp.set_uniform("u_ambient", 0.1f32);
+        self.comp.set_uniform("u_flip", self.flip);
+        draw_texture_ex(&self.alb_tex, ox, oy, WHITE, DrawTextureParams { dest_size: Some(vec2(wf * s, hf * s)), ..Default::default() });
         gl_use_default_material();
         game.spells.end_frame();
     }
@@ -360,40 +469,95 @@ impl Renderer {
 
 const FIRE_PAL: [[u8; 3]; 5] = [[150, 24, 8], [222, 58, 12], [255, 122, 20], [255, 188, 48], [255, 240, 150]];
 
-fn sky(view: &View, vx: usize, vy: usize, far: &[f32], near: &[f32], time: f32) -> [u8; 3] {
-    let wy = view.top + vy as f32;
-    let t = ((wy + 200.0) / 240.0).clamp(0.0, 1.0);
-    let c = lerp3([62, 106, 178], [182, 210, 230], t);
-    if view.top * 0.7 + vy as f32 >= near[vx] {
-        return lerp3(c, [84, 112, 150], 0.88);
-    }
-    if view.top * 0.45 + vy as f32 >= far[vx] {
-        return lerp3(c, [126, 154, 192], 0.8);
-    }
-    let n = value_noise((view.left * 0.25 + vx as f32 + time * 1.5) * 0.03, (view.top * 0.25 + vy as f32) * 0.1, 55);
-    if n > 0.6 {
-        lerp3(c, [244, 246, 250], ((n - 0.6) * 3.0).min(0.85))
-    } else {
-        c
-    }
+struct SkyCtx<'a> {
+    view: View,
+    day: f32,
+    tod: f32,
+    rain: f32,
+    time: f32,
+    far: &'a [f32],
+    near: &'a [f32],
 }
 
-fn blur(src: &[[f32; 3]], dst: &mut [[f32; 3]], w: usize, h: usize, sx: i32, sy: i32) {
-    for y in 0..h as i32 {
-        for x in 0..w as i32 {
-            let mut acc = [0.0f32; 3];
-            for k in -2..=2 {
-                let (xx, yy) = (x + k * sx, y + k * sy);
-                if xx < 0 || yy < 0 || xx >= w as i32 || yy >= h as i32 {
-                    continue;
-                }
-                let s = src[yy as usize * w + xx as usize];
-                acc[0] += s[0];
-                acc[1] += s[1];
-                acc[2] += s[2];
-            }
-            dst[y as usize * w + x as usize] = [acc[0] * 0.22, acc[1] * 0.22, acc[2] * 0.22];
+/// Sky: day/night gradient, sunset glow, sun and moon, clouds, parallax mountains,
+/// and a fade to starry space with a ringed planet as you fly higher.
+fn sky(c: &SkyCtx, vx: usize, vy: usize, gy: i32) -> [u8; 3] {
+    let v = &c.view;
+    let (sx, sy) = (vx as f32 - MARGIN as f32, vy as f32 - MARGIN as f32);
+    let t = ((gy as f32 + 200.0) / 240.0).clamp(0.0, 1.0);
+    let day = lerp3([60, 112, 196], [184, 212, 234], t);
+    let night = lerp3([6, 10, 28], [26, 34, 62], t);
+    let mut col = lerp3(night, day, c.day);
+    let dusk = (1.0 - (c.day - 0.35).abs() * 4.0).clamp(0.0, 1.0);
+    col = lerp3(col, [236, 140, 96], dusk * t * 0.55);
+    col = lerp3(col, [120, 126, 138], c.rain * 0.6);
+    let space = ((-(gy as f32) - 260.0) / 340.0).clamp(0.0, 1.0);
+    col = lerp3(col, [3, 3, 10], space);
+
+    // Stars and a ringed planet.
+    let stars = (1.0 - c.day * 1.4).max(space).max(0.0) * (1.0 - c.rain);
+    if stars > 0.0 {
+        let (px, py) = ((v.left * 0.05 + sx) as i32, (v.top * 0.05 + sy) as i32);
+        let hh = hash3(px, py, 77);
+        if hh % 211 == 0 {
+            let tw = 0.6 + 0.4 * ((c.time * 3.0 + (hh % 13) as f32).sin());
+            col = lerp3(col, [255, 255, 240], stars * tw);
         }
+    }
+    if space > 0.2 {
+        let (pcx, pcy) = (v.view_w() * 0.72 - v.left * 0.02, 40.0 - v.top * 0.03 - 30.0);
+        let (dx, dy) = (sx - pcx, sy - pcy);
+        let d = (dx * dx + dy * dy).sqrt();
+        let ring = ((dx * 0.9 + dy * 2.6).abs() < 2.2) && d > 16.0 && d < 34.0;
+        if d < 18.0 {
+            let lit = (1.0 - (dx + dy * 0.6) / 30.0).clamp(0.2, 1.0);
+            let band = if ((dy * 0.4 + value_noise(dx * 0.1, dy * 0.6, 4) * 3.0) as i32) % 2 == 0 { [196, 150, 110] } else { [170, 120, 96] };
+            return lerp3(col, shade(band, (lit * 255.0) as u8, 0.9), space);
+        } else if ring && (dy > 0.0 || d > 18.0) {
+            return lerp3(col, [210, 190, 160], space * 0.8);
+        }
+    }
+
+    // Sun by day, moon by night.
+    let phase = c.tod;
+    let (bx, by, r, bc) = if c.day > 0.05 {
+        let p = ((phase - 0.22) / 0.56).clamp(0.0, 1.0);
+        (p * v.view_w(), v.view_h() * (0.6 - (p * std::f32::consts::PI).sin() * 0.45), 7.0, [255, 244, 210])
+    } else {
+        let p = ((phase + 0.28).fract() / 0.56).clamp(0.0, 1.0);
+        (p * v.view_w(), v.view_h() * (0.6 - (p * std::f32::consts::PI).sin() * 0.45), 5.0, [226, 230, 240])
+    };
+    let d = ((sx - bx).powi(2) + (sy - by).powi(2)).sqrt();
+    if d < r {
+        return bc;
+    } else if d < r * 3.0 && c.day > 0.05 {
+        col = lerp3(col, [255, 236, 200], (1.0 - d / (r * 3.0)).powi(2) * 0.5);
+    }
+
+    if space < 0.6 {
+        let m = 1.0 - space / 0.6;
+        if v.top * 0.7 + sy >= c.near[vx] {
+            return lerp3(col, lerp3([20, 24, 40], [84, 112, 150], c.day), 0.88 * m);
+        }
+        if v.top * 0.45 + sy >= c.far[vx] {
+            return lerp3(col, lerp3([30, 36, 58], [126, 154, 192], c.day), 0.8 * m);
+        }
+    }
+    let n = value_noise((v.left * 0.25 + sx + c.time * 1.5) * 0.03, (v.top * 0.25 + sy) * 0.1, 55);
+    let cloudy = 0.6 - c.rain * 0.2;
+    if n > cloudy && space < 0.8 {
+        let cc = lerp3([60, 64, 84], [244, 246, 250], c.day.max(0.15));
+        col = lerp3(col, cc, ((n - cloudy) * 3.0).min(0.85) * (1.0 - space));
+    }
+    col
+}
+
+impl View {
+    fn view_w(&self) -> f32 {
+        self.w as f32
+    }
+    fn view_h(&self) -> f32 {
+        self.h as f32
     }
 }
 
