@@ -53,7 +53,6 @@ enum Screen {
     Settings,
     Controls,
     Dead,
-    Inventory,
 }
 
 fn random_seed() -> u64 {
@@ -74,7 +73,7 @@ fn bench() {
             game.player.y += if i % 400 == 199 { 150.0 } else { -100.0 };
         }
         let aim = (px + rng.rangef(-60.0, 60.0), py + rng.rangef(-20.0, 60.0));
-        game.wand = (i / 120) % game.wands.len();
+        game.spell = (i / 120) % spells::SPELL_BAR.len();
         if i % 600 == 0 {
             game.mobs.spawn(mobs::MobKind::Dragon, px + 40.0, py - 30.0);
             game.mobs.spawn(mobs::MobKind::Zombie, px + 20.0, py - 5.0);
@@ -237,7 +236,7 @@ async fn run(args: Vec<String>) {
                 (1.0, "menu"),
                 (3.6, "surface_mobs"),
                 (6.4, "spells"),
-                (7.6, "inventory"),
+                (7.4, "hotbar"),
                 (9.6, "caves"),
                 (11.6, "deep_lava"),
                 (13.6, "sky_isles"),
@@ -296,31 +295,22 @@ fn script_controls(app: &mut App, t: f64, secs: f64) -> Controls {
     ctl.input.up = at(2.0, 2.5);
     ctl.input.up_pressed = at(2.0, 2.05);
     ctl.input.dash = at(2.7, 2.72);
-    let fire = |wand: usize, aim: (f32, f32), g: &mut Game, ctl: &mut Controls| {
-        g.wand = wand;
+    let fire = |spell: usize, aim: (f32, f32), g: &mut Game, ctl: &mut Controls| {
+        g.spell = spell;
         ctl.aim = aim;
         ctl.primary = true;
     };
     if at(3.7, 4.4) {
         fire(0, (px + 60.0, py - 6.0), g, &mut ctl);
     } else if at(4.5, 4.6) {
-        fire(1, (px + 40.0, py - 10.0), g, &mut ctl);
+        fire(2, (px + 40.0, py - 10.0), g, &mut ctl);
     } else if at(5.0, 5.8) {
-        fire(2, (px + 10.0, py + 40.0), g, &mut ctl);
+        fire(9, (px + 10.0, py + 40.0), g, &mut ctl);
     }
-    if at(6.6, 6.62) {
-        // Build a combo: Trigger + Triple + Spark -> Lightning.
-        g.wands[0].slots = vec![Some(spells::Card::Trigger), Some(spells::Card::Triple), Some(spells::Card::Spark), Some(spells::Card::Lightning)];
-    }
-    if at(6.7, 6.9) {
-        fire(0, (px + 80.0, py - 20.0), g, &mut ctl);
-    }
-    if at(7.0, 7.02) {
-        g.held = None;
-        app.screen = Screen::Inventory;
-    }
-    if at(7.9, 7.92) {
-        app.screen = Screen::Play;
+    if at(6.6, 6.7) {
+        fire(3, (px + 80.0, py - 20.0), g, &mut ctl);
+    } else if at(7.0, 7.1) {
+        fire(1, (px + 60.0, py - 10.0), g, &mut ctl);
     }
     let warp = |dx: f32, y: f32, surface_rel: bool, g: &mut Game| {
         let x = g.player.x + dx;
@@ -397,29 +387,6 @@ impl App {
                 if self.take_esc() {
                     self.screen = Screen::Pause;
                 }
-                if is_key_pressed(KeyCode::Tab) && self.screen == Screen::Play {
-                    self.screen = Screen::Inventory;
-                }
-            }
-            Screen::Inventory => {
-                if is_key_pressed(KeyCode::Tab) || self.take_esc() {
-                    self.game.stow_held();
-                    self.screen = Screen::Play;
-                }
-            }
-            Screen::Menu => {
-                // Drift across the landscape behind the title.
-                self.menu_x += dt * 14.0;
-                let x = self.game.player.x + self.menu_x;
-                let y = self.game.world.gen.surface(x as i32) as f32 + 10.0;
-                self.game.cam.0 = x;
-                self.game.cam.1 += (y - self.game.cam.1) * (dt * 1.5).min(1.0);
-                let ctl = Controls { aim: self.game.cam, ..Default::default() };
-                self.game.update(dt, &ctl, true);
-            }
-            Screen::Dead => {
-                let ctl = Controls { aim: self.game.cam, ..Default::default() };
-                self.game.update(dt, &ctl, false);
             }
             _ => {}
         }
@@ -461,13 +428,9 @@ impl App {
             Screen::Settings => self.settings_screen(),
             Screen::Controls => self.controls_screen(),
             Screen::Dead => self.dead(),
-            Screen::Inventory => {
-                self.ui.hud(&mut self.game, &view, self.fps, false);
-                self.ui.inventory(&mut self.game);
-            }
         }
         if self.screen != Screen::Play {
-            show_mouse(self.screen != Screen::Inventory || self.game.held.is_none());
+            show_mouse(true);
         }
         if self.ui.clicked {
             if let Some(a) = &mut self.audio {
@@ -499,13 +462,14 @@ impl App {
             KeyCode::Key8,
             KeyCode::Key9,
             KeyCode::Key0,
+            KeyCode::Minus,
         ];
         for (k, key) in keys.iter().enumerate() {
             if is_key_pressed(*key) {
                 if g.sandbox {
                     g.brush = k.min(PALETTE.len() - 1);
-                } else if k < g.wands.len() {
-                    g.wand = k;
+                } else if k < spells::SPELL_BAR.len() {
+                    g.spell = k;
                 }
             }
         }
@@ -518,7 +482,7 @@ impl App {
                 g.brush = (g.brush as i32 + qe).rem_euclid(PALETTE.len() as i32) as usize;
             }
         } else if step + qe != 0 {
-            g.wand = (g.wand as i32 + step + qe).rem_euclid(g.wands.len() as i32) as usize;
+            g.spell = (g.spell as i32 + step + qe).rem_euclid(spells::SPELL_BAR.len() as i32) as usize;
         }
 
         Controls {
@@ -682,10 +646,9 @@ impl App {
             ("S", "GLIDE"),
             ("SHIFT", "DASH"),
             ("F", "GRAPPLING VINE"),
-            ("LEFT MOUSE", "CAST WAND"),
+            ("LEFT MOUSE", "CAST SPELL"),
             ("RIGHT MOUSE", "DIG"),
-            ("1 - 4 / WHEEL", "CHOOSE WAND"),
-            ("TAB", "EDIT WANDS & SPELLS"),
+            ("1 - 9, 0, - / WHEEL", "CHOOSE SPELL"),
             ("E", "OPEN CHEST / USE ALTAR"),
             ("B", "SANDBOX BRUSH"),
             ("ESC  /  F11", "PAUSE  /  FULLSCREEN"),

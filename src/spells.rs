@@ -1,15 +1,12 @@
 //! Spell cards, wands and everything they shoot.
 //!
-//! A wand is a row of slots. Casting walks the slots from a cursor: modifier cards
-//! stack up until a projectile card fires with them. A Trigger modifier makes the
-//! projectile carry the *next* projectile and release it where it lands.
+//! Each spell sits in its own numbered hotbar slot.
 
 use crate::audio::Sfx;
 use crate::cell::Cell;
 use crate::fx::{Fx, FROST, MAGIC, SPARK};
 use crate::materials::Material as M;
 use crate::mobs::Mobs;
-use crate::noise::Rng;
 use crate::render::Canvas;
 use crate::world::World;
 
@@ -26,34 +23,20 @@ pub enum Card {
     Seeds,
     Torrent,
     DigBeam,
-    Triple,
-    Bounce,
-    Homing,
-    Heavy,
-    Speed,
-    FireTrail,
-    Trigger,
 }
 
-pub const ALL_CARDS: [Card; 18] = [
+pub const SPELL_BAR: [Card; 11] = [
     Card::Spark,
     Card::Fireball,
     Card::Bomb,
-    Card::Frost,
-    Card::Teleport,
-    Card::AcidBall,
     Card::Lightning,
-    Card::DigBolt,
-    Card::Seeds,
+    Card::Frost,
+    Card::AcidBall,
     Card::Torrent,
+    Card::Seeds,
+    Card::Teleport,
     Card::DigBeam,
-    Card::Triple,
-    Card::Bounce,
-    Card::Homing,
-    Card::Heavy,
-    Card::Speed,
-    Card::FireTrail,
-    Card::Trigger,
+    Card::DigBolt,
 ];
 
 impl Card {
@@ -70,13 +53,6 @@ impl Card {
             Card::Seeds => "Seeds of Life",
             Card::Torrent => "Torrent",
             Card::DigBeam => "Digging Beam",
-            Card::Triple => "Triple Cast",
-            Card::Bounce => "Bouncing",
-            Card::Homing => "Homing",
-            Card::Heavy => "Heavy",
-            Card::Speed => "Speed Up",
-            Card::FireTrail => "Fire Trail",
-            Card::Trigger => "Trigger",
         }
     }
 
@@ -93,18 +69,7 @@ impl Card {
             Card::Seeds => "Scatter seeds that grow",
             Card::Torrent => "Spray of water",
             Card::DigBeam => "Hold to bore through rock",
-            Card::Triple => "Next spell fires three",
-            Card::Bounce => "Next spell bounces",
-            Card::Homing => "Next spell seeks foes",
-            Card::Heavy => "Bigger, slower, harder",
-            Card::Speed => "Next spell flies faster",
-            Card::FireTrail => "Next spell leaves fire",
-            Card::Trigger => "Next spell carries the one after",
         }
-    }
-
-    pub fn is_mod(self) -> bool {
-        matches!(self, Card::Triple | Card::Bounce | Card::Homing | Card::Heavy | Card::Speed | Card::FireTrail | Card::Trigger)
     }
 
     pub fn mana(self) -> f32 {
@@ -120,9 +85,6 @@ impl Card {
             Card::Seeds => 8.0,
             Card::Torrent => 0.5,
             Card::DigBeam => 0.5,
-            Card::Triple => 6.0,
-            Card::Trigger => 4.0,
-            _ => 3.0,
         }
     }
 
@@ -139,18 +101,6 @@ impl Card {
             Card::Seeds => 0.3,
             Card::Torrent => 0.02,
             Card::DigBeam => 0.0,
-            Card::Heavy => 0.1,
-            Card::Speed => -0.05,
-            _ => 0.02,
-        }
-    }
-
-    /// Rarity tier 0..=2; deeper chests roll higher tiers.
-    pub fn tier(self) -> u32 {
-        match self {
-            Card::Spark | Card::Seeds | Card::Torrent | Card::DigBolt | Card::Speed | Card::Bounce => 0,
-            Card::Fireball | Card::Frost | Card::AcidBall | Card::Heavy | Card::FireTrail | Card::Triple | Card::DigBeam => 1,
-            _ => 2,
         }
     }
 
@@ -168,24 +118,6 @@ impl Card {
             Card::Seeds => (["...#...", ".##.##.", "..###..", "...#...", "...#...", "..+++..", ".+++++."], [110, 200, 80], [130, 92, 56]),
             Card::Torrent => (["...#...", "..###..", ".##+##.", ".#+###.", ".#####.", "..###..", "......."], [60, 130, 230], [180, 220, 255]),
             Card::DigBeam => ([".......", "##.....", "####...", "###++++", "####...", "##.....", "......."], [120, 220, 240], [230, 255, 255]),
-            Card::Triple => (["#.....#", ".#...#.", "..#.#..", "+++#+++", "..#.#..", ".#...#.", "#.....#"], [255, 200, 120], [255, 255, 255]),
-            Card::Bounce => ([".......", "#.....#", ".#...#.", "..#.#..", "...+...", "+++++++", "......."], [140, 230, 180], [255, 255, 255]),
-            Card::Homing => (["..###..", ".#...#.", "#..+..#", "#.+#+.#", "#..+..#", ".#...#.", "..###.."], [255, 120, 160], [255, 220, 230]),
-            Card::Heavy => ([".......", ".#####.", "##+++##", "##+++##", "##+++##", ".#####.", "......."], [130, 130, 150], [200, 200, 220]),
-            Card::Speed => (["#...#..", ".#...#.", "..#...#", ".#...#.", "#...#..", ".......", "+++++++"], [120, 200, 255], [255, 255, 255]),
-            Card::FireTrail => (["......#", ".....##", "....#+#", "...#+#.", "+.#+#..", "+#+#...", "###...."], [255, 110, 30], [255, 220, 90]),
-            Card::Trigger => (["...#...", "..###..", ".#.#.#.", "...#...", ".+++++.", "+.....+", ".+++++."], [255, 170, 60], [255, 240, 200]),
-        }
-    }
-}
-
-/// Random card for a chest at `depth` cells below the surface (or high in the sky).
-pub fn random_card(rng: &mut Rng, depth: i32) -> Card {
-    let max_tier = if depth.abs() > 220 { 2 } else if depth.abs() > 80 { 1 } else { 0 };
-    loop {
-        let c = ALL_CARDS[rng.range(0, ALL_CARDS.len() as i32) as usize];
-        if c.tier() <= max_tier && (c.tier() == max_tier || rng.chance(0.5)) {
-            return c;
         }
     }
 }
@@ -205,58 +137,6 @@ pub struct Shot {
     pub card: Card,
     pub mods: Mods,
     pub payload: Option<Box<Shot>>,
-}
-
-pub struct Wand {
-    pub slots: Vec<Option<Card>>,
-    cursor: usize,
-    pub tint: [u8; 3],
-}
-
-impl Wand {
-    pub fn new(cards: &[Card], slots: usize, tint: [u8; 3]) -> Self {
-        let mut v: Vec<Option<Card>> = cards.iter().map(|c| Some(*c)).collect();
-        v.resize(slots.max(cards.len()), None);
-        Self { slots: v, cursor: 0, tint }
-    }
-
-    /// The next shot, its cast delay and mana cost.
-    pub fn take_shot(&mut self) -> Option<(Shot, f32, f32)> {
-        self.take(0)
-    }
-
-    fn take(&mut self, depth: u32) -> Option<(Shot, f32, f32)> {
-        let n = self.slots.len();
-        let (mut mods, mut delay, mut mana, mut trig) = (Mods::default(), 0.0f32, 0.0f32, false);
-        for _ in 0..n {
-            let slot = self.slots[self.cursor % n];
-            self.cursor = (self.cursor + 1) % n;
-            let Some(card) = slot else { continue };
-            delay += card.delay();
-            mana += card.mana();
-            match card {
-                Card::Triple => mods.count += 2,
-                Card::Bounce => mods.bounces += 3,
-                Card::Homing => mods.homing = true,
-                Card::Heavy => mods.heavy += 1,
-                Card::Speed => mods.speed += 1,
-                Card::FireTrail => mods.trail = true,
-                Card::Trigger => trig = true,
-                proj => {
-                    let mut shot = Shot { card: proj, mods, payload: None };
-                    if trig && depth < 2 {
-                        if let Some((p, d, m)) = self.take(depth + 1) {
-                            shot.payload = Some(Box::new(p));
-                            delay += d * 0.5;
-                            mana += m;
-                        }
-                    }
-                    return Some((shot, delay.max(0.03), mana));
-                }
-            }
-        }
-        None
-    }
 }
 
 struct Proj {
@@ -406,7 +286,6 @@ impl Spells {
                 }
                 return 0;
             }
-            _ => (200.0, 1.0, 0.0, Sfx::Whoosh),
         };
         self.sounds.push(sfx);
         let speed = speed * speed_mul;

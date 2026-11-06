@@ -21,14 +21,16 @@ cargo run --release
 zombies, skeletons (throw bones), slimes, demon eyes that watch you, bats, fire imps, lions and tigers (they pounce), scorpions, snow wolves, yetis (throw snowballs), stone golems, lava salamanders, the burrowing Devourer worm, dragons that breathe fire, ghosts that pass through walls, star jellies, moon hoppers, void eyes, wisps, cloud sprites and mushlings.
 They burst into blood, goo, bones or rubble, and drop gold.
 
-## Wands and spells
+## Spells
 
-Spells are cards you slot into wands (Tab opens the editor). Casting walks the wand left to right: modifiers stack onto the next spell.
+Every spell has its own numbered hotbar slot (1–9, 0, -) or use the mouse wheel:
+Spark Bolt, Fireball, Bomb, Lightning, Frost, Acid Ball, Torrent, Seeds of Life, Teleport, Digging Beam and Digging Bolt.
+Chests in ruins and on sky islands hold gold. Altars restore you and set your respawn point.
 
-- **Spells:** Spark Bolt, Fireball, Bomb, Frost, Teleport, Acid Ball, Lightning, Digging Bolt, Digging Beam, Torrent, Seeds of Life.
-- **Modifiers:** Triple Cast, Bouncing, Homing, Heavy, Speed Up, Fire Trail, and **Trigger**: the spell carries the *next* spell and releases it where it lands. Trigger + Triple + Spark + Lightning sends lightning bolts out from wherever the sparks hit.
+## Getting to space
 
-Find more cards in chests (deeper and higher means rarer). Altars cost gold and add a wand slot; they also set your respawn point.
+Hold jump to fly. Flight refills on the ground and slowly while gliding, so you can climb in bursts or rest on clouds and sky islands.
+The quick way is **Teleport (9)** aimed straight up: a bolt that hits nothing teleports you to where it stops, a few hundred cells. Two or three casts reach space.
 
 ## Movement
 
@@ -45,10 +47,9 @@ This is a creative game: there's no fall damage and no hunger. You can only be h
 | S | Glide |
 | Shift | Dash |
 | F | Grappling vine (press again to let go) |
-| Left mouse | Cast the current wand |
+| Left mouse | Cast the selected spell |
 | Right mouse | Dig |
-| 1–4 / mouse wheel | Choose a wand |
-| Tab | Wand & spell editor |
+| 1–9, 0, - / mouse wheel | Choose a spell |
 | E | Open chest / use altar |
 | B | Sandbox brush (paint any material; wheel = size, 1–0 / Z X = material) |
 | Esc | Pause, settings, controls |
@@ -62,10 +63,10 @@ The CPU writes a colour image and a light image (emission + opacity) for the scr
 
 ## Layout
 
-`world.rs` (streaming + simulation), `worldgen.rs` (biomes, layers, ruins, sky), `materials.rs`, `cell.rs`, `player.rs`, `spells.rs` (cards, wands, projectiles), `mobs.rs`, `weather.rs`, `fx.rs`, `render.rs` (lighting shaders), `ui.rs` (pixel font, HUD, wand editor), `audio.rs`, `settings.rs`, `game.rs`, `main.rs`.
+`world.rs` (streaming + simulation), `worldgen.rs` (biomes, layers, ruins, sky), `materials.rs`, `cell.rs`, `player.rs`, `spells.rs` (spells and projectiles), `mobs.rs`, `weather.rs`, `fx.rs`, `render.rs` (lighting shaders), `ui.rs` (pixel font, HUD), `audio.rs`, `settings.rs`, `game.rs`, `main.rs`.
 
 ## Dev tools
 
 - `cargo run --release -- --bench` runs a headless benchmark that flies across the world casting spells, plus material behaviour checks.
-- `cargo run --release -- --autotest 22 [dir]` runs a scripted, **muted** tour (surface, spells, wand editor, caves, lava, sky isles, space, night storm, another biome) that prints FPS stats and saves screenshots.
+- `cargo run --release -- --autotest 22 [dir]` runs a scripted, **muted** tour (surface, spells, hotbar, caves, lava, sky isles, space, night storm, another biome) that prints FPS stats and saves screenshots.
 - `--mute` starts the game without audio.

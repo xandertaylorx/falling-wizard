@@ -5,7 +5,7 @@ use macroquad::prelude::*;
 use crate::game::{Game, PALETTE};
 use crate::player::{MAX_FLIGHT, MAX_HP, MAX_MANA};
 use crate::render::{shade, View};
-use crate::spells::Card;
+use crate::spells::SPELL_BAR;
 
 pub const TEXT: Color = Color::new(0.92, 0.89, 0.84, 1.0);
 pub const MUTED: Color = Color::new(0.6, 0.57, 0.55, 1.0);
@@ -260,33 +260,6 @@ impl Ui {
         hot
     }
 
-    fn card_box(&mut self, card: Option<Card>, x: f32, y: f32, size: f32, sel: bool) -> bool {
-        let hot = self.hot(x, y, size, size);
-        draw_rectangle(x, y, size, size, PANEL);
-        if let Some(c) = card {
-            let (rows, main, acc) = c.icon();
-            let s = ((size - 8.0) / 7.0).floor();
-            let off = (size - s * 7.0) * 0.5;
-            if c.is_mod() {
-                draw_rectangle(x + 2.0, y + 2.0, size - 4.0, size - 4.0, Color::new(0.35, 0.25, 0.5, 0.35));
-            }
-            self.icon(&rows, main, acc, x + off, y + off, s, 1.0);
-        }
-        let border = if sel { ACCENT } else if hot { Color::new(1.0, 1.0, 1.0, 0.35) } else { LINE };
-        draw_rectangle_lines(x, y, size, size, if sel { 2.0 } else { 1.0 }, border);
-        hot
-    }
-
-    fn tooltip(&self, c: Card, x: f32, y: f32) {
-        let lines = [c.name().to_uppercase(), c.desc().to_uppercase(), format!("MANA {}   {}", c.mana() as i32, if c.is_mod() { "MODIFIER" } else { "SPELL" })];
-        let w = lines.iter().map(|l| self.font.width(l, 1.0)).fold(0.0f32, f32::max) + 20.0;
-        let (x, y) = (x.min(screen_width() - w - 8.0), y - 48.0);
-        self.panel(x, y, w, 44.0);
-        self.text(&lines[0], x + 10.0, y + 8.0, 1.0, ACCENT);
-        self.text(&lines[1], x + 10.0, y + 20.0, 1.0, TEXT);
-        self.text(&lines[2], x + 10.0, y + 32.0, 1.0, MUTED);
-    }
-
     pub fn hud(&mut self, game: &mut Game, view: &View, fps: f32, show_fps: bool) {
         let (sw, sh) = (screen_width(), screen_height());
         let p = &game.player;
@@ -374,116 +347,34 @@ impl Ui {
             return;
         }
 
-        // Wands, bottom-centre.
-        let size = 30.0;
-        let gap = 14.0;
-        let widths: Vec<f32> = game.wands.iter().map(|w| w.slots.len() as f32 * (size + 2.0) + 12.0).collect();
-        let total: f32 = widths.iter().sum::<f32>() + gap * (widths.len() - 1) as f32;
-        let mut x = (sw - total) * 0.5;
-        let y = sh - size - 26.0;
-        for (wi, wand) in game.wands.iter().enumerate() {
-            let w = widths[wi];
-            let sel = wi == game.wand;
-            if self.hot(x, y - 6.0, w, size + 12.0) && self.pressed {
-                game.wand = wi;
+        // Spell hotbar, bottom-centre: one numbered slot per spell.
+        let n = SPELL_BAR.len();
+        let size = 46.0f32.min((sw - 40.0) / n as f32 - 5.0);
+        let gap = 5.0;
+        let total = n as f32 * size + (n - 1) as f32 * gap;
+        let x0 = (sw - total) * 0.5;
+        let y = sh - size - 18.0;
+        const KEYS: [&str; 11] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-"];
+        for (k, sp) in SPELL_BAR.iter().enumerate() {
+            let x = x0 + k as f32 * (size + gap);
+            if self.hot(x, y, size, size) && self.pressed {
+                game.spell = k;
                 self.clicked = true;
             }
-            draw_rectangle(x, y - 6.0, w, size + 12.0, Color::new(0.03, 0.03, 0.06, if sel { 0.85 } else { 0.55 }));
-            draw_rectangle(x, y - 6.0, w, 2.0, Color::from_rgba(wand.tint[0], wand.tint[1], wand.tint[2], if sel { 255 } else { 90 }));
-            self.font.draw(&format!("{}", wi + 1), x + 3.0, y - 2.0, 1.0, if sel { ACCENT } else { MUTED });
-            for (k, slot) in wand.slots.iter().enumerate() {
-                let sx = x + 8.0 + k as f32 * (size + 2.0);
-                draw_rectangle(sx, y, size, size, Color::new(1.0, 1.0, 1.0, 0.04));
-                if let Some(c) = slot {
-                    let (rows, main, acc) = c.icon();
-                    self.icon(&rows, main, acc, sx + 4.0, y + 4.0, 3.0, if sel { 1.0 } else { 0.55 });
-                }
-            }
+            let sel = k == game.spell;
+            draw_rectangle(x, y, size, size, PANEL);
             if sel {
-                draw_rectangle_lines(x, y - 6.0, w, size + 12.0, 1.0, ACCENT);
+                draw_rectangle(x, y, size, size, Color::new(1.0, 0.71, 0.29, 0.12));
             }
-            x += w + gap;
+            draw_rectangle_lines(x, y, size, size, if sel { 2.0 } else { 1.0 }, if sel { ACCENT } else { LINE });
+            let (rows, main, acc) = sp.icon();
+            let s = ((size - 14.0) / 7.0).floor().max(2.0);
+            let off = (size - s * 7.0) * 0.5;
+            let afford = game.player.mana >= sp.mana();
+            self.icon(&rows, main, acc, x + off, y + off + 2.0, s, if afford { 1.0 } else { 0.3 });
+            self.font.draw(KEYS[k], x + 4.0, y + 4.0, 1.0, if sel { ACCENT } else { MUTED });
         }
-        self.text_center("TAB  WANDS & SPELLS", sw * 0.5, y - 22.0, 1.0, MUTED);
-    }
-
-    /// The wand editor: drag spell cards between your bag and wand slots.
-    pub fn inventory(&mut self, game: &mut Game) {
-        let (sw, sh) = (screen_width(), screen_height());
-        draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.02, 0.01, 0.04, 0.6));
-        let (pw, ph) = (760.0f32.min(sw - 40.0), 520.0f32.min(sh - 40.0));
-        let (x0, y0) = ((sw - pw) * 0.5, (sh - ph) * 0.5);
-        self.panel(x0, y0, pw, ph);
-        self.text("WANDS", x0 + 24.0, y0 + 20.0, 2.0, ACCENT);
-        self.text_right("CLICK TO PICK UP AND PLACE  -  RIGHT CLICK RETURNS TO BAG  -  TAB TO CLOSE", x0 + pw - 24.0, y0 + 24.0, 1.0, MUTED);
-        let size = 40.0;
-        let mut tip: Option<(Card, f32, f32)> = None;
-        let right = is_mouse_button_pressed(MouseButton::Right);
-        let mut y = y0 + 52.0;
-        for wi in 0..game.wands.len() {
-            let tint = game.wands[wi].tint;
-            draw_rectangle(x0 + 24.0, y + 4.0, 4.0, size - 8.0, Color::from_rgba(tint[0], tint[1], tint[2], 255));
-            self.text(&format!("{}", wi + 1), x0 + 36.0, y + 14.0, 2.0, if wi == game.wand { ACCENT } else { TEXT });
-            for k in 0..game.wands[wi].slots.len() {
-                let sx = x0 + 60.0 + k as f32 * (size + 4.0);
-                let card = game.wands[wi].slots[k];
-                if self.card_box(card, sx, y, size, false) {
-                    if let Some(c) = card {
-                        tip = Some((c, sx, y));
-                    }
-                    if self.pressed {
-                        let held = game.held.take();
-                        game.held = game.wands[wi].slots[k].take();
-                        game.wands[wi].slots[k] = held;
-                        self.clicked = true;
-                    } else if right {
-                        if let Some(c) = game.wands[wi].slots[k].take() {
-                            game.bag.push(c);
-                            self.clicked = true;
-                        }
-                    }
-                }
-            }
-            y += size + 10.0;
-        }
-        y += 8.0;
-        self.text("SPELLS", x0 + 24.0, y, 2.0, ACCENT);
-        y += 26.0;
-        let cols = ((pw - 48.0) / (size + 4.0)).floor() as usize;
-        let bag_y = y;
-        let mut take: Option<usize> = None;
-        for (i, c) in game.bag.iter().enumerate() {
-            let (cx, cy) = (x0 + 24.0 + (i % cols) as f32 * (size + 4.0), y + (i / cols) as f32 * (size + 4.0));
-            if self.card_box(Some(*c), cx, cy, size, false) {
-                tip = Some((*c, cx, cy));
-                if self.pressed {
-                    take = Some(i);
-                }
-            }
-        }
-        let rows = (game.bag.len() + cols) / cols;
-        let bag_rect = (x0 + 24.0, bag_y, cols as f32 * (size + 4.0), rows.max(1) as f32 * (size + 4.0));
-        if let Some(i) = take {
-            let c = game.bag.remove(i);
-            if let Some(h) = game.held.replace(c) {
-                game.bag.insert(i, h);
-            }
-            self.clicked = true;
-        } else if self.pressed && game.held.is_some() && self.over(bag_rect.0, bag_rect.1, bag_rect.2, bag_rect.3 + size) {
-            game.stow_held();
-            self.clicked = true;
-        }
-        if right {
-            game.stow_held();
-        }
-        if let Some((c, x, y)) = tip {
-            if game.held.is_none() {
-                self.tooltip(c, x, y);
-            }
-        }
-        if let Some(c) = game.held {
-            let (rows, main, acc) = c.icon();
-            self.icon(&rows, main, acc, self.mouse.x - 14.0, self.mouse.y - 14.0, 4.0, 0.9);
-        }
+        let sp = game.current_spell();
+        self.text_center(&format!("{}  -  {}", sp.name().to_uppercase(), sp.desc().to_uppercase()), sw * 0.5, y - 22.0, 2.0, TEXT);
     }
 }

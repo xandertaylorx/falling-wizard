@@ -249,6 +249,9 @@ impl Player {
         }
         if self.on_ground {
             self.flight = (self.flight + 80.0 * dt).min(MAX_FLIGHT);
+        } else if !input.up {
+            // Recharges slowly while gliding or falling, so you can keep climbing.
+            self.flight = (self.flight + 22.0 * dt).min(MAX_FLIGHT);
         }
         self.mana = (self.mana + 22.0 * dt).min(MAX_MANA);
         if !self.dead() {

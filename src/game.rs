@@ -6,7 +6,7 @@ use crate::fx::{Fx, MAGIC};
 use crate::materials::Material as M;
 use crate::mobs::Mobs;
 use crate::player::{Input, Player};
-use crate::spells::{random_card, Card, Spells, Wand};
+use crate::spells::{Card, Mods, Shot, Spells, SPELL_BAR};
 use crate::weather::Weather;
 use crate::world::World;
 
@@ -34,8 +34,6 @@ pub const PALETTE: [M; 18] = [
     M::Empty,
 ];
 
-pub const MAX_SLOTS: usize = 12;
-pub const ALTAR_COST: u32 = 20;
 
 #[derive(Default)]
 pub struct Controls {
@@ -64,10 +62,8 @@ pub struct Game {
     pub cam: (f32, f32),
     pub aim: (f32, f32),
     pub zoom: f32,
-    pub wands: Vec<Wand>,
-    pub wand: usize,
-    pub bag: Vec<Card>,
-    pub held: Option<Card>,
+    /// Selected hotbar slot in `SPELL_BAR`.
+    pub spell: usize,
     pub sandbox: bool,
     pub brush: usize,
     pub brush_r: i32,
@@ -91,13 +87,6 @@ impl Game {
         let world = World::new(seed, spawn.0, spawn.1);
         let player = Player::new(spawn.0, spawn.1);
         let cam = player.center();
-        let wands = vec![
-            Wand::new(&[Card::Spark, Card::Spark], 4, [200, 160, 255]),
-            Wand::new(&[Card::Bomb], 3, [255, 150, 90]),
-            Wand::new(&[Card::DigBeam], 2, [120, 220, 240]),
-            Wand::new(&[Card::Teleport], 2, [180, 120, 255]),
-        ];
-        let bag = vec![Card::Fireball, Card::Frost, Card::Torrent, Card::Seeds, Card::Lightning, Card::Bounce, Card::Trigger, Card::Homing];
         Self {
             world,
             player,
@@ -109,10 +98,7 @@ impl Game {
             cam,
             aim: cam,
             zoom: 1.0,
-            wands,
-            wand: 0,
-            bag,
-            held: None,
+            spell: 0,
             sandbox: false,
             brush: 0,
             brush_r: 4,
@@ -130,8 +116,12 @@ impl Game {
         }
     }
 
+    pub fn current_spell(&self) -> Card {
+        SPELL_BAR[self.spell]
+    }
+
     pub fn cast_ready(&self) -> bool {
-        self.cooldown <= 0.0
+        self.cooldown <= 0.0 && self.player.mana >= self.current_spell().mana()
     }
 
     pub fn toast(&mut self, text: impl Into<String>, color: [u8; 3]) {
@@ -146,13 +136,6 @@ impl Game {
         self.mobs.clear();
         self.world.recenter(self.spawn.0, self.spawn.1);
         self.cam = self.player.center();
-    }
-
-    /// Return a held card to the bag.
-    pub fn stow_held(&mut self) {
-        if let Some(c) = self.held.take() {
-            self.bag.push(c);
-        }
     }
 
     /// Find a chest or altar cell near the wizard.
@@ -184,33 +167,27 @@ impl Game {
                     }
                 }
                 let depth = cy - self.world.surface_at(cx);
-                let n = 1 + (depth.abs() > 150) as usize;
-                for _ in 0..n {
-                    let card = random_card(&mut self.fx.rng, depth);
-                    self.bag.push(card);
-                    self.toast(format!("FOUND  {}", card.name()), [255, 214, 120]);
-                }
-                let gold = 3 + (depth.unsigned_abs() / 25);
+                let gold = 5 + (depth.unsigned_abs() / 15);
                 self.player.gold += gold;
+                self.toast(format!("+{} GOLD", gold), [255, 214, 120]);
+                for _ in 0..(gold.min(40)) {
+                    let (vx, vy) = (self.fx.rng.rangef(-60.0, 60.0), self.fx.rng.rangef(-120.0, -40.0));
+                    let sh = self.fx.rng.next_u32() as u8;
+                    self.fx.debris(cx as f32, cy as f32 - 2.0, vx, vy, M::Gold, sh);
+                }
                 self.fx.burst(cx as f32, cy as f32, 40, 90.0, [255, 210, 90]);
                 self.sounds.push(Sfx::Chime);
             }
         } else if let Some((ax, ay)) = self.nearby(M::Altar) {
-            let full = self.wands[self.wand].slots.len() >= MAX_SLOTS;
-            self.prompt = Some(if full { "ALTAR  -  WAND IS FULL".into() } else { format!("E  ALTAR: +1 WAND SLOT  ({} GOLD)", ALTAR_COST) });
+            self.prompt = Some("E  ALTAR: RESTORE AND SET CHECKPOINT".into());
             if pressed {
                 self.spawn = (ax as f32 - 1.0, ay as f32 - 8.0);
-                if self.player.gold >= ALTAR_COST && !full {
-                    self.player.gold -= ALTAR_COST;
-                    self.wands[self.wand].slots.push(None);
-                    self.toast("+1 WAND SLOT   CHECKPOINT SET", [255, 214, 120]);
-                    self.fx.burst(ax as f32, ay as f32, 50, 100.0, MAGIC);
-                    self.sounds.push(Sfx::Chime);
-                } else {
-                    let msg = if self.player.gold < ALTAR_COST { "CHECKPOINT SET   NEED MORE GOLD" } else { "CHECKPOINT SET" };
-                    self.toast(msg, [200, 200, 220]);
-                    self.sounds.push(Sfx::Click);
-                }
+                self.player.hp = crate::player::MAX_HP;
+                self.player.mana = crate::player::MAX_MANA;
+                self.player.flight = crate::player::MAX_FLIGHT;
+                self.toast("RESTORED   CHECKPOINT SET", [255, 214, 120]);
+                self.fx.burst(ax as f32, ay as f32, 50, 100.0, MAGIC);
+                self.sounds.push(Sfx::Chime);
             }
         }
     }
@@ -236,19 +213,16 @@ impl Game {
                 if ctl.primary && self.cooldown <= 0.0 {
                     let tip = self.player.staff_tip(ax, ay);
                     let ang = (ay - tip.1).atan2(ax - tip.0);
-                    if let Some((shot, delay, mana)) = self.wands[self.wand].take_shot() {
-                        if self.player.mana >= mana {
-                            self.player.mana -= mana;
-                            self.cooldown = delay;
-                            self.player.gold += self.spells.fire(&shot, tip, ang, &mut self.world, &mut self.fx, &mut self.mobs);
-                        } else {
-                            self.cooldown = 0.25;
-                            self.fizzle = 0.3;
-                            self.sounds.push(Sfx::Tick);
-                        }
+                    let card = self.current_spell();
+                    if self.player.mana >= card.mana() {
+                        self.player.mana -= card.mana();
+                        self.cooldown = card.delay().max(0.03);
+                        let shot = Shot { card, mods: Mods::default(), payload: None };
+                        self.player.gold += self.spells.fire(&shot, tip, ang, &mut self.world, &mut self.fx, &mut self.mobs);
                     } else {
-                        self.cooldown = 0.3;
+                        self.cooldown = 0.25;
                         self.fizzle = 0.3;
+                        self.sounds.push(Sfx::Tick);
                     }
                 }
                 if ctl.secondary {
