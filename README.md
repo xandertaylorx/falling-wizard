@@ -10,12 +10,12 @@ cargo run --release
 Or install it on a Mac with one command (builds from source, adds the app to ~/Applications and a `falling-wizard` command):
 
 ```
-curl -fsSL https://raw.githubusercontent.com/xandertaylorx/falling-wizard/main/web/install.sh | bash
+curl -fsSL https://fw.crooli.com/install.sh | bash
 ```
 
 **Updates:** the game checks GitHub when it starts. If there's a newer version, the main menu shows an *Update available* button that installs it in the background and then offers a restart. You can also run the install command again, or `falling-wizard --update`.
 
-The `web/` folder holds the game's landing page; `vercel.json` tells Vercel to serve it.
+The `web/` folder holds the game's landing page, live at https://fw.crooli.com. `vercel.json` tells Vercel to serve it, and every push to `main` redeploys it.
 
 ## The world
 

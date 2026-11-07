@@ -3,7 +3,7 @@
 # Builds the game from source (no downloads or releases needed) and installs
 # "Falling Wizard.app" into ~/Applications plus a `falling-wizard` command.
 #
-#   curl -fsSL https://raw.githubusercontent.com/xandertaylorx/falling-wizard/main/web/install.sh | bash
+#   curl -fsSL https://fw.crooli.com/install.sh | bash
 set -euo pipefail
 
 REPO="https://github.com/xandertaylorx/falling-wizard.git"
