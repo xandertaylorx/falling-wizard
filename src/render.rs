@@ -206,6 +206,7 @@ pub struct Renderer {
     pub lava_visible: usize,
     pub rays: f32,
     pub flip: f32,
+    lens_tmp: Vec<u8>,
 }
 
 impl Renderer {
@@ -239,6 +240,7 @@ impl Renderer {
             lava_visible: 0,
             rays: 24.0,
             flip: 0.0,
+            lens_tmp: Vec::new(),
         }
     }
 
@@ -403,6 +405,10 @@ impl Renderer {
             let (ax, ay) = game.aim;
             game.player.draw(&mut cv, ax, ay, ready);
         }
+        // Black holes bend the light around them.
+        for hole in &game.spells.holes {
+            lens(&mut self.albedo.bytes, &mut self.lens_tmp, w, h, hole.x - x0 as f32, hole.y - y0 as f32, hole.reach() * 1.3, hole.core(), hole.age);
+        }
         {
             let emit = &mut self.emit.bytes;
             let mut add = |x: f32, y: f32, c: [f32; 3]| {
@@ -464,6 +470,53 @@ impl Renderer {
         draw_texture_ex(&self.alb_tex, ox, oy, WHITE, DrawTextureParams { dest_size: Some(vec2(wf * s, hf * s)), ..Default::default() });
         gl_use_default_material();
         game.spells.end_frame();
+    }
+}
+
+/// Swirl and magnify the pixels around a black hole, blacken its core and draw a
+/// bright photon ring, like light bending around it.
+#[allow(clippy::too_many_arguments)]
+fn lens(px: &mut [u8], tmp: &mut Vec<u8>, w: usize, h: usize, cx: f32, cy: f32, r: f32, core: f32, age: f32) {
+    tmp.clear();
+    tmp.extend_from_slice(px);
+    let ri = r.ceil() as i32;
+    for dy in -ri..=ri {
+        for dx in -ri..=ri {
+            let (x, y) = (cx as i32 + dx, cy as i32 + dy);
+            if x < 0 || y < 0 || x as usize >= w || y as usize >= h {
+                continue;
+            }
+            let d = ((dx * dx + dy * dy) as f32).sqrt();
+            if d > r {
+                continue;
+            }
+            let o = (y as usize * w + x as usize) * 4;
+            if d < core {
+                px[o..o + 3].copy_from_slice(&[0, 0, 0]);
+                continue;
+            }
+            let ring = (d - core - 1.2).abs();
+            if ring < 1.0 && core > 0.5 {
+                let a = (dy as f32).atan2(dx as f32);
+                let hot = 0.6 + 0.4 * (a * 2.0 + age * 5.0).sin();
+                px[o..o + 3].copy_from_slice(&[(255.0 * hot) as u8, (190.0 * hot) as u8, 255]);
+                continue;
+            }
+            // Sample from further out and rotated: magnification plus swirl.
+            let t = 1.0 - d / r;
+            let src_d = d + t * t * (r - d) * 0.6 + core;
+            let ang = (dy as f32).atan2(dx as f32) + t * t * 2.4 + age * 0.4 * t;
+            let (sx, sy) = ((cx + ang.cos() * src_d) as i32, (cy + ang.sin() * src_d) as i32);
+            if sx < 0 || sy < 0 || sx as usize >= w || sy as usize >= h {
+                continue;
+            }
+            let so = (sy as usize * w + sx as usize) * 4;
+            let dim = 1.0 - t * t * 0.55;
+            let tint = t * t * 0.35;
+            px[o] = (tmp[so] as f32 * dim + 120.0 * tint) as u8;
+            px[o + 1] = (tmp[so + 1] as f32 * dim + 40.0 * tint) as u8;
+            px[o + 2] = (tmp[so + 2] as f32 * dim + 200.0 * tint) as u8;
+        }
     }
 }
 

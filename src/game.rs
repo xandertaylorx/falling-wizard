@@ -325,6 +325,20 @@ impl Game {
             self.player.teleport(tx, ty, &self.world);
         }
 
+        for h in &self.spells.holes {
+            let (cx, cy) = self.player.center();
+            let (dx, dy) = (h.x - cx, h.y - cy);
+            let d = (dx * dx + dy * dy).sqrt().max(1.0);
+            let reach = h.reach() * 2.2;
+            if d < reach && !idle {
+                let k = (1.0 - d / reach).powi(2) * 520.0 * dt;
+                self.player.vx += dx / d * k;
+                self.player.vy += dy / d * k;
+                if d < h.core() + 2.0 {
+                    self.player.hurt(60.0 * dt);
+                }
+            }
+        }
         let pc = self.player.center();
         self.weather.update(dt, &mut self.world, &mut self.fx, pc, &mut self.sounds);
 

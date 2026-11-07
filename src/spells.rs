@@ -182,14 +182,39 @@ impl Proj {
     }
 }
 
+/// A black hole: it grows, swallows the world around it, then collapses.
+pub struct Hole {
+    pub x: f32,
+    pub y: f32,
+    /// Seconds alive.
+    pub age: f32,
+    eaten: Vec<(M, u8)>,
+}
+
+pub const HOLE_LIFE: f32 = 4.5;
+
+impl Hole {
+    /// Reach of its pull, growing as it feeds.
+    pub fn reach(&self) -> f32 {
+        14.0 + (self.age / HOLE_LIFE).min(1.0) * 34.0
+    }
+    /// Radius of the black core.
+    pub fn core(&self) -> f32 {
+        if self.age > HOLE_LIFE - 0.25 {
+            ((HOLE_LIFE - self.age) / 0.25).max(0.0) * 5.0
+        } else {
+            (self.age * 8.0).min(2.0 + self.age * 0.8)
+        }
+    }
+}
+
 pub struct Spells {
     projs: Vec<Proj>,
     /// Where a teleport bolt landed, consumed by the game.
     pub teleport: Option<(f32, f32)>,
     beam: Option<(f32, f32, f32, f32)>,
     bolts: Vec<(Vec<(f32, f32)>, f32)>,
-    /// Active black holes: (x, y, seconds left).
-    pub holes: Vec<(f32, f32, f32)>,
+    pub holes: Vec<Hole>,
     pub sounds: Vec<Sfx>,
 }
 
@@ -418,46 +443,78 @@ impl Spells {
         }
     }
 
-    /// Black holes rip loose material out of the world and suck it (and creatures) in.
+    /// Black holes tear everything loose (rock included), spiral it inwards and eat it.
     fn step_holes(&mut self, world: &mut World, fx: &mut Fx, mobs: &mut Mobs, dt: f32) {
         fx.attractors.clear();
         let mut done = Vec::new();
         for (k, h) in self.holes.iter_mut().enumerate() {
-            h.2 -= dt;
-            fx.attractors.push((h.0, h.1));
-            mobs.pull(h.0, h.1, 45.0, dt, fx);
-            for _ in 0..90 {
+            h.age += dt;
+            let reach = h.reach();
+            fx.attractors.push((h.x, h.y));
+            mobs.pull(h.x, h.y, reach * 1.6, dt, fx);
+            for _ in 0..260 {
                 let a = fx.rng.rangef(0.0, std::f32::consts::TAU);
-                let r = fx.rng.f32().sqrt() * 24.0;
-                let (cx, cy) = ((h.0 + a.cos() * r) as i32, (h.1 + a.sin() * r) as i32);
+                let d = fx.rng.f32().sqrt() * reach;
+                let (cx, cy) = ((h.x + a.cos() * d) as i32, (h.y + a.sin() * d) as i32);
                 let Some(c) = world.get(cx, cy) else { continue };
-                let loose = match c.mat.kind() {
-                    crate::materials::Kind::Empty => false,
-                    crate::materials::Kind::Static => !matches!(c.mat, M::Chest | M::Altar) && fx.rng.chance(0.03),
-                    _ => true,
+                if c.mat == M::Empty {
+                    continue;
+                }
+                // Closer cells are ripped free more easily; nothing is immune.
+                let grip = 1.0 - d / reach;
+                let p = match c.mat.kind() {
+                    crate::materials::Kind::Static => 0.05 + grip * grip * 0.55,
+                    _ => 0.35 + grip * 0.65,
                 };
-                if loose {
-                    world.set(cx, cy, Cell::EMPTY);
-                    if c.mat != M::Fire && c.mat.kind() != crate::materials::Kind::Gas {
-                        let (dx, dy) = (h.0 - cx as f32, h.1 - cy as f32);
-                        let d = (dx * dx + dy * dy).sqrt().max(1.0);
-                        let tang = fx.rng.rangef(30.0, 70.0);
-                        fx.debris(cx as f32, cy as f32, dx / d * 40.0 - dy / d * tang, dy / d * 40.0 + dx / d * tang, c.mat, c.shade);
+                if !fx.rng.chance(p) {
+                    continue;
+                }
+                world.set(cx, cy, Cell::EMPTY);
+                if matches!(c.mat.kind(), crate::materials::Kind::Gas) {
+                    continue;
+                }
+                let (dx, dy) = (h.x - cx as f32, h.y - cy as f32);
+                let dl = (dx * dx + dy * dy).sqrt().max(1.0);
+                let swirl = fx.rng.rangef(40.0, 90.0);
+                let mat = if c.mat == M::Fire { M::Empty } else { c.mat };
+                if mat == M::Empty {
+                    fx.spark(cx as f32, cy as f32, dx / dl * 30.0 - dy / dl * swirl, dy / dl * 30.0 + dx / dl * swirl, 0.8, [255, 170, 80]);
+                } else {
+                    fx.debris(cx as f32, cy as f32, dx / dl * 25.0 - dy / dl * swirl, dy / dl * 25.0 + dx / dl * swirl, mat, c.shade);
+                    if h.eaten.len() < 600 {
+                        h.eaten.push((mat, c.shade));
                     }
                 }
             }
-            if fx.rng.chance(0.5) {
+            // Accretion disk: hot sparks spiralling in.
+            for _ in 0..6 {
                 let a = fx.rng.rangef(0.0, std::f32::consts::TAU);
-                fx.spark(h.0 + a.cos() * 9.0, h.1 + a.sin() * 9.0, -a.sin() * 60.0, a.cos() * 60.0, 0.4, MAGIC);
+                let r = fx.rng.rangef(6.0, reach * 0.8);
+                let sp = 140.0 / (r * 0.15 + 1.0);
+                let hot = fx.rng.f32();
+                let col = if hot < 0.4 { [255, 210, 140] } else if hot < 0.75 { [220, 120, 255] } else { [120, 170, 255] };
+                fx.spark(h.x + a.cos() * r, h.y + a.sin() * r * 0.55, -a.sin() * sp, a.cos() * sp * 0.55, 0.6, col);
             }
-            if h.2 <= 0.0 {
+            if h.age >= HOLE_LIFE {
                 done.push(k);
             }
         }
         for k in done.into_iter().rev() {
-            let (x, y, _) = self.holes.remove(k);
-            fx.explode(world, x, y, 13, 0.4);
-            fx.burst(x, y, 60, 180.0, MAGIC);
+            let h = self.holes.remove(k);
+            fx.explode(world, h.x, h.y, 16, 0.5);
+            fx.burst(h.x, h.y, 120, 260.0, MAGIC);
+            fx.flash = fx.flash.max(0.5);
+            // Spit out a share of everything it swallowed.
+            for (i, (m, shade)) in h.eaten.iter().enumerate() {
+                if i % 2 == 1 {
+                    continue;
+                }
+                let a = fx.rng.rangef(0.0, std::f32::consts::TAU);
+                let sp = fx.rng.rangef(80.0, 260.0);
+                fx.debris(h.x, h.y, a.cos() * sp, a.sin() * sp - 40.0, *m, *shade);
+            }
+            self.sounds.push(Sfx::Boom);
+            self.sounds.push(Sfx::Thunder);
         }
     }
 
@@ -465,7 +522,7 @@ impl Spells {
         let r = p.radius();
         match p.card {
             Card::BlackHole => {
-                self.holes.push((p.x, p.y, 2.8));
+                self.holes.push(Hole { x: p.x, y: p.y, age: 0.0, eaten: Vec::new() });
                 self.sounds.push(Sfx::Thunder);
             }
             Card::Spark => fx.explode(world, p.x, p.y, r, 0.3),
@@ -540,23 +597,6 @@ impl Spells {
                 cv.put(x as i32, y as i32, [230, 255, 255]);
             }
         }
-        for &(hx, hy, left) in &self.holes {
-            let grow = (2.8 - left).min(0.5) * 2.0;
-            let r = (4.0 * grow) as i32;
-            for dy in -r - 3..=r + 3 {
-                for dx in -r - 3..=r + 3 {
-                    let d = ((dx * dx + dy * dy) as f32).sqrt();
-                    if d <= r as f32 {
-                        cv.put(hx as i32 + dx, hy as i32 + dy, [4, 0, 10]);
-                    } else if d <= r as f32 + 2.5 {
-                        let a = (dy as f32).atan2(dx as f32) + time * 6.0;
-                        if (a * 3.0).sin() > -0.2 {
-                            cv.put(hx as i32 + dx, hy as i32 + dy, if d < r as f32 + 1.2 { [255, 220, 255] } else { [170, 90, 255] });
-                        }
-                    }
-                }
-            }
-        }
         for (pts, _) in &self.bolts {
             for w in pts.windows(2) {
                 let (a, b) = (w[0], w[1]);
@@ -592,10 +632,11 @@ impl Spells {
                 add(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, [0.6, 1.4, 1.8]);
             }
         }
-        for &(hx, hy, _) in &self.holes {
-            for k in 0..6 {
-                let a = k as f32 * 1.047;
-                add(hx + a.cos() * 6.0, hy + a.sin() * 6.0, [1.6, 0.6, 3.0]);
+        for h in &self.holes {
+            let r = h.core() + 3.0;
+            for k in 0..10 {
+                let a = k as f32 * 0.628 + h.age * 3.0;
+                add(h.x + a.cos() * r * 1.4, h.y + a.sin() * r * 0.8, [2.6, 1.2, 3.6]);
             }
         }
         for (pts, t) in &self.bolts {

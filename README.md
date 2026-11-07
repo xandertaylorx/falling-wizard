@@ -24,7 +24,7 @@ They burst into blood, goo, bones or rubble, and drop gold.
 ## Spells
 
 Every spell has its own numbered hotbar slot (1–9, 0, -, =) or use the mouse wheel:
-Spark Bolt, Fireball, Bomb, Lightning, Frost, Acid Ball, Torrent, Seeds of Life, Teleport, Digging Beam, Oil Spray and **Black Hole** (rips loose terrain and creatures into itself, then collapses in a blast).
+Spark Bolt, Fireball, Bomb, Lightning, Frost, Acid Ball, Torrent, Seeds of Life, Teleport, Digging Beam, Oil Spray and **Black Hole** (warps space around it, tears up everything nearby including solid rock, creatures and you, then collapses and spits it all back out).
 
 - **Pets:** cast Seeds of Life straight at a creature to tame it (up to three). Pets follow you, fight nearby creatures and wear a heart.
 - **Ragdolls:** creatures you kill go flying and splatter where they land.

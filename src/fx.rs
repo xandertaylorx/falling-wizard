@@ -82,11 +82,16 @@ impl Fx {
                 if d < 2.5 {
                     return false;
                 }
-                if d < 60.0 {
+                if d < 90.0 {
                     pulled = true;
-                    let k = 900.0 / (d + 8.0);
-                    p.vx += dx / d * k * dt * 8.0;
-                    p.vy += dy / d * k * dt * 8.0;
+                    let k = 1400.0 / (d + 6.0);
+                    p.vx += (dx / d * k + dy / d * k * 0.35) * dt * 8.0;
+                    p.vy += (dy / d * k - dx / d * k * 0.35) * dt * 8.0;
+                    let sp = (p.vx * p.vx + p.vy * p.vy).sqrt();
+                    if sp > 320.0 {
+                        p.vx *= 320.0 / sp;
+                        p.vy *= 320.0 / sp;
+                    }
                     p.life = p.life.max(0.5);
                 }
             }
@@ -127,6 +132,8 @@ impl Fx {
                         if !m.passable() {
                             return false;
                         }
+                    } else if pulled {
+                        world.set(cx, cy, Cell::EMPTY);
                     } else {
                         deposit(world, p);
                         return false;

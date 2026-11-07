@@ -460,7 +460,7 @@ impl Mobs {
 
     /// Drag creatures towards a black hole; those at its heart are torn apart.
     pub fn pull(&mut self, x: f32, y: f32, r: f32, dt: f32, _fx: &mut Fx) {
-        for m in self.list.iter_mut().filter(|m| !m.pet) {
+        for m in self.list.iter_mut() {
             let (cx, cy) = Self::center(m);
             let (dx, dy) = (x - cx, y - cy);
             let d = (dx * dx + dy * dy).sqrt().max(0.5);
@@ -470,8 +470,8 @@ impl Mobs {
                 m.vy += dy / d * k;
                 m.x += dx / d * k * dt * 20.0;
                 m.y += dy / d * k * dt * 20.0;
-                if d < 5.0 {
-                    m.hp -= 80.0 * dt;
+                if d < 6.0 && !m.pet {
+                    m.hp -= 120.0 * dt;
                     m.hurt = 0.05;
                 }
             }
