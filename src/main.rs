@@ -198,6 +198,9 @@ struct App {
     menu_x: f32,
     chat_buf: String,
     history: Vec<String>,
+    /// Highlighted suggestion, and the text Tab is cycling completions for.
+    sugg: usize,
+    tab_base: Option<String>,
     /// Esc pressed this frame and not yet handled (so one press can't open and close a menu).
     esc: bool,
 }
@@ -229,6 +232,8 @@ async fn run(args: Vec<String>) {
         menu_x: 0.0,
         chat_buf: String::new(),
         history: Vec::new(),
+        sugg: 0,
+        tab_base: None,
         esc: false,
     };
 
@@ -344,7 +349,7 @@ fn script_controls(app: &mut App, t: f64, secs: f64) -> Controls {
         }
     }
     if at(7.0, 7.02) {
-        app.chat_buf = "/tp volcano".into();
+        app.chat_buf = "/tp v".into();
         app.screen = Screen::Chat;
     }
     if at(7.6, 7.62) {
@@ -438,18 +443,44 @@ impl App {
                 while let Some(c) = get_char_pressed() {
                     if !c.is_control() && self.chat_buf.len() < 120 {
                         self.chat_buf.push(c);
+                        self.tab_base = None;
+                        self.sugg = 0;
                     }
                 }
                 if is_key_pressed(KeyCode::Backspace) {
                     self.chat_buf.pop();
+                    self.tab_base = None;
+                    self.sugg = 0;
                 }
-                if is_key_pressed(KeyCode::Up) {
-                    if let Some(h) = self.history.last() {
+                let (_, opts) = game::suggest(&self.chat_buf);
+                let n_opts = game::suggest(self.tab_base.as_deref().unwrap_or(&self.chat_buf)).1.len();
+                if is_key_pressed(KeyCode::Tab) && n_opts > 0 {
+                    // Tab completes; pressing it again cycles through the matches.
+                    let base = self.tab_base.clone().unwrap_or_else(|| self.chat_buf.clone());
+                    let (start, base_opts) = game::suggest(&base);
+                    let pick = &base_opts[self.sugg % base_opts.len()];
+                    let space = if start == 1 && game::usage(&format!("/{}", pick)).map_or(false, |u| u.contains('<') || u.contains('[')) { " " } else { "" };
+                    self.chat_buf = format!("{}{}{}", &base[..start], pick, space);
+                    if base_opts.len() > 1 {
+                        self.tab_base = Some(base);
+                        self.sugg = (self.sugg + 1) % base_opts.len();
+                    } else {
+                        self.tab_base = None;
+                        self.sugg = 0;
+                    }
+                } else if is_key_pressed(KeyCode::Down) && !opts.is_empty() {
+                    self.sugg = (self.sugg + 1) % opts.len();
+                } else if is_key_pressed(KeyCode::Up) {
+                    if !opts.is_empty() && self.chat_buf.starts_with('/') && self.chat_buf.len() > 1 {
+                        self.sugg = (self.sugg + opts.len() - 1) % opts.len();
+                    } else if let Some(h) = self.history.last() {
                         self.chat_buf = h.clone();
                     }
                 }
                 if is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter) {
                     let line = std::mem::take(&mut self.chat_buf);
+                    self.tab_base = None;
+                    self.sugg = 0;
                     if !line.trim().is_empty() {
                         self.history.push(line.clone());
                     }
@@ -495,13 +526,14 @@ impl App {
         match self.screen {
             Screen::Play => {
                 self.ui.hud(&mut self.game, &view, self.fps, self.settings.show_fps);
-                self.ui.chat(&self.game, None, self.game.time);
+                self.ui.chat(&self.game, None, self.game.time, 0);
                 self.crosshair(&view);
                 show_mouse(false);
             }
             Screen::Chat => {
                 self.ui.hud(&mut self.game, &view, self.fps, self.settings.show_fps);
-                self.ui.chat(&self.game, Some(&self.chat_buf), self.game.time);
+                let sel = if self.tab_base.is_some() { 0 } else { self.sugg };
+                self.ui.chat(&self.game, Some(&self.chat_buf), self.game.time, sel);
             }
             Screen::Menu => self.menu(),
             Screen::Pause => self.pause(),

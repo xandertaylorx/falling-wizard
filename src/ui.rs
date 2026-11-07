@@ -383,7 +383,7 @@ impl Ui {
 
 impl Ui {
     /// Chat history (fades out when closed) and the input line when open.
-    pub fn chat(&self, game: &Game, input: Option<&str>, time: f32) {
+    pub fn chat(&self, game: &Game, input: Option<&str>, time: f32, sel: usize) {
         let sh = screen_height();
         let x = 20.0;
         let open = input.is_some();
@@ -399,8 +399,34 @@ impl Ui {
         if let Some(buf) = input {
             let y = sh - 118.0;
             draw_rectangle(x - 7.0, y - 5.0, (screen_width() * 0.6).max(520.0), 22.0, Color::new(0.0, 0.0, 0.0, 0.65));
+            let (start, opts) = crate::game::suggest(buf);
+            let sel = if opts.is_empty() { 0 } else { sel % opts.len() };
+            // Ghost text: the rest of the highlighted suggestion.
+            if let Some(o) = opts.get(sel) {
+                let typed = buf.len() - start;
+                if o.len() > typed {
+                    self.font.draw(&o[typed..], x + self.font.width(buf, 2.0) + 2.0, y, 2.0, Color::new(1.0, 1.0, 1.0, 0.35));
+                }
+            }
             let caret = if (time * 2.5) as i32 % 2 == 0 { "_" } else { "" };
             self.font.draw(&format!("{}{}", buf, caret), x, y, 2.0, TEXT);
+            // Suggestion list above the input, aligned with the word being typed.
+            let sx = x + self.font.width(&buf[..start], 2.0) + if start > 0 { 12.0 } else { 0.0 };
+            if !opts.is_empty() && !(opts.len() == 1 && opts[0].len() == buf.len() - start) {
+                let shown = opts.len().min(8);
+                let first = if sel >= shown { sel + 1 - shown } else { 0 };
+                let w = opts.iter().map(|o| self.font.width(o, 2.0)).fold(0.0f32, f32::max) + 16.0;
+                for (k, o) in opts.iter().enumerate().skip(first).take(shown) {
+                    let row = (k - first) as f32;
+                    let oy = y - 26.0 - (shown as f32 - 1.0 - row) * 20.0;
+                    let hot = k == sel;
+                    draw_rectangle(sx - 8.0, oy - 4.0, w, 20.0, Color::new(0.0, 0.0, 0.0, if hot { 0.85 } else { 0.7 }));
+                    self.font.draw(o, sx, oy, 2.0, if hot { Color::new(1.0, 0.92, 0.4, 1.0) } else { Color::new(0.75, 0.75, 0.75, 1.0) });
+                }
+            } else if let Some(u) = crate::game::usage(buf) {
+                draw_rectangle(x - 7.0, y - 30.0, self.font.width(u, 2.0) + 14.0, 20.0, Color::new(0.0, 0.0, 0.0, 0.7));
+                self.font.draw(u, x, y - 26.0, 2.0, Color::new(0.75, 0.75, 0.75, 1.0));
+            }
         }
     }
 }

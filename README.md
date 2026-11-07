@@ -36,7 +36,7 @@ Spark Bolt, Fireball, Bomb, Lightning, Frost, Acid Ball, Torrent, Seeds of Life,
 
 ## Chat and commands
 
-Press **T** to chat or **/** to type a command (Enter sends, Esc cancels, ↑ repeats the last one):
+Press **T** to chat or **/** to type a command. As you type, suggestions pop up above the word you're typing, with the rest shown as grey ghost text. **Tab** completes it (press again to cycle), **↑ ↓** pick a suggestion, **Enter** sends, **Esc** cancels.
 
 | Command | What it does |
 |---|---|

@@ -672,6 +672,54 @@ impl Game {
     }
 }
 
+const COMMANDS: [&str; 13] = ["help", "tp", "time", "weather", "summon", "kill", "heal", "fly", "god", "gold", "pos", "seed", "clear"];
+const PLACES: [&str; 13] = ["volcano", "geyser", "ruin", "altar", "island", "space", "caves", "lava", "forest", "desert", "tundra", "spawn", "~"];
+
+/// Minecraft-style suggestions for a partly typed command: where the current word
+/// starts in `buf`, and the options that match it.
+pub fn suggest(buf: &str) -> (usize, Vec<String>) {
+    let Some(body) = buf.strip_prefix('/') else { return (0, Vec::new()) };
+    let parts: Vec<&str> = body.split(' ').collect();
+    let idx = parts.len() - 1;
+    let cur = parts[idx].to_lowercase();
+    let start = buf.len() - parts[idx].len();
+    let mobs: Vec<String> = crate::mobs::ALL_MOBS.iter().map(|k| k.name().to_lowercase().replace(' ', "")).collect();
+    let opts: Vec<String> = match (idx, parts[0]) {
+        (0, _) => COMMANDS.iter().map(|s| s.to_string()).collect(),
+        (1, "tp") => PLACES.iter().filter(|p| **p != "~").map(|s| s.to_string()).collect(),
+        (1, "time") => vec!["set".into()],
+        (2, "time") if parts[1] == "set" => ["day", "noon", "evening", "night", "midnight"].iter().map(|s| s.to_string()).collect(),
+        (1, "weather") => ["clear", "rain", "storm"].iter().map(|s| s.to_string()).collect(),
+        (1, "summon") | (1, "spawn") => mobs,
+        (2, "summon") | (2, "spawn") => ["1", "3", "5", "10"].iter().map(|s| s.to_string()).collect(),
+        (1, "kill") => vec!["pets".into()],
+        (1, "gold") | (1, "give") => ["100", "500", "1000"].iter().map(|s| s.to_string()).collect(),
+        _ => Vec::new(),
+    };
+    (start, opts.into_iter().filter(|o| o.starts_with(&cur)).collect())
+}
+
+/// Usage hint for the command being typed.
+pub fn usage(buf: &str) -> Option<&'static str> {
+    let cmd = buf.strip_prefix('/')?.split(' ').next()?;
+    Some(match cmd {
+        "tp" => "/tp <place>  or  /tp <x> <y>",
+        "time" => "/time set <day|noon|evening|night|midnight|0-1>",
+        "weather" => "/weather <clear|rain|storm>",
+        "summon" | "spawn" => "/summon <creature> [count]",
+        "kill" => "/kill [pets]",
+        "gold" | "give" => "/gold <amount>",
+        "fly" => "/fly   toggle infinite flight",
+        "god" => "/god   toggle invulnerability",
+        "heal" => "/heal",
+        "pos" => "/pos   show your coordinates",
+        "seed" => "/seed",
+        "clear" => "/clear   clear the chat",
+        "help" => "/help",
+        _ => return None,
+    })
+}
+
 /// Paint a disc of material. Solid building materials and the eraser overwrite;
 /// others sprinkle into empty cells; fire also ignites flammables.
 pub fn paint(world: &mut World, cx: i32, cy: i32, r: i32, m: M) {
