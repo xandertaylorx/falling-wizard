@@ -518,7 +518,11 @@ impl Spells {
                         mobs.freeze(i, 3.0);
                     }
                 }
-                let blocked = !m.passable() || mob_hit.is_some();
+                let frame = p.card == Card::PortalWand && {
+                    let b = world.back(cx, cy);
+                    (b != M::Empty && !b.foliage()) || m == M::Portal
+                };
+                let blocked = !m.passable() || mob_hit.is_some() || frame;
                 if blocked {
                     if p.bounces > 0 && mob_hit.is_none() {
                         p.bounces -= 1;
@@ -569,7 +573,7 @@ impl Spells {
                 let d = fx.rng.f32().sqrt() * reach;
                 let (cx, cy) = ((h.x + a.cos() * d) as i32, (h.y + a.sin() * d) as i32);
                 let Some(c) = world.get(cx, cy) else { continue };
-                if c.back != M::Empty && fx.rng.chance(0.5) {
+                if c.back.foliage() && fx.rng.chance(0.5) {
                     world.set_back(cx, cy, M::Empty);
                     let (dx, dy) = (h.x - cx as f32, h.y - cy as f32);
                     let dl = (dx * dx + dy * dy).sqrt().max(1.0);
@@ -653,7 +657,7 @@ impl Spells {
             let near = 1.0 - along / len;
             let speed = if strong { fx.rng.rangef(220.0, 380.0) * (0.5 + near) } else { fx.rng.rangef(80.0, 140.0) };
             let (vx, vy) = (ux * speed + fx.rng.rangef(-20.0, 20.0), uy * speed - fx.rng.rangef(10.0, 50.0));
-            if c.back != M::Empty && (if strong { fx.rng.chance(0.6 * near + 0.2) } else { c.back == M::Leaves && fx.rng.chance(0.03) }) {
+            if c.back.foliage() && (if strong { fx.rng.chance(0.6 * near + 0.2) } else { c.back == M::Leaves && fx.rng.chance(0.03) }) {
                 world.set_back(cx, cy, M::Empty);
                 let col = crate::render::shade(c.back.base_color(), fx.rng.next_u32() as u8, 0.4);
                 let life = fx.rng.rangef(1.0, 2.5);
@@ -737,7 +741,7 @@ impl Spells {
                 let (px, py) = (t.x + fx.rng.rangef(-w, w), t.y + 3.0 - up);
                 let (cx, cy) = (px as i32, py as i32);
                 let Some(c) = world.get(cx, cy) else { continue };
-                if c.back != M::Empty && fx.rng.chance(0.35) {
+                if c.back.foliage() && fx.rng.chance(0.35) {
                     world.set_back(cx, cy, M::Empty);
                     let col = crate::render::shade(c.back.base_color(), fx.rng.next_u32() as u8, 0.4);
                     let vx = fx.rng.rangef(-40.0, 40.0);

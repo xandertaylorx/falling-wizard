@@ -119,9 +119,25 @@ impl Generator {
         (px, base, (h >> 12) % 4)
     }
 
-    /// The portal surface rectangle of a structure: (x0, y0, x1, y1), inclusive.
+    /// Bounding box around a structure's opening: (x0, y0, x1, y1), inclusive.
     pub fn portal_interior(px: i32, base: i32) -> (i32, i32, i32, i32) {
-        (px - 4, base - 17, px + 4, base - 2)
+        (px - 8, base - 30, px + 8, base - 2)
+    }
+
+    /// Whether (dx, u) lies inside a structure's opening, where the portal surface goes.
+    pub fn portal_fill(dx: i32, u: i32, style: u32) -> bool {
+        let ax = dx.abs();
+        if u > -2 {
+            return false;
+        }
+        match style {
+            0 => {
+                (ax <= 4 && u >= -18) || (u < -18 && u >= -28 && ((dx * dx) as f32 + ((u + 18) as f32 * 1.15).powi(2)).sqrt() < 5.0)
+            }
+            1 => (dx as f32 / 7.5).powi(2) + ((u + 10) as f32 / 10.5).powi(2) <= 0.78,
+            2 => ax <= 4 && u >= -24,
+            _ => ax <= 4 && u >= -18,
+        }
     }
 
     /// What a portal structure puts at offset (dx, u) from its platform centre (u < 0 is up).
@@ -217,11 +233,19 @@ impl Generator {
                     let m = if u > 1 { Some(M::PortalStone) } else { Self::portal_cell(x - px, u, style) };
                     if let Some(m) = m {
                         let i = ((y - y0) as usize) * CU + (x - x0) as usize;
-                        let mut c = if m == M::Empty { Cell::EMPTY } else { Cell::new(m, rng) };
-                        if m == M::PortalStone {
-                            c.shade = if (x + y * 3) % 7 == 0 { 70 } else { 140 + (hash3(x, y, 4) % 60) as u8 };
+                        let floor = u >= -1 && m != M::Empty;
+                        if floor {
+                            // The platform and foundation are solid ground.
+                            let mut c = Cell::new(m, rng);
+                            if m == M::PortalStone {
+                                c.shade = if (x + y * 3) % 7 == 0 { 70 } else { 140 + (hash3(x, y, 4) % 60) as u8 };
+                            }
+                            cells[i] = c;
+                        } else {
+                            // The arch itself stands in the background: you walk through it.
+                            cells[i] = Cell::EMPTY;
+                            cells[i].back = m;
                         }
-                        cells[i] = c;
                     }
                 }
             }

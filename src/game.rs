@@ -349,9 +349,9 @@ impl Game {
         self.sounds.append(&mut self.spells.sounds);
         for (x, y) in std::mem::take(&mut self.spells.portal_hits) {
             let site = self.world.gen.portals_near(x as i32 - 30, x as i32 + 30).into_iter().find(|&(px, base, _)| (px as f32 - x).abs() < 16.0 && (base as f32 - 10.0 - y).abs() < 24.0);
-            if let Some((px, base, _)) = site {
+            if let Some((px, base, style)) = site {
                 let dest = self.dest.clone();
-                self.activate_portal(px, base, dest.clone());
+                self.activate_portal(px, base, style, dest.clone());
                 self.toast(format!("PORTAL OPEN  -  {}", dest.name), dest.color());
                 self.fx.flash = self.fx.flash.max(0.4);
                 self.fx.shake = (self.fx.shake + 6.0).min(14.0);
@@ -524,11 +524,14 @@ impl Game {
     }
 
     /// Fill a structure's archway with a shimmering portal to `dest`.
-    pub fn activate_portal(&mut self, px: i32, base: i32, dest: Planet) {
+    pub fn activate_portal(&mut self, px: i32, base: i32, style: u32, dest: Planet) {
         let rect = Generator::portal_interior(px, base);
         let hue = (dest.hue * 255.0) as u8;
         for y in rect.1..=rect.3 {
             for x in rect.0..=rect.2 {
+                if !Generator::portal_fill(x - px, y - base, style) {
+                    continue;
+                }
                 let m = self.world.mat(x, y);
                 if m == M::Empty || m == M::Portal || m.kind() == crate::materials::Kind::Gas || m.kind() == crate::materials::Kind::Liquid {
                     let mut c = Cell::new(M::Portal, &mut self.world.rng);
@@ -539,7 +542,7 @@ impl Game {
         }
         self.portals.retain(|(r, _)| *r != rect);
         self.portals.push((rect, dest));
-        let (cx, cy) = ((rect.0 + rect.2) as f32 * 0.5, (rect.1 + rect.3) as f32 * 0.5);
+        let (cx, cy) = (px as f32, base as f32 - 10.0);
         for k in 0..120 {
             let a = self.fx.rng.rangef(0.0, std::f32::consts::TAU);
             let sp = self.fx.rng.rangef(40.0, 200.0);
@@ -553,7 +556,7 @@ impl Game {
     pub fn enter_planet(&mut self, dest: Planet) {
         let prev = std::mem::replace(&mut self.planet, dest.clone());
         let gen = Generator::with_planet(self.seed, dest.clone());
-        let (px, base, _) = gen.portals_near(PORTAL_HOME - 1, PORTAL_HOME + 1)[0];
+        let (px, base, style) = gen.portals_near(PORTAL_HOME - 1, PORTAL_HOME + 1)[0];
         let spawn = (px as f32 + 15.0, base as f32 - 9.0);
         self.world = World::with_gen(gen, self.seed, spawn.0, spawn.1);
         self.player.x = spawn.0;
@@ -567,7 +570,7 @@ impl Game {
         self.mobs.clear();
         self.fx.clear();
         self.spells.portal_hue = prev.hue;
-        self.activate_portal(px, base, prev.clone());
+        self.activate_portal(px, base, style, prev.clone());
         self.dest = prev;
         self.cam = self.player.center();
         self.in_space = false;

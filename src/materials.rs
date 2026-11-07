@@ -152,6 +152,11 @@ impl Material {
         self.burn().is_some()
     }
 
+    /// Background plant life (as opposed to background structures).
+    pub const fn foliage(self) -> bool {
+        matches!(self, M::Wood | M::Leaves | M::Plant | M::Mushroom)
+    }
+
     /// Portal structures can't be destroyed.
     pub const fn indestructible(self) -> bool {
         matches!(self, M::PortalStone | M::Rune | M::Portal)

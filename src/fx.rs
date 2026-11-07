@@ -268,7 +268,7 @@ impl Fx {
                 }
                 let Some(c) = world.get(px, py) else { continue };
                 let m = c.mat;
-                if c.back != M::Empty && d <= rf {
+                if c.back.foliage() && d <= rf {
                     world.set_back(px, py, M::Empty);
                     if c.back.flammable() && self.rng.chance(0.3 * fire) {
                         world.ignite_at(px, py);
@@ -382,7 +382,7 @@ impl Fx {
                 }
                 let (px, py) = (cx + dx, cy + dy);
                 let m = world.mat(px, py);
-                if m == M::Empty && world.back(px, py) != M::Empty && self.rng.chance(chance) {
+                if m == M::Empty && world.back(px, py).foliage() && self.rng.chance(chance) {
                     world.set_back(px, py, M::Empty);
                     continue;
                 }

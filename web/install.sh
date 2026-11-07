@@ -49,7 +49,9 @@ cargo build --release --quiet --manifest-path "$DIR/src/Cargo.toml"
 
 say "Installing..."
 mkdir -p "$APP/Contents/MacOS" "$BIN"
-cp "$DIR/src/target/release/falling-wizard" "$APP/Contents/MacOS/falling-wizard"
+# Copy then rename, so a running copy of the game isn't disturbed mid-update.
+cp "$DIR/src/target/release/falling-wizard" "$APP/Contents/MacOS/falling-wizard.new"
+mv -f "$APP/Contents/MacOS/falling-wizard.new" "$APP/Contents/MacOS/falling-wizard"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -73,5 +75,5 @@ case ":$PATH:" in
   *":$BIN:"*) ;;
   *) echo "  (add $BIN to your PATH to use the falling-wizard command)" ;;
 esac
-say "Run the same command again any time to update."
-open "$APP"
+say "Run the same command again any time to update (or use the button in the game)."
+[ -n "${FW_NO_OPEN:-}" ] || open "$APP"

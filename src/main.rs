@@ -11,6 +11,7 @@ mod render;
 mod settings;
 mod spells;
 mod ui;
+mod updater;
 mod weather;
 mod world;
 mod worldgen;
@@ -39,6 +40,14 @@ fn conf() -> Conf {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--version") {
+        println!("falling-wizard {}", if env!("FW_COMMIT").is_empty() { "(dev build)" } else { env!("FW_COMMIT") });
+        return;
+    }
+    if args.iter().any(|a| a == "--update") {
+        updater::update_now();
+        return;
+    }
     if args.iter().any(|a| a == "--bench") {
         bench();
         return;
@@ -191,6 +200,7 @@ fn material_checks() {
 struct App {
     /// Hide the HUD (for --photos).
     clean: bool,
+    updater: Option<updater::Updater>,
     screen: Screen,
     back: Screen,
     game: Game,
@@ -232,6 +242,7 @@ async fn run(args: Vec<String>) {
     let audio = if mute { None } else { Audio::new().await };
     let mut app = App {
         clean: false,
+        updater: if autotest.is_some() { None } else { Some(updater::Updater::start()) },
         screen: Screen::Menu,
         back: Screen::Menu,
         game: Game::new(seed),
@@ -887,7 +898,38 @@ impl App {
             std::process::exit(0);
         }
         self.ui.text(&format!("SEED {}", self.game.seed), 20.0, sh - 28.0, 1.0, MUTED);
-        self.ui.text_right("V0.3", sw - 20.0, sh - 28.0, 1.0, MUTED);
+        self.update_badge(sw, sh);
+    }
+
+    /// Bottom-right of the main menu: version and one-click updates.
+    fn update_badge(&mut self, sw: f32, sh: f32) {
+        use updater::Status;
+        let status = self.updater.as_ref().map(|u| u.status()).unwrap_or(Status::Unknown);
+        let (label, color, clickable) = match status {
+            Status::Checking => ("CHECKING FOR UPDATES", MUTED, false),
+            Status::UpToDate => ("UP TO DATE", MUTED, false),
+            Status::Unknown => ("V0.4", MUTED, false),
+            Status::Available => ("UPDATE AVAILABLE  -  CLICK TO INSTALL", ACCENT, true),
+            Status::Updating => ("UPDATING IN THE BACKGROUND...", ACCENT, false),
+            Status::Ready => ("UPDATE READY  -  CLICK TO RESTART", Color::from_rgba(140, 230, 150, 255), true),
+            Status::Failed => ("UPDATE FAILED  -  CLICK TO RETRY", DANGER, true),
+        };
+        let w = self.ui.font.width(label, 2.0);
+        let (x, y) = (sw - 20.0 - w, sh - 34.0);
+        let (mx, my) = mouse_position();
+        let hot = clickable && mx > x - 10.0 && mx < sw - 10.0 && my > y - 8.0 && my < y + 22.0;
+        if clickable {
+            draw_rectangle(x - 10.0, y - 8.0, w + 20.0, 30.0, Color::new(0.0, 0.0, 0.0, if hot { 0.7 } else { 0.45 }));
+        }
+        self.ui.text(label, x, y, if clickable { 2.0 } else { 1.0 }, color);
+        if hot && is_mouse_button_pressed(MouseButton::Left) {
+            if let Some(u) = &self.updater {
+                match status {
+                    Status::Ready => updater::Updater::relaunch(),
+                    _ => u.update(),
+                }
+            }
+        }
     }
 
     fn pause(&mut self) {

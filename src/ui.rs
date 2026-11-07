@@ -140,11 +140,13 @@ pub struct Ui {
     pub clicked: bool,
     /// The mouse is over a HUD element (so clicks shouldn't reach the world).
     pub hovering: bool,
+    carousel: f32,
+    carousel_target: f32,
 }
 
 impl Ui {
     pub fn new() -> Self {
-        Self { font: Font::new(), mouse: Vec2::ZERO, pressed: false, down: false, next_id: 0, dragging: None, clicked: false, hovering: false }
+        Self { font: Font::new(), mouse: Vec2::ZERO, pressed: false, down: false, next_id: 0, dragging: None, clicked: false, hovering: false, carousel: 0.0, carousel_target: 0.0 }
     }
 
     pub fn begin(&mut self) {
@@ -423,39 +425,121 @@ impl Ui {
         }
     }
 
-    /// Choose a destination for the Portal Wand. Returns the clicked planet's index.
+    /// Choose a destination: planets orbit on a tilted 3D ring; the front one is chosen.
     pub fn planet_picker(&mut self, game: &Game, list: &[crate::planets::Planet], time: f32) -> Option<usize> {
         let (sw, sh) = (screen_width(), screen_height());
-        draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.01, 0.0, 0.04, 0.82));
-        self.text_center("CHOOSE A DESTINATION", sw * 0.5, 34.0, 3.0, ACCENT);
-        self.text_center("THEN SHOOT A PORTAL STRUCTURE WITH THE PORTAL WAND   -   RIGHT CLICK OR ESC TO CLOSE", sw * 0.5, 66.0, 1.0, MUTED);
-        let cols = 6;
-        let (cw, ch) = (((sw - 60.0) / cols as f32).min(200.0), 82.0);
-        let x0 = (sw - cw * cols as f32) * 0.5;
+        let n = list.len().max(1) as f32;
+        draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.01, 0.0, 0.03, 0.93));
+        // Starfield.
+        for k in 0..260 {
+            let h = crate::noise::hash3(k, 3, 11);
+            let (x, y) = ((h % 1000) as f32 / 1000.0 * sw, ((h >> 10) % 1000) as f32 / 1000.0 * sh);
+            let tw = 0.4 + 0.6 * ((time * 2.0 + k as f32).sin() * 0.5 + 0.5);
+            let sz = if h % 9 == 0 { 3.0 } else { 2.0 };
+            draw_rectangle((x / 2.0).floor() * 2.0, (y / 2.0).floor() * 2.0, sz, sz, Color::new(0.85, 0.88, 1.0, 0.5 * tw));
+        }
+        // Input: rotate with keys or the wheel.
+        let wheel = mouse_wheel().1;
+        if is_key_pressed(KeyCode::Left) || is_key_pressed(KeyCode::A) || wheel > 0.0 {
+            self.carousel_target -= 1.0;
+        }
+        if is_key_pressed(KeyCode::Right) || is_key_pressed(KeyCode::D) || wheel < 0.0 {
+            self.carousel_target += 1.0;
+        }
+        let dt = get_frame_time().min(0.05);
+        self.carousel += (self.carousel_target - self.carousel) * (dt * 7.0).min(1.0);
+        let front = self.carousel_target.round().rem_euclid(n) as usize;
+        let (cx, cy) = (sw * 0.5, sh * 0.44);
+        let radius = sw * 0.36;
+        let mut items: Vec<(f32, usize, f32, f32, f32)> = (0..list.len())
+            .map(|i| {
+                // Wrap around the ring, spaced so neighbours don't overlap.
+                let mut d = (i as f32 - self.carousel).rem_euclid(n);
+                if d > n * 0.5 {
+                    d -= n;
+                }
+                let a = d * 0.42;
+                let z = if a.abs() > 2.4 { -1.0 } else { a.cos() };
+                let depth = ((z + 1.0) * 0.5).powi(3);
+                let x = cx + a.sin() * radius;
+                let y = cy - (1.0 - z) * sh * 0.08;
+                (z, i, x, y, 10.0 + 88.0 * depth)
+            })
+            .collect();
+        items.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        // Orbit line.
+        for k in 0..120 {
+            let a = k as f32 / 120.0 * std::f32::consts::TAU;
+            let (x, y) = (cx + a.sin() * radius, cy - (1.0 - a.cos()) * sh * 0.09);
+            draw_rectangle(x, y + 2.0, 2.0, 2.0, Color::new(0.7, 0.6, 1.0, 0.12 + 0.12 * a.cos().max(0.0)));
+        }
         let mut picked = None;
-        for (i, p) in list.iter().enumerate() {
-            let (x, y) = (x0 + (i % cols) as f32 * cw + 4.0, 90.0 + (i / cols) as f32 * (ch + 6.0));
-            if y + ch > sh - 10.0 {
-                break;
+        let mut clicked_item: Option<usize> = None;
+        for &(z, i, x, y, r) in &items {
+            if z < -0.7 {
+                continue;
             }
-            let hot = self.over(x, y, cw - 8.0, ch);
-            let sel = *p == game.dest;
-            draw_rectangle(x, y, cw - 8.0, ch, if hot { Color::new(1.0, 1.0, 1.0, 0.08) } else { PANEL });
-            let c = p.color();
-            draw_rectangle(x, y, 3.0, ch, Color::from_rgba(c[0], c[1], c[2], 255));
-            draw_rectangle_lines(x, y, cw - 8.0, ch, if sel { 2.0 } else { 1.0 }, if sel { ACCENT } else if hot { Color::new(1.0, 1.0, 1.0, 0.3) } else { LINE });
-            self.planet_sphere(p, x + 34.0, y + ch * 0.5, 22.0, 3.0, time);
-            let name: String = p.name.chars().take(11).collect();
-            self.font.draw(&name, x + 64.0, y + 14.0, 2.0, if sel { ACCENT } else { TEXT });
-            self.font.draw(p.kind.name(), x + 64.0, y + 38.0, 1.0, MUTED);
-            let here = *p == game.planet;
-            let dist = if here { "YOU ARE HERE".to_string() } else { format!("{:.1} LY   G {:.1}", game.planet.light_years(p), p.gravity) };
-            self.font.draw(&dist, x + 64.0, y + 54.0, 1.0, if here { Color::from_rgba(140, 230, 150, 255) } else { MUTED });
-            if hot && self.pressed {
-                picked = Some(i);
+            let p = &list[i];
+            let px = if r > 60.0 { 4.0 } else { 3.0 };
+            self.planet_sphere(p, x, y, r, px, time);
+            let shade = ((1.0 - z) * 0.35).clamp(0.0, 0.65);
+            if shade > 0.02 {
+                draw_circle(x, y, r + 1.0, Color::new(0.01, 0.0, 0.03, shade));
+            }
+            if i == front {
+                let c = p.color();
+                draw_circle_lines(x, y, r + 10.0 + (time * 3.0).sin() * 2.0, 2.0, Color::from_rgba(c[0], c[1], c[2], 160));
+            } else if z > 0.0 {
+                let label: String = p.name.chars().take(12).collect();
+                self.text_center(&label, x, y + r + 10.0, 1.0, Color::new(0.75, 0.72, 0.7, z));
+            }
+            let dx = self.mouse.x - x;
+            let dy = self.mouse.y - y;
+            if dx * dx + dy * dy < r * r {
+                clicked_item = Some(i);
+            }
+        }
+        if self.pressed {
+            if let Some(i) = clicked_item {
+                if i == front {
+                    picked = Some(i);
+                } else {
+                    let mut delta = (i as f32 - self.carousel_target.round()).rem_euclid(n);
+                    if delta > n * 0.5 {
+                        delta -= n;
+                    }
+                    self.carousel_target += delta;
+                }
                 self.clicked = true;
             }
         }
+        if is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter) || is_key_pressed(KeyCode::Space) {
+            picked = Some(front);
+        }
+        // Header and the front planet's details.
+        self.text_center("CHOOSE A DESTINATION", cx, 28.0, 3.0, ACCENT);
+        let p = &list[front];
+        let c = p.color();
+        let y0 = sh * 0.7;
+        self.text_center(&p.name, cx, y0, 5.0, Color::from_rgba(c[0], c[1], c[2], 255));
+        self.text_center(p.kind.name(), cx, y0 + 48.0, 2.0, TEXT);
+        let here = *p == game.planet;
+        let sea = match p.sea {
+            Some(crate::materials::Material::Lava) => "LAVA SEAS",
+            Some(crate::materials::Material::Acid) => "ACID SEAS",
+            Some(_) => "OCEANS",
+            None => "NO SEAS",
+        };
+        let info = if here {
+            "YOU ARE HERE".to_string()
+        } else {
+            format!("{:.1} LIGHT YEARS   -   GRAVITY {:.1}   -   {}   -   {} CREATURES", game.planet.light_years(p), p.gravity, sea, if p.is_earth() { 24 } else { p.creatures.len() })
+        };
+        self.text_center(&info, cx, y0 + 76.0, 1.0, if here { Color::from_rgba(140, 230, 150, 255) } else { MUTED });
+        if *p == game.dest {
+            self.text_center("PORTAL WAND IS TUNED HERE", cx, y0 + 96.0, 1.0, ACCENT);
+        }
+        self.text_center("<  A        CLICK OR ENTER TO CHOOSE        D  >", cx, sh - 34.0, 1.0, MUTED);
         picked
     }
 

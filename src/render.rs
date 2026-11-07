@@ -364,6 +364,9 @@ impl Renderer {
                             M::Wood => ([0.0; 3], 0.45),
                             M::Plant => ([0.0; 3], 0.12),
                             M::Mushroom => ([0.2, 0.8, 0.75], 0.15),
+                            M::Rune => ([0.9, 0.6, 2.0], 0.3),
+                            M::Crystal => ([0.35, 0.8, 1.2], 0.3),
+                            M::PortalStone | M::Basalt | M::Brick | M::Gold => ([0.0; 3], 0.45),
                             _ if is_sky => (sky_light, 0.5),
                             _ => ([0.0; 3], 0.0),
                         };

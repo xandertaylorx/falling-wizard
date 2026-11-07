@@ -13,6 +13,8 @@ Or install it on a Mac with one command (builds from source, adds the app to ~/A
 curl -fsSL https://raw.githubusercontent.com/xandertaylorx/falling-wizard/main/web/install.sh | bash
 ```
 
+**Updates:** the game checks GitHub when it starts. If there's a newer version, the main menu shows an *Update available* button that installs it in the background and then offers a restart. You can also run the install command again, or `falling-wizard --update`.
+
 The `web/` folder holds the game's landing page; `vercel.json` tells Vercel to serve it.
 
 ## The world
@@ -63,7 +65,7 @@ Press **T** to chat or **/** to type a command. As you type, suggestions pop up 
 
 The galaxy is an endless grid of procedurally generated planets around Earth: dune worlds, ice worlds, lava worlds, jungle and toxic worlds with giant glowing mushrooms, crystal worlds, barren moons and ocean worlds. Each has its own ground, seas, plants, sky, gravity and creatures.
 
-Portal structures (stone arches, crystal rings, basalt monoliths and brick temples) stand around every world, with one beside every arrival point. Select the **Portal Wand (P)**, right-click to pick one of the thirty nearest planets (Earth is always listed), then shoot a portal structure to open a gate. Step in to warp there at lightspeed. You arrive beside that planet's portal, already open back to where you came from. `/tp portal` takes you to the nearest structure.
+Portal structures (stone arches, crystal rings, basalt monoliths and brick temples) stand around every world, with one beside every arrival point. Select the **Portal Wand (P)**, right-click to open the rotating planet selector and pick one of the thirty nearest planets (Earth is always listed), then shoot a portal structure to open a gate. Step in to warp there at lightspeed. You arrive beside that planet's portal, already open back to where you came from. `/tp portal` takes you to the nearest structure.
 
 ## Getting to space
 
@@ -109,7 +111,7 @@ The CPU writes a colour image and a light image (emission + opacity) for the scr
 - `cargo run --release -- --bench` runs a headless benchmark that flies across the world casting spells, plus material behaviour checks.
 - `cargo run --release -- --autotest 22 [dir]` runs a scripted, **muted** tour (surface, spells, hotbar, caves, lava, sky isles, space, night storm, another biome) that prints FPS stats and saves screenshots.
 - `cargo run --release -- --photos <dir>` tours the world with the HUD hidden and saves clean screenshots (used for the website).
-- `--mute` starts the game without audio.
+- `--mute` starts the game without audio. `--version` prints the build's commit.
 
 ## Licence
 
