@@ -10,6 +10,7 @@
 use crate::cell::Cell;
 use crate::materials::Material as M;
 use crate::noise::{fbm, hash3, value_noise, Rng};
+use crate::planets::{Flora, Kind as PKind, Planet};
 use crate::world::CHUNK;
 
 const CU: usize = CHUNK as usize;
@@ -52,11 +53,238 @@ const VOLC_W: i32 = 64;
 
 pub struct Generator {
     s: u32,
+    pub planet: Planet,
+}
+
+/// Where every planet's arrival portal stands.
+pub const PORTAL_HOME: i32 = 70;
+const PG: i32 = 520;
+
+#[derive(Clone, Copy, PartialEq)]
+enum Style {
+    Oak,
+    Jungle,
+    Pine,
+    Cactus,
+    Shroom,
+    Crystal,
+    None,
 }
 
 impl Generator {
     pub fn new(seed: u64) -> Self {
-        Self { s: (seed ^ (seed >> 32)) as u32 }
+        Self::with_planet(seed, Planet::earth())
+    }
+
+    pub fn with_planet(seed: u64, planet: Planet) -> Self {
+        let seed = planet.world_seed(seed);
+        Self { s: (seed ^ (seed >> 32)) as u32, planet }
+    }
+
+    fn alien(&self) -> bool {
+        !self.planet.is_earth()
+    }
+
+    pub fn sea_level(&self) -> i32 {
+        if self.alien() {
+            if self.planet.sea.is_some() { self.planet.sea_level } else { i32::MAX }
+        } else {
+            SEA
+        }
+    }
+
+    /// Portal structures with x in [x0, x1]: (centre x, platform y, style).
+    pub fn portals_near(&self, x0: i32, x1: i32) -> Vec<(i32, i32, u32)> {
+        let mut out = Vec::new();
+        if (x0..=x1).contains(&PORTAL_HOME) {
+            out.push(self.portal_site(PORTAL_HOME, hash3(7, 7, self.s)));
+        }
+        for g in x0.div_euclid(PG) - 1..=x1.div_euclid(PG) + 1 {
+            let h = hash3(g, 61, self.s);
+            if h % 100 >= 60 {
+                continue;
+            }
+            let px = g * PG + 120 + (h >> 8) as i32 % (PG - 240);
+            if px < x0 || px > x1 || (px - PORTAL_HOME).abs() < 200 || self.volcano_near(px).is_some() || (!self.alien() && self.ocean(px) > 0.3) {
+                continue;
+            }
+            out.push(self.portal_site(px, h));
+        }
+        out
+    }
+
+    fn portal_site(&self, px: i32, h: u32) -> (i32, i32, u32) {
+        let top = (px - 12..=px + 12).map(|x| self.surface(x)).min().unwrap_or(0);
+        let base = top.min(self.sea_level() - 1);
+        (px, base, (h >> 12) % 4)
+    }
+
+    /// The portal surface rectangle of a structure: (x0, y0, x1, y1), inclusive.
+    pub fn portal_interior(px: i32, base: i32) -> (i32, i32, i32, i32) {
+        (px - 4, base - 17, px + 4, base - 2)
+    }
+
+    /// What a portal structure puts at offset (dx, u) from its platform centre (u < 0 is up).
+    fn portal_cell(dx: i32, u: i32, style: u32) -> Option<M> {
+        let ax = dx.abs();
+        if ax <= 12 && (-1..=1).contains(&u) {
+            if u == -1 && ax > 10 {
+                return Some(M::Empty);
+            }
+            if u == -1 && ax == 10 {
+                return Some(M::Rune);
+            }
+            return Some(M::PortalStone);
+        }
+        let frame = match style {
+            0 => {
+                // Stone arch with gold trim and rune-lit pillars.
+                if (5..=7).contains(&ax) && (-19..=-2).contains(&u) {
+                    Some(if ax == 6 && u % 3 == 0 { M::Rune } else { M::PortalStone })
+                } else if (-28..=-18).contains(&u) {
+                    let d = ((dx * dx) as f32 + ((u + 18) as f32 * 1.15).powi(2)).sqrt();
+                    if d >= 5.0 && d <= 7.4 {
+                        Some(M::PortalStone)
+                    } else if d > 7.4 && d <= 8.4 {
+                        Some(M::Gold)
+                    } else if dx == 0 && (d - 8.0).abs() < 2.0 {
+                        Some(M::Rune)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            1 => {
+                // Crystal ring held by rune nodes.
+                let e = (dx as f32 / 7.5).powi(2) + ((u + 10) as f32 / 10.5).powi(2);
+                if e > 0.78 && e <= 1.08 {
+                    let node = (dx == 0 && (u == -21 || u == 0)) || (ax >= 7 && (u + 10).abs() <= 1);
+                    Some(if node { M::Rune } else { M::Crystal })
+                } else if ax <= 3 && (u == -2) && e > 0.6 {
+                    Some(M::Brick)
+                } else {
+                    None
+                }
+            }
+            2 => {
+                // Twin basalt monoliths under a lintel, with glyphs.
+                if (5..=8).contains(&ax) && (-24..=-2).contains(&u) {
+                    let glyph = ax == 6 && (u % 4 == 0 || u % 4 == -1) && hash3(dx, u, 3) % 2 == 0;
+                    Some(if glyph { M::Rune } else { M::Basalt })
+                } else if ax <= 10 && (-27..=-25).contains(&u) {
+                    Some(if u == -26 && ax % 3 == 0 { M::Rune } else { M::Basalt })
+                } else if ax <= 1 && u == -30 {
+                    Some(M::Rune)
+                } else {
+                    None
+                }
+            }
+            _ => {
+                // Brick temple with a stepped roof and a rune eye.
+                if (5..=6).contains(&ax) && (-18..=-2).contains(&u) {
+                    Some(if u % 5 == 0 { M::Gold } else { M::Brick })
+                } else if (-27..=-19).contains(&u) && ax <= 10 - (-19 - u) {
+                    if u == -19 {
+                        Some(M::Gold)
+                    } else if u == -23 && ax <= 1 {
+                        Some(M::Rune)
+                    } else {
+                        Some(M::Brick)
+                    }
+                } else {
+                    None
+                }
+            }
+        };
+        if frame.is_some() {
+            return frame;
+        }
+        if ax <= 12 && (-32..=-2).contains(&u) {
+            return Some(M::Empty); // clear the plaza
+        }
+        None
+    }
+
+    fn stamp_portals(&self, cx: i32, cy: i32, cells: &mut [Cell], rng: &mut Rng) {
+        let (x0, y0) = (cx * CHUNK, cy * CHUNK);
+        for (px, base, style) in self.portals_near(x0 - 14, x0 + CHUNK + 14) {
+            for x in (px - 12).max(x0)..=(px + 12).min(x0 + CHUNK - 1) {
+                let ground = self.surface(x);
+                for y in (base - 32).max(y0)..=(ground.max(base + 1)).min(y0 + CHUNK - 1) {
+                    let u = y - base;
+                    let m = if u > 1 { Some(M::PortalStone) } else { Self::portal_cell(x - px, u, style) };
+                    if let Some(m) = m {
+                        let i = ((y - y0) as usize) * CU + (x - x0) as usize;
+                        let mut c = if m == M::Empty { Cell::EMPTY } else { Cell::new(m, rng) };
+                        if m == M::PortalStone {
+                            c.shade = if (x + y * 3) % 7 == 0 { 70 } else { 140 + (hash3(x, y, 4) % 60) as u8 };
+                        }
+                        cells[i] = c;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Terrain surface on another planet.
+    fn alien_surface(&self, x: i32) -> i32 {
+        let p = &self.planet;
+        let fx = x as f32;
+        let hills = (fbm(fx * 0.012, 0.5, 4, self.s) - 0.5) * 70.0 * p.amp;
+        let peaks = (fbm(fx * 0.006, 3.1, 3, self.s.wrapping_add(5)) - 0.45).max(0.0) * 300.0 * p.peaks;
+        let crater = if matches!(p.kind, PKind::Moon | PKind::Crystal) {
+            let c = (value_noise(fx * 0.02, 9.0, self.s.wrapping_add(6)) - 0.62).max(0.0);
+            c * c * 900.0
+        } else {
+            0.0
+        };
+        (hills - peaks + crater) as i32
+    }
+
+    fn alien_base(&self, x: i32, y: i32, surf: i32, topsoil: i32, rng: &mut Rng) -> (M, u8, Option<u8>) {
+        let p = &self.planet;
+        let d = y - surf;
+        if d < 0 {
+            if let Some(sea) = p.sea {
+                if y >= p.sea_level {
+                    return (sea, 0, None);
+                }
+            }
+            if matches!(p.flora, Flora::Trees | Flora::Shrooms) && d == -1 && hash3(x, 5, self.s) % 3 == 0 {
+                return (M::Plant, 0, None);
+            }
+            return (M::Empty, 0, None);
+        }
+        let (fx, fy) = (x as f32, y as f32);
+        let s = self.s;
+        let n = fbm(fx * 0.024, fy * 0.05, 4, s.wrapping_add(1));
+        let wall = 1 + (n * 200.0) as u8;
+        let mut open = d > 12 && n > 0.71 - ((d - 12) as f32 / 500.0).clamp(0.0, 0.11);
+        if !open && d > 6 {
+            open = (fbm(fx * 0.012, fy * 0.022, 3, s.wrapping_add(2)) - 0.5).abs() < 0.022;
+        }
+        if open {
+            return (M::Empty, wall, None);
+        }
+        if d == 0 {
+            return (p.top, wall, None);
+        }
+        if d < topsoil {
+            return (p.soil, wall, None);
+        }
+        if p.kind == PKind::Crystal && value_noise(fx * 0.12, fy * 0.12, s.wrapping_add(7)) > 0.8 {
+            return (M::Crystal, wall, None);
+        }
+        if d > 40 && value_noise(fx * 0.16, fy * 0.16, s.wrapping_add(8)) > 0.88 {
+            return (M::Gold, wall, None);
+        }
+        if p.kind == PKind::Lava && d > 30 && value_noise(fx * 0.05, fy * 0.05, s.wrapping_add(9)) > 0.8 {
+            return (M::Lava, wall, None);
+        }
+        let band = ((fy * 0.55 + n * 9.0).sin() * 0.5 + 0.5) * 120.0;
+        (if d > 220 { M::Basalt } else { p.rock }, wall, Some((band + rng.f32() * 80.0) as u8))
     }
 
     fn biome_value(&self, x: i32) -> f32 {
@@ -65,12 +293,24 @@ impl Generator {
 
     /// 1 in the open ocean, 0 inland.
     pub fn ocean(&self, x: i32) -> f32 {
+        if self.alien() {
+            return 0.0;
+        }
         let c = fbm(x as f32 * 0.0011, 11.0, 3, self.s.wrapping_add(40));
         let c = if x.abs() < 300 { c.max(0.45) } else { c }; // spawn on land
         smooth(0.40, 0.31, c)
     }
 
     pub fn biome(&self, x: i32) -> Biome {
+        if self.alien() {
+            return match self.planet.kind {
+                PKind::Dune => Biome::Desert,
+                PKind::Ice => Biome::Snow,
+                PKind::Jungle => Biome::Jungle,
+                PKind::Ocean if self.surface(x) >= self.planet.sea_level => Biome::Ocean,
+                _ => Biome::Plains,
+            };
+        }
         if self.ocean(x) > 0.5 {
             return Biome::Ocean;
         }
@@ -93,6 +333,9 @@ impl Generator {
 
     /// Y of the topmost ground cell in column x (y grows downwards).
     pub fn surface(&self, x: i32) -> i32 {
+        if self.alien() {
+            return self.alien_surface(x);
+        }
         let fx = x as f32;
         let b = self.biome_value(x);
         // Deserts are flatter, tundra rises into mountains; blend smoothly between them.
@@ -197,8 +440,8 @@ impl Generator {
                 let (m, w, shade) = self.base(x, y, surf, biome, topsoil, &mut rng);
                 if m == M::Plant {
                     cells[i].back = M::Plant;
-                    if y >= SEA && y < surf {
-                        cells[i].mat = M::Water;
+                    if y >= self.sea_level() && y < surf {
+                        cells[i].mat = self.planet.sea.unwrap_or(M::Water);
                     }
                 } else if m != M::Empty {
                     let mut c = Cell::new(m, &mut rng);
@@ -212,6 +455,7 @@ impl Generator {
         }
         self.stamp_pools(cx, cy, &mut cells, &mut rng);
         self.stamp_vents(cx, cy, &mut cells, &mut rng);
+        self.stamp_portals(cx, cy, &mut cells, &mut rng);
         self.stamp_ruins(cx, cy, &mut cells, &mut rng);
         self.stamp_trees(cx, cy, &mut cells, &mut rng);
         if y0 < -100 {
@@ -222,6 +466,9 @@ impl Generator {
 
     /// Material, wall shade and optional cell shade for one terrain cell.
     fn base(&self, x: i32, y: i32, surf: i32, biome: Biome, topsoil: i32, rng: &mut Rng) -> (M, u8, Option<u8>) {
+        if self.alien() {
+            return self.alien_base(x, y, surf, topsoil, rng);
+        }
         let d = y - surf;
         if d < 0 {
             let underwater = y >= SEA;
@@ -600,7 +847,7 @@ impl Generator {
                 return;
             }
             let i = ((y - y0) as usize) * CU + (x - x0) as usize;
-            let _ = (shade, &rng);
+            let _ = shade;
             if over || cells[i].back == M::Empty {
                 cells[i].back = m;
             }
@@ -609,13 +856,32 @@ impl Generator {
             let h = hash3(slot, 77, self.s);
             let tx = slot * SLOT + ((h >> 8) % (SLOT as u32 - 3)) as i32;
             let biome = self.biome(tx);
-            let chance = match biome {
-                Biome::Jungle => 92,
-                Biome::Plains => 12,
-                Biome::Ocean => 0,
+            let style = if self.alien() {
+                match self.planet.flora {
+                    Flora::Trees => Style::Oak,
+                    Flora::Pines => Style::Pine,
+                    Flora::Cacti => Style::Cactus,
+                    Flora::Shrooms => Style::Shroom,
+                    Flora::Crystals => Style::Crystal,
+                    Flora::None => Style::None,
+                }
+            } else {
+                match biome {
+                    Biome::Jungle => Style::Jungle,
+                    Biome::Snow => Style::Pine,
+                    Biome::Desert => Style::Cactus,
+                    Biome::Ocean => Style::None,
+                    _ => Style::Oak,
+                }
+            };
+            let chance = match (style, biome) {
+                (Style::Jungle, _) => 92,
+                (Style::Oak, Biome::Plains) if !self.alien() => 12,
+                (Style::None, _) => 0,
+                (Style::Crystal, _) => 35,
                 _ => 55,
             };
-            if h % 100 >= chance || self.surface(tx) >= SEA {
+            if h % 100 >= chance || self.surface(tx) >= self.sea_level() || !self.portals_near(tx - 16, tx + 16).is_empty() {
                 continue;
             }
             if tx.abs() < 8 || self.volcano_near(tx).is_some() {
@@ -626,19 +892,49 @@ impl Generator {
                 continue;
             }
             let base = s0.max(s1);
-            let height = if biome == Biome::Jungle { 16 + ((h >> 16) % 14) as i32 } else { 9 + ((h >> 16) % 11) as i32 };
+            let height = if style == Style::Jungle { 16 + ((h >> 16) % 14) as i32 } else { 9 + ((h >> 16) % 11) as i32 };
             let top = base - height;
             if top - 10 > y0 + CHUNK || base < y0 {
                 continue;
             }
             let hv = |a: i32, b: i32| hash3(a, b, h);
-            match biome {
-                Biome::Forest | Biome::Plains | Biome::Jungle => {
+            match style {
+                Style::Shroom => {
+                    // Giant glowing mushroom.
+                    let stem = 5 + (h >> 18) as i32 % 9;
+                    for y in base - stem..base {
+                        put(tx, y, M::Plant, 0, true, cells);
+                        put(tx + 1, y, M::Plant, 0, true, cells);
+                    }
+                    let rx = 4 + (h >> 22) as i32 % 4;
+                    for dy in -3..=0 {
+                        for dx in -rx..=rx + 1 {
+                            if (dx as f32 - 0.5).abs() / rx as f32 + (-dy) as f32 / 3.5 <= 1.1 {
+                                put(tx + dx, base - stem + dy, M::Mushroom, 0, true, cells);
+                            }
+                        }
+                    }
+                }
+                Style::Crystal => {
+                    // Crystal spire (solid, glowing).
+                    let hgt = 5 + (h >> 18) as i32 % 12;
+                    for k in 0..hgt {
+                        let w = ((hgt - k) / 4).min(2);
+                        for dx in -w..=w {
+                            let (x, y) = (tx + dx, base - 1 - k);
+                            if x >= x0 && y >= y0 && x < x0 + CHUNK && y < y0 + CHUNK {
+                                let i = ((y - y0) as usize) * CU + (x - x0) as usize;
+                                cells[i] = Cell::new(M::Crystal, rng);
+                            }
+                        }
+                    }
+                }
+                Style::Oak | Style::Jungle => {
                     for y in top..base {
                         put(tx, y, M::Wood, (hv(tx, y) % 90) as u8 + 60, true, cells);
                         put(tx + 1, y, M::Wood, (hv(tx + 1, y) % 90) as u8 + 20, true, cells);
                     }
-                    let jungle = biome == Biome::Jungle;
+                    let jungle = style == Style::Jungle;
                     let (rx, ry) = if jungle { (8 + (h >> 20) as i32 % 3, 5) } else { (5 + (h >> 20) as i32 % 3, 4 + (h >> 22) as i32 % 2) };
                     if jungle {
                         // Hanging vines.
@@ -660,7 +956,7 @@ impl Generator {
                         }
                     }
                 }
-                Biome::Snow => {
+                Style::Pine => {
                     for y in top..base {
                         put(tx, y, M::Wood, (hv(tx, y) % 60) as u8 + 30, true, cells);
                     }
@@ -671,8 +967,8 @@ impl Generator {
                         }
                     }
                 }
-                Biome::Ocean => {}
-                Biome::Desert => {
+                Style::None => {}
+                Style::Cactus => {
                     if h % 3 != 0 {
                         continue;
                     }

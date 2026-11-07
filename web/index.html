@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Falling Wizard</title>
+<meta name="description" content="A pixel falling-sand wizard game: every grain simulated, an infinite world, and a galaxy of procedural planets.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0d0b14;
+    --panel: #16121f;
+    --panel2: #1e1829;
+    --line: #2d2540;
+    --text: #ebe3d6;
+    --muted: #9a928c;
+    --accent: #ffb54a;
+    --magic: #b98cff;
+    --cyan: #78e6ff;
+    --px: 4px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "VT323", monospace;
+    font-size: 22px;
+    line-height: 1.35;
+    image-rendering: pixelated;
+  }
+  a { color: var(--cyan); text-decoration: none; }
+  a:hover { color: var(--accent); }
+  h1, h2, h3, .pixel { font-family: "Press Start 2P", monospace; font-weight: normal; letter-spacing: 1px; }
+  h2 { font-size: 20px; color: var(--accent); margin: 0 0 22px; }
+  h3 { font-size: 12px; margin: 0 0 8px; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+
+  /* Pixel frame: stepped corners with box-shadow. */
+  .frame {
+    background: var(--panel);
+    box-shadow:
+      0 -4px 0 0 var(--line), 0 4px 0 0 var(--line), -4px 0 0 0 var(--line), 4px 0 0 0 var(--line),
+      0 8px 0 0 #07060b;
+    margin: 4px;
+  }
+
+  nav { position: sticky; top: 0; z-index: 5; background: rgba(13, 11, 20, 0.92); border-bottom: 4px solid var(--line); }
+  nav .wrap { display: flex; align-items: center; gap: 22px; height: 58px; overflow-x: auto; }
+  nav .logo { font-family: "Press Start 2P"; font-size: 12px; color: var(--accent); white-space: nowrap; margin-right: auto; }
+  nav a { color: var(--muted); white-space: nowrap; }
+
+  header.hero { position: relative; padding: 40px 0 30px; overflow: hidden; }
+  .hero h1 { font-size: clamp(26px, 6vw, 56px); margin: 0; line-height: 1.15; text-shadow: 6px 6px 0 #2a1847; }
+  .hero h1 span { display: inline-block; animation: bob 2.4s ease-in-out infinite; }
+  @keyframes bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+  .tag { color: var(--muted); font-size: 26px; margin: 16px 0 26px; max-width: 760px; }
+  .sandbox { position: relative; }
+  #sand { width: 100%; height: auto; display: block; background: #120f1c; cursor: crosshair; }
+  .tools { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; background: var(--panel2); }
+  .tools button {
+    font-family: "Press Start 2P"; font-size: 10px; color: var(--text); background: var(--panel);
+    border: 0; padding: 9px 10px; cursor: pointer; box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.35);
+  }
+  .tools button.on { color: #0d0b14; background: var(--accent); }
+  .tools .hint { margin-left: auto; color: var(--muted); align-self: center; font-size: 18px; }
+
+  .terminal { margin-top: 26px; }
+  .terminal .bar { display: flex; gap: 8px; align-items: center; padding: 10px 12px; background: var(--panel2); }
+  .terminal .dot { width: 12px; height: 12px; }
+  .terminal .bar .t { margin-left: 10px; color: var(--muted); font-size: 18px; }
+  .terminal pre {
+    margin: 0; padding: 18px 16px; overflow-x: auto; font-family: "VT323", monospace; font-size: 24px; color: #c8ffd4;
+    background: #0a0910;
+  }
+  .terminal pre .p { color: var(--magic); }
+  .copy { margin-left: auto; font-family: "Press Start 2P"; font-size: 10px; background: var(--accent); color: #0d0b14; border: 0; padding: 8px 10px; cursor: pointer; }
+  .small { color: var(--muted); font-size: 19px; margin-top: 10px; }
+
+  section { padding: 54px 0; border-top: 4px solid var(--line); }
+  .grid { display: grid; gap: 18px; }
+  .shots { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .shot img { width: 100%; display: block; image-rendering: auto; }
+  .shot .cap { padding: 10px 12px; color: var(--muted); font-size: 20px; }
+  .shot .cap b { color: var(--text); font-weight: normal; }
+
+  .spells { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+  .spell { display: flex; gap: 12px; align-items: center; padding: 12px; }
+  .spell canvas { width: 42px; height: 42px; flex: none; image-rendering: pixelated; }
+  .spell .k { font-family: "Press Start 2P"; font-size: 9px; color: var(--accent); }
+  .spell .d { color: var(--muted); font-size: 19px; }
+
+  .worlds { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+  .world { padding: 14px; display: flex; gap: 14px; align-items: center; }
+  .world canvas { width: 64px; height: 64px; flex: none; image-rendering: pixelated; }
+  .world p { margin: 4px 0 0; color: var(--muted); font-size: 19px; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; }
+  .chip { padding: 6px 10px; background: var(--panel); color: var(--text); font-size: 20px; }
+
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 8px 12px; border-bottom: 2px solid var(--line); vertical-align: top; }
+  td:first-child { font-family: "VT323"; color: var(--accent); white-space: nowrap; width: 1%; }
+  .two { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+
+  .feature-list { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .feature { padding: 16px; }
+  .feature p { margin: 6px 0 0; color: var(--muted); font-size: 20px; }
+
+  footer { padding: 36px 0 60px; color: var(--muted); border-top: 4px solid var(--line); text-align: center; }
+
+  @media (max-width: 640px) {
+    body { font-size: 20px; }
+    .tools .hint { width: 100%; margin: 0; }
+    td:first-child { white-space: normal; }
+  }
+</style>
+</head>
+<body>
+<nav>
+  <div class="wrap">
+    <div class="logo">FALLING WIZARD</div>
+    <a href="#features">Features</a>
+    <a href="#spells">Spells</a>
+    <a href="#worlds">Worlds</a>
+    <a href="#commands">Commands</a>
+    <a href="#install">Install</a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <h1 id="title"></h1>
+    <p class="tag">A falling-sand wizard game where every pixel is alive. Burn forests, flood caves, summon tornadoes and black holes, then open a portal to a planet nobody has ever seen.</p>
+
+    <div class="frame sandbox">
+      <canvas id="sand" width="320" height="140"></canvas>
+      <div class="tools" id="tools">
+        <button data-m="sand" class="on">Sand</button>
+        <button data-m="water">Water</button>
+        <button data-m="oil">Oil</button>
+        <button data-m="fire">Fire</button>
+        <button data-m="stone">Stone</button>
+        <button data-m="erase">Erase</button>
+        <span class="hint">Click and drag to play</span>
+      </div>
+    </div>
+
+    <div class="frame terminal" id="install">
+      <div class="bar">
+        <span class="dot" style="background:#ff6b6b"></span><span class="dot" style="background:#ffb54a"></span><span class="dot" style="background:#7ee08a"></span>
+        <span class="t">Terminal &mdash; install on macOS</span>
+        <button class="copy" id="copy">Copy</button>
+      </div>
+      <pre><span class="p">$</span> <span id="cmd">curl -fsSL https://raw.githubusercontent.com/xandertaylorx/falling-wizard/main/web/install.sh | bash</span></pre>
+    </div>
+    <p class="small">Paste it into Terminal. It builds the game from source on your Mac (a couple of minutes the first time), adds <b>Falling Wizard</b> to your Applications, and gives you a <b>falling-wizard</b> command. Run it again any time to update.</p>
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap">
+    <h2>A WORLD MADE OF PIXELS</h2>
+    <div class="grid shots">
+      <div class="frame shot"><img src="img/creatures.jpg" alt="Wizard surrounded by lions, tigers, slimes and demon eyes"><div class="cap"><b>Creatures everywhere.</b> Lions pounce, demon eyes watch you, skeletons throw bones.</div></div>
+      <div class="frame shot"><img src="img/blackhole.jpg" alt="A black hole tearing up the ground"><div class="cap"><b>Black holes</b> bend the light around them and swallow everything, rock included.</div></div>
+      <div class="frame shot"><img src="img/ocean.jpg" alt="Ocean with a volcano erupting"><div class="cap"><b>Oceans, beaches and volcanoes</b> that erupt straight out of the sea.</div></div>
+      <div class="frame shot"><img src="img/caves.jpg" alt="Lava caverns lit by ray-traced light"><div class="cap"><b>Ray-traced lighting.</b> Lava lights up caverns with real shadows.</div></div>
+      <div class="frame shot"><img src="img/storm.jpg" alt="Night thunderstorm"><div class="cap"><b>Weather and nights.</b> Storms, fog, snowfall, sandstorms and lightning that hunts trees.</div></div>
+      <div class="frame shot"><img src="img/space.jpg" alt="Floating astral island in space"><div class="cap"><b>Fly to space.</b> Break the atmosphere into low gravity and floating alien islands.</div></div>
+    </div>
+
+    <div class="grid feature-list" style="margin-top:26px">
+      <div class="frame feature"><h3>EVERY GRAIN SIMULATED</h3><p>Sand piles, water levels, oil floats and explodes in big pools, acid eats rock, lava turns water to steam and stone.</p></div>
+      <div class="frame feature"><h3>INFINITE WORLD</h3><p>Forests, jungles, plains, deserts, tundra and oceans on top. Caves, ruins and lava caverns below. Sky isles above.</p></div>
+      <div class="frame feature"><h3>REACTIVE DEATHS</h3><p>Fire turns foes to ash, lightning X-rays their skeleton, frost shatters them, acid melts them into goo.</p></div>
+      <div class="frame feature"><h3>COMMAND LINE</h3><p>Press T to chat or / for commands with Minecraft-style suggestions and Tab completion.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="spells">
+  <div class="wrap">
+    <h2>SIXTEEN SPELLS</h2>
+    <div class="grid spells" id="spellGrid"></div>
+  </div>
+</section>
+
+<section id="worlds">
+  <div class="wrap">
+    <h2>A GALAXY OF PLANETS</h2>
+    <p class="tag" style="margin-top:0">Find a portal structure, tune your Portal Wand to one of the thirty nearest planets, and shoot. Every planet is generated from its place in an endless galaxy, with its own ground, seas, plants, gravity, sky and creatures.</p>
+    <div class="grid shots" style="margin-bottom:26px">
+      <div class="frame shot"><img src="img/galaxy.jpg" alt="Planet picker"><div class="cap"><b>Choose a destination</b> from the thirty nearest planets. Earth is always on the list.</div></div>
+      <div class="frame shot"><img src="img/warp.jpg" alt="Lightspeed warp"><div class="cap"><b>Lightspeed travel</b> through the galaxy to your new world.</div></div>
+      <div class="frame shot"><img src="img/toxic.jpg" alt="Toxic world with glowing mushrooms"><div class="cap"><b>Toxic worlds</b> of giant glowing mushrooms and acid seas.</div></div>
+    </div>
+    <div class="grid worlds" id="worldGrid"></div>
+  </div>
+</section>
+
+<section id="creatures">
+  <div class="wrap">
+    <h2>TWENTY-FOUR CREATURES</h2>
+    <div class="chips" id="mobChips"></div>
+    <p class="small">Tame one by casting Seeds of Life straight at it. Pets follow you and fight for you.</p>
+  </div>
+</section>
+
+<section id="commands">
+  <div class="wrap grid two">
+    <div>
+      <h2>COMMANDS</h2>
+      <div class="frame" style="padding:6px 4px">
+        <table>
+          <tr><td>/tp volcano</td><td>Also ruin, altar, portal, island, space, caves, lava, ocean, beach, jungle, desert...</td></tr>
+          <tr><td>/time set night</td><td>day, noon, evening, night, midnight or 0&ndash;1</td></tr>
+          <tr><td>/weather storm</td><td>clear, cloudy, rain, storm, fog, windy</td></tr>
+          <tr><td>/summon dragon 3</td><td>Any creature, any number</td></tr>
+          <tr><td>/fly &nbsp; /god</td><td>Infinite flight, can't be hurt</td></tr>
+          <tr><td>/kill &nbsp; /heal</td><td>Clear creatures, restore yourself</td></tr>
+          <tr><td>/help</td><td>Everything else</td></tr>
+        </table>
+      </div>
+    </div>
+    <div>
+      <h2>CONTROLS</h2>
+      <div class="frame" style="padding:6px 4px">
+        <table>
+          <tr><td>A / D</td><td>Move</td></tr>
+          <tr><td>W / Space</td><td>Jump, wall-jump, hold to fly</td></tr>
+          <tr><td>Shift &nbsp; S &nbsp; F</td><td>Dash, glide, grappling vine</td></tr>
+          <tr><td>Left mouse</td><td>Cast the selected spell</td></tr>
+          <tr><td>Right mouse</td><td>Dig (or pick a planet with the Portal Wand)</td></tr>
+          <tr><td>1&ndash;0 - = Q R G P</td><td>Choose a spell, or use the mouse wheel</td></tr>
+          <tr><td>E &nbsp; B &nbsp; T</td><td>Open chests and altars, sandbox brush, chat</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p class="pixel" style="font-size:12px;color:var(--accent)">FALLING WIZARD</p>
+    <p>Made in Rust. No asset files: every pixel is simulated or drawn in code, and every sound is synthesised.</p>
+    <p><a href="#install">Install on macOS</a></p>
+  </div>
+</footer>
+
+<script>
+// Title letters that bob in a wave.
+(function () {
+  const t = document.getElementById("title");
+  "FALLING WIZARD".split("").forEach((ch, i) => {
+    const s = document.createElement("span");
+    s.textContent = ch === " " ? " " : ch;
+    s.style.animationDelay = (i * 0.09) + "s";
+    s.style.color = `hsl(${30 + i * 4}, 90%, ${82 - i}%)`;
+    t.appendChild(s);
+  });
+})();
+
+// Copy the install command.
+document.getElementById("copy").addEventListener("click", (e) => {
+  navigator.clipboard.writeText(document.getElementById("cmd").textContent).then(() => {
+    e.target.textContent = "Copied!";
+    setTimeout(() => (e.target.textContent = "Copy"), 1500);
+  });
+});
+
+// A tiny falling-sand toy.
+(function () {
+  const cv = document.getElementById("sand");
+  const ctx = cv.getContext("2d");
+  const W = cv.width, H = cv.height;
+  const E = 0, SAND = 1, WATER = 2, OIL = 3, FIRE = 4, STONE = 5, SMOKE = 6;
+  let grid = new Uint8Array(W * H), life = new Uint8Array(W * H), shade = new Uint8Array(W * H);
+  const img = ctx.createImageData(W, H);
+  const col = {
+    [SAND]: [214, 180, 110], [WATER]: [40, 100, 200], [OIL]: [70, 48, 52], [STONE]: [98, 92, 102], [SMOKE]: [120, 116, 124],
+  };
+  for (let i = 0; i < W * H; i++) shade[i] = Math.random() * 255;
+  // A little scene: stone floor, a cup, and a pool.
+  for (let x = 0; x < W; x++) for (let y = H - 6; y < H; y++) grid[y * W + x] = STONE;
+  for (let y = H - 40; y < H - 6; y++) { grid[y * W + 200] = STONE; grid[y * W + 290] = STONE; }
+  for (let y = H - 30; y < H - 6; y++) for (let x = 201; x < 290; x++) grid[y * W + x] = WATER;
+  for (let y = H - 36; y < H - 30; y++) for (let x = 201; x < 290; x++) grid[y * W + x] = OIL;
+  let mat = SAND, down = false, mx = 0, my = 0, frame = 0;
+  const idx = (x, y) => y * W + x;
+  const inb = (x, y) => x >= 0 && y >= 0 && x < W && y < H;
+  const get = (x, y) => (inb(x, y) ? grid[idx(x, y)] : STONE);
+  const dens = { [E]: 0, [SMOKE]: 1, [FIRE]: 1, [OIL]: 8, [WATER]: 10, [SAND]: 20 };
+  function swap(a, b) {
+    const g = grid[a]; grid[a] = grid[b]; grid[b] = g;
+    const l = life[a]; life[a] = life[b]; life[b] = l;
+    const s = shade[a]; shade[a] = shade[b]; shade[b] = s;
+  }
+  function canEnter(x, y, d) {
+    const m = get(x, y);
+    return m === E || m === SMOKE || ((m === WATER || m === OIL) && dens[m] < d && Math.random() < 0.4);
+  }
+  function step() {
+    frame++;
+    const ltr = frame % 2 === 0;
+    const moved = new Uint8Array(W * H);
+    for (let y = H - 1; y >= 0; y--) {
+      for (let k = 0; k < W; k++) {
+        const x = ltr ? k : W - 1 - k;
+        const i = idx(x, y);
+        const m = grid[i];
+        if (m === E || m === STONE || moved[i]) continue;
+        if (m === SAND || m === WATER || m === OIL) {
+          const d = dens[m];
+          const dir = Math.random() < 0.5 ? -1 : 1;
+          let t = -1;
+          if (canEnter(x, y + 1, d)) t = idx(x, y + 1);
+          else if (canEnter(x + dir, y + 1, d)) t = idx(x + dir, y + 1);
+          else if (canEnter(x - dir, y + 1, d)) t = idx(x - dir, y + 1);
+          else if (m !== SAND) {
+            for (const dd of [dir, -dir]) {
+              let tx = x;
+              for (let s = 1; s <= 4; s++) { const nx = x + dd * s; if (get(nx, y) !== E) break; tx = nx; }
+              if (tx !== x) { t = idx(tx, y); break; }
+            }
+          }
+          if (t >= 0) { swap(i, t); moved[t] = 1; }
+        } else if (m === FIRE) {
+          life[i]--;
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1]]) {
+            if (get(x + dx, y + dy) === OIL && Math.random() < 0.25) { const j = idx(x + dx, y + dy); grid[j] = FIRE; life[j] = 60 + Math.random() * 60; moved[j] = 1; }
+            if (get(x + dx, y + dy) === WATER && Math.random() < 0.3) { grid[i] = SMOKE; life[i] = 40; }
+          }
+          if (life[i] <= 0 || life[i] > 250) { grid[i] = Math.random() < 0.4 ? SMOKE : E; life[i] = 60; continue; }
+          if (get(x, y - 1) === E && Math.random() < 0.3) { const j = idx(x, y - 1); grid[j] = Math.random() < 0.25 ? SMOKE : FIRE; life[j] = grid[j] === FIRE ? 8 + Math.random() * 10 : 60; moved[j] = 1; }
+        } else if (m === SMOKE) {
+          if (--life[i] <= 0 || life[i] > 250) { grid[i] = E; continue; }
+          const dx = Math.floor(Math.random() * 3) - 1;
+          if (get(x + dx, y - 1) === E) { swap(i, idx(x + dx, y - 1)); moved[idx(x + dx, y - 1)] = 1; }
+        }
+      }
+    }
+    // Gentle sand rain to keep things moving.
+    if (frame % 3 === 0) { const x = 30 + Math.floor(Math.random() * 120); if (grid[idx(x, 0)] === E) grid[idx(x, 0)] = SAND; }
+    if (down) paint(mx, my);
+  }
+  function paint(cx, cy) {
+    for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+      if (dx * dx + dy * dy > 9) continue;
+      const x = cx + dx, y = cy + dy;
+      if (!inb(x, y)) continue;
+      const i = idx(x, y);
+      if (mat === 0) { grid[i] = E; continue; }
+      if (mat === STONE) { grid[i] = STONE; continue; }
+      if (mat === FIRE) { if (grid[i] === OIL || grid[i] === E) { grid[i] = FIRE; life[i] = grid[i] === OIL ? 80 : 14; } continue; }
+      if (grid[i] === E && Math.random() < 0.5) { grid[i] = mat; life[i] = 0; }
+    }
+  }
+  const fire = [[150, 24, 8], [222, 58, 12], [255, 122, 20], [255, 188, 48], [255, 240, 150]];
+  function draw() {
+    const d = img.data;
+    for (let i = 0; i < W * H; i++) {
+      const m = grid[i];
+      let c;
+      if (m === E) { const y = (i / W) | 0; c = [18 + y * 0.08, 15 + y * 0.05, 28 - y * 0.03]; }
+      else if (m === FIRE) c = fire[Math.min(4, (Math.random() * 3 + life[i] / 30) | 0)];
+      else if (m === SMOKE) c = [70 + life[i] * 0.6, 68 + life[i] * 0.6, 76 + life[i] * 0.6];
+      else { const b = col[m]; const f = 0.85 + shade[i] / 255 * 0.3; c = [b[0] * f, b[1] * f, b[2] * f]; }
+      d[i * 4] = c[0]; d[i * 4 + 1] = c[1]; d[i * 4 + 2] = c[2]; d[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+  function loop() { step(); draw(); requestAnimationFrame(loop); }
+  loop();
+  const pos = (e) => {
+    const r = cv.getBoundingClientRect();
+    const p = e.touches ? e.touches[0] : e;
+    mx = Math.floor((p.clientX - r.left) / r.width * W);
+    my = Math.floor((p.clientY - r.top) / r.height * H);
+  };
+  cv.addEventListener("mousedown", (e) => { down = true; pos(e); });
+  window.addEventListener("mouseup", () => (down = false));
+  cv.addEventListener("mousemove", pos);
+  cv.addEventListener("touchstart", (e) => { down = true; pos(e); e.preventDefault(); }, { passive: false });
+  cv.addEventListener("touchmove", (e) => { pos(e); e.preventDefault(); }, { passive: false });
+  cv.addEventListener("touchend", () => (down = false));
+  const names = { sand: SAND, water: WATER, oil: OIL, fire: FIRE, stone: STONE, erase: 0 };
+  document.querySelectorAll("#tools button").forEach((b) => b.addEventListener("click", () => {
+    document.querySelectorAll("#tools button").forEach((o) => o.classList.remove("on"));
+    b.classList.add("on");
+    mat = names[b.dataset.m];
+  }));
+})();
+
+// Spell cards with the game's own 7x7 pixel icons.
+(function () {
+  const spells = [
+    ["1", "Spark Bolt", "Fast bolt, small blast", ["...+...", "..+#+..", ".+###+.", "+#####+", ".+###+.", "..+#+..", "...+..."], "#fff0aa", "#ffaa3c"],
+    ["2", "Fireball", "Arcing ball of fire", ["....+..", "..+#+..", ".+###+.", "+##+##+", "+#+++#+", ".+###+.", "..+++.."], "#ff821e", "#ffdc5a"],
+    ["3", "Bomb", "Bounces, then a huge blast", ["....++.", "...+...", "..###..", ".#####.", ".##+##.", ".#####.", "..###.."], "#5a5664", "#ffbe50"],
+    ["4", "Lightning", "Forks, chains and scorches", ["....##.", "...##..", "..##...", ".#####.", "...##..", "..##...", ".##...."], "#fffa8c", "#ffffff"],
+    ["5", "Frost", "Freezes water and lava", ["#..#..#", ".#.#.#.", "..#+#..", "##+++##", "..#+#..", ".#.#.#.", "#..#..#"], "#a0dcff", "#ffffff"],
+    ["6", "Acid Ball", "Splashes corrosive acid", ["..###..", ".##+##.", "##+####", "#######", "#######", ".#####.", "#.#.#.."], "#6ee840", "#dcffb4"],
+    ["7", "Torrent", "Spray of water", ["...#...", "..###..", ".##+##.", ".#+###.", ".#####.", "..###..", "......."], "#3c82e6", "#b4dcff"],
+    ["8", "Seeds of Life", "Grow plants, tame creatures", ["...#...", ".##.##.", "..###..", "...#...", "...#...", "..+++..", ".+++++."], "#6ec850", "#825c38"],
+    ["9", "Teleport", "Blink to where it lands", ["..###..", ".#...#.", "#..+..#", "#.+++.#", "#..+..#", ".#...#.", "..###.."], "#b478ff", "#f0d2ff"],
+    ["0", "Digging Beam", "Bore through rock", [".......", "##.....", "####...", "###++++", "####...", "##.....", "......."], "#78dcf0", "#e6ffff"],
+    ["-", "Oil Spray", "Flammable, explosive in pools", ["...#...", "..###..", ".##+##.", ".#+###.", ".#####.", "..###..", "......."], "#463034", "#966e5a"],
+    ["=", "Black Hole", "Swallows everything nearby", ["..+++..", ".+###+.", "+##.##+", "+#...#+", "+##.##+", ".+###+.", "..+++.."], "#140a1e", "#be6eff"],
+    ["Q", "Wind", "Hold to blow a gale", ["#####..", "......#", "####..#", "....##.", "######.", "......#", "..####."], "#c8e4f0", "#ffffff"],
+    ["R", "Hurricane", "Huge blast that flings everything", ["..###..", ".#...#.", "#..+..#", "#.+.#.#", "#..#..#", ".#...#.", "..##..."], "#aad2ff", "#ffffff"],
+    ["G", "Tornado", "A twister that rips up the land", ["#######", ".#####.", "..###..", "..##...", "...##..", "...#...", "..+...."], "#b0b0bc", "#e6e6f0"],
+    ["P", "Portal Wand", "Open gates to other planets", ["..+#+..", ".#...#.", "+..#..+", "#.#+#.#", "+..#..+", ".#...#.", "..+#+.."], "#78e6ff", "#ff78dc"],
+  ];
+  const grid = document.getElementById("spellGrid");
+  for (const [key, name, desc, rows, main, acc] of spells) {
+    const card = document.createElement("div");
+    card.className = "frame spell";
+    const c = document.createElement("canvas");
+    c.width = 7; c.height = 7;
+    const x = c.getContext("2d");
+    rows.forEach((r, j) => [...r].forEach((ch, i) => {
+      if (ch === ".") return;
+      x.fillStyle = ch === "#" ? main : acc;
+      x.fillRect(i, j, 1, 1);
+    }));
+    card.appendChild(c);
+    const t = document.createElement("div");
+    t.innerHTML = `<div class="k">${key} &nbsp;${name.toUpperCase()}</div><div class="d">${desc}</div>`;
+    card.appendChild(t);
+    grid.appendChild(card);
+  }
+})();
+
+// Planet types as little pixel planets.
+(function () {
+  const worlds = [
+    ["Homeworld", "Earth: oceans, forests, jungles, deserts, tundra.", [60, 140, 70], [40, 100, 200]],
+    ["Dune World", "Red sand seas, cacti, scorpions and lions.", [220, 140, 80], null],
+    ["Ice World", "Snowfields, frozen lakes, pines, yetis.", [230, 240, 250], [80, 140, 220]],
+    ["Lava World", "Basalt crust over lava seas. Dragons live here.", [60, 50, 60], [255, 110, 20]],
+    ["Jungle World", "Alien grass and giant glowing mushrooms.", [190, 90, 230], [40, 110, 200]],
+    ["Toxic World", "Acid seas under a yellow sky.", [170, 100, 220], [110, 232, 64]],
+    ["Crystal World", "Moon rock forests of glowing crystal spires.", [150, 146, 190], null],
+    ["Barren Moon", "Craters, star jellies and very low gravity.", [170, 168, 180], null],
+    ["Ocean World", "Almost all water. Bring a boat. Or fly.", [216, 184, 114], [40, 120, 220]],
+  ];
+  const grid = document.getElementById("worldGrid");
+  worlds.forEach(([name, desc, land, sea], k) => {
+    const card = document.createElement("div");
+    card.className = "frame world";
+    const c = document.createElement("canvas");
+    c.width = 32; c.height = 32;
+    const x = c.getContext("2d");
+    for (let j = 0; j < 32; j++) for (let i = 0; i < 32; i++) {
+      const dx = i - 15.5, dy = j - 15.5, d = Math.hypot(dx, dy);
+      if (d > 14) { if (d < 15.5) { x.fillStyle = "rgba(160,200,255,0.35)"; x.fillRect(i, j, 1, 1); } continue; }
+      const n = Math.sin(i * 0.6 + k * 3) + Math.cos(j * 0.5 + k) + Math.sin((i + j) * 0.3);
+      const base = sea && n < 0.2 ? sea : land;
+      const light = 0.45 + 0.6 * Math.max(0, (-dx - dy) / 28 + 0.5);
+      x.fillStyle = `rgb(${base[0] * light | 0},${base[1] * light | 0},${base[2] * light | 0})`;
+      x.fillRect(i, j, 1, 1);
+    }
+    card.appendChild(c);
+    const t = document.createElement("div");
+    t.innerHTML = `<h3>${name.toUpperCase()}</h3><p>${desc}</p>`;
+    card.appendChild(t);
+    grid.appendChild(card);
+  });
+})();
+
+// Creature chips.
+(function () {
+  const mobs = ["Zombie", "Skeleton", "Slime", "Demon Eye", "Bat", "Fire Imp", "Lion", "Tiger", "Scorpion", "Snow Wolf", "Yeti", "Golem", "Salamander", "Devourer", "Dragon", "Ghost", "Star Jelly", "Moon Hopper", "Void Eye", "Wisp", "Cloud Sprite", "Mushling", "Fish", "Shark"];
+  const box = document.getElementById("mobChips");
+  mobs.forEach((m) => { const s = document.createElement("span"); s.className = "chip frame"; s.textContent = m; box.appendChild(s); });
+})();
+</script>
+</body>
+</html>

@@ -49,6 +49,12 @@ pub enum Material {
     Chest,
     Altar,
     Cloud,
+    /// Portal structure stone (indestructible).
+    PortalStone,
+    /// Glowing runes on portal structures.
+    Rune,
+    /// An active portal's surface; its `temp` holds the destination's hue.
+    Portal,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -80,7 +86,7 @@ impl Material {
         match self {
             M::Empty => Kind::Empty,
             M::Stone | M::Basalt | M::Dirt | M::Grass | M::Ice | M::Glass | M::Wood | M::Leaves | M::Plant | M::Coal | M::Gold
-            | M::MoonRock | M::Crystal | M::AlienGrass | M::Mushroom | M::Brick | M::Chest | M::Altar | M::Cloud => Kind::Static,
+            | M::MoonRock | M::Crystal | M::AlienGrass | M::Mushroom | M::Brick | M::Chest | M::Altar | M::Cloud | M::PortalStone | M::Rune | M::Portal => Kind::Static,
             M::Sand | M::Snow | M::Seed | M::Gunpowder | M::Rubble | M::Gravel | M::Quicksand | M::Bone => Kind::Powder,
             M::Water | M::Oil | M::Acid | M::Lava | M::Blood | M::Goo => Kind::Liquid,
             M::Smoke | M::Steam | M::Gas => Kind::Gas,
@@ -146,6 +152,11 @@ impl Material {
         self.burn().is_some()
     }
 
+    /// Portal structures can't be destroyed.
+    pub const fn indestructible(self) -> bool {
+        matches!(self, M::PortalStone | M::Rune | M::Portal)
+    }
+
     /// Relative speed at which acid eats this material (0 = immune).
     #[inline]
     pub const fn acid_rate(self) -> f32 {
@@ -164,13 +175,13 @@ impl Material {
     /// Spells and particles fly through these.
     #[inline]
     pub const fn passable(self) -> bool {
-        matches!(self, M::Empty | M::Smoke | M::Steam | M::Gas | M::Fire | M::Leaves | M::Plant | M::Sprout | M::Mushroom)
+        matches!(self, M::Empty | M::Smoke | M::Steam | M::Gas | M::Fire | M::Leaves | M::Plant | M::Sprout | M::Mushroom | M::Portal)
     }
 
     /// The wizard collides with these (foliage is walk-through).
     #[inline]
     pub const fn solid(self) -> bool {
-        matches!(self.kind(), Kind::Static | Kind::Powder) && !matches!(self, M::Leaves | M::Plant | M::Mushroom | M::Quicksand)
+        matches!(self.kind(), Kind::Static | Kind::Powder) && !matches!(self, M::Leaves | M::Plant | M::Mushroom | M::Quicksand | M::Portal)
     }
 
     pub const fn base_color(self) -> [u8; 3] {
@@ -214,6 +225,9 @@ impl Material {
             M::Chest => [176, 120, 52],
             M::Altar => [230, 200, 120],
             M::Cloud => [246, 248, 255],
+            M::PortalStone => [62, 52, 80],
+            M::Rune => [150, 100, 255],
+            M::Portal => [180, 120, 255],
         }
     }
 
@@ -251,6 +265,8 @@ impl Material {
             M::Chest => 0.2,
             M::Altar => 0.2,
             M::Cloud => 0.06,
+            M::PortalStone => 0.3,
+            M::Rune => 0.2,
             _ => 0.0,
         }
     }
@@ -263,6 +279,7 @@ impl Material {
             M::Crystal => Some([0.25, 0.55, 0.8]),
             M::Mushroom => Some([0.15, 0.6, 0.55]),
             M::Altar => Some([0.9, 0.7, 0.3]),
+            M::Rune => Some([0.6, 0.4, 1.4]),
             M::Goo => Some([0.04, 0.16, 0.06]),
             _ => None,
         }
@@ -321,6 +338,9 @@ impl Material {
             M::Chest => "Chest",
             M::Altar => "Altar",
             M::Cloud => "Cloud",
+            M::PortalStone => "Portal Stone",
+            M::Rune => "Rune",
+            M::Portal => "Portal",
         }
     }
 }

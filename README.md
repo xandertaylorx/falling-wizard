@@ -7,6 +7,14 @@ There are no asset files: every pixel is simulated or drawn in code, the font is
 cargo run --release
 ```
 
+Or install it on a Mac with one command (builds from source, adds the app to ~/Applications and a `falling-wizard` command):
+
+```
+curl -fsSL https://raw.githubusercontent.com/xandertaylorx/falling-wizard/main/web/install.sh | bash
+```
+
+The `web/` folder holds the game's website (`web/index.html`).
+
 ## The world
 
 - **Infinite** in every direction, generated chunk by chunk as you explore.
@@ -51,6 +59,12 @@ Press **T** to chat or **/** to type a command. As you type, suggestions pop up 
 | `/fly`, `/god` | Infinite flight, can't be hurt |
 | `/heal`, `/gold <n>`, `/pos`, `/seed`, `/clear`, `/help` | Utilities |
 
+## Planets and portals
+
+The galaxy is an endless grid of procedurally generated planets around Earth: dune worlds, ice worlds, lava worlds, jungle and toxic worlds with giant glowing mushrooms, crystal worlds, barren moons and ocean worlds. Each has its own ground, seas, plants, sky, gravity and creatures.
+
+Portal structures (stone arches, crystal rings, basalt monoliths and brick temples) stand around every world, with one beside every arrival point. Select the **Portal Wand (P)**, right-click to pick one of the thirty nearest planets (Earth is always listed), then shoot a portal structure to open a gate. Step in to warp there at lightspeed. You arrive beside that planet's portal, already open back to where you came from. `/tp portal` takes you to the nearest structure.
+
 ## Getting to space
 
 Hold jump to fly. Flight refills on the ground and slowly while gliding, so you can climb in bursts or rest on clouds and sky islands.
@@ -73,7 +87,7 @@ This is a creative game: there's no fall damage and no hunger. You can only be h
 | F | Grappling vine (press again to let go) |
 | Left mouse | Cast the selected spell |
 | Right mouse | Dig |
-| 1–9, 0, -, =, Q, R, G / mouse wheel | Choose a spell |
+| 1–9, 0, -, =, Q, R, G, P / mouse wheel | Choose a spell |
 | T / / | Chat / commands |
 | E | Open chest / use altar |
 | B | Sandbox brush (paint any material; wheel = size, 1–0 / Z X = material) |

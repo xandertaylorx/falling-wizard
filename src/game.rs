@@ -8,7 +8,9 @@ use crate::mobs::Mobs;
 use crate::player::{Input, Player};
 use crate::spells::{Card, Mods, Shot, Spells, SPELL_BAR};
 use crate::weather::Weather;
+use crate::planets::Planet;
 use crate::world::World;
+use crate::worldgen::{Generator, PORTAL_HOME};
 
 pub const STEP: f32 = 1.0 / 60.0;
 
@@ -43,6 +45,7 @@ pub struct Controls {
     pub secondary: bool,
     pub paint: bool,
     pub interact: bool,
+    pub secondary_pressed: bool,
 }
 
 pub struct ChatLine {
@@ -86,6 +89,15 @@ pub struct Game {
     booms: f32,
     in_space: bool,
     pub time: f32,
+    pub planet: Planet,
+    /// Where the Portal Wand is tuned to.
+    pub dest: Planet,
+    /// Open portals on this planet: interior rect and destination.
+    pub portals: Vec<((i32, i32, i32, i32), Planet)>,
+    /// Set when the wizard steps into a portal; the app plays the warp then calls `enter_planet`.
+    pub travel: Option<Planet>,
+    /// Planet picker requested (right click with the Portal Wand).
+    pub picker: bool,
 }
 
 impl Game {
@@ -123,6 +135,11 @@ impl Game {
             booms: 0.0,
             in_space: false,
             time: 0.0,
+            dest: Planet::nearest(0, 0, 2).into_iter().find(|p| !p.is_earth()).unwrap_or_else(Planet::earth),
+            planet: Planet::earth(),
+            portals: Vec::new(),
+            travel: None,
+            picker: false,
         };
         game.say("Press T to chat or / for commands. Try /help", [200, 200, 220]);
         game
@@ -226,6 +243,7 @@ impl Game {
                     let tip = self.player.staff_tip(ax, ay);
                     let ang = (ay - tip.1).atan2(ax - tip.0);
                     let card = self.current_spell();
+                    self.spells.portal_hue = self.dest.hue;
                     if self.player.mana >= card.mana() {
                         self.player.mana -= card.mana();
                         self.cooldown = card.delay().max(0.03);
@@ -237,7 +255,11 @@ impl Game {
                         self.sounds.push(Sfx::Tick);
                     }
                 }
-                if ctl.secondary {
+                if self.current_spell() == crate::spells::Card::PortalWand {
+                    if ctl.secondary_pressed {
+                        self.picker = true;
+                    }
+                } else if ctl.secondary {
                     let (px, py) = self.player.center();
                     if (ax - px).powi(2) + (ay - py).powi(2) < 50.0 * 50.0 {
                         let g = self.fx.dissolve(&mut self.world, ax, ay, 3, 0.5);
@@ -325,6 +347,28 @@ impl Game {
         self.player.gold += std::mem::take(&mut self.mobs.gold);
         self.sounds.append(&mut self.mobs.sounds);
         self.sounds.append(&mut self.spells.sounds);
+        for (x, y) in std::mem::take(&mut self.spells.portal_hits) {
+            let site = self.world.gen.portals_near(x as i32 - 30, x as i32 + 30).into_iter().find(|&(px, base, _)| (px as f32 - x).abs() < 16.0 && (base as f32 - 10.0 - y).abs() < 24.0);
+            if let Some((px, base, _)) = site {
+                let dest = self.dest.clone();
+                self.activate_portal(px, base, dest.clone());
+                self.toast(format!("PORTAL OPEN  -  {}", dest.name), dest.color());
+                self.fx.flash = self.fx.flash.max(0.4);
+                self.fx.shake = (self.fx.shake + 6.0).min(14.0);
+                self.sounds.push(Sfx::Thunder);
+            }
+        }
+        if self.travel.is_none() && !idle {
+            let (cx, cy) = self.player.center();
+            let (cx, cy) = (cx as i32, cy as i32);
+            if self.world.mat(cx, cy) == M::Portal {
+                if let Some((_, dest)) = self.portals.iter().find(|((x0, y0, x1, y1), _)| cx >= *x0 && cx <= *x1 && cy >= *y0 && cy <= *y1) {
+                    self.travel = Some(dest.clone());
+                    self.sounds.push(Sfx::Thunder);
+                    self.sounds.push(Sfx::Zap);
+                }
+            }
+        }
         if let Some((tx, ty)) = self.spells.teleport.take() {
             self.player.teleport(tx, ty, &self.world);
         }
@@ -354,7 +398,10 @@ impl Game {
         // Breaking the atmosphere: low gravity above it, fire on the way through.
         let (_, py) = self.player.center();
         let thin = ((-py - 420.0) / 100.0).clamp(0.0, 1.0);
-        self.player.grav = 1.0 - thin * 0.72;
+        self.player.grav = self.planet.gravity * (1.0 - thin * 0.72);
+        if !self.planet.weather && self.weather.kind != crate::weather::Sky::Clear {
+            self.weather.set(crate::weather::Sky::Clear);
+        }
         if !idle {
             let crossing = (-540.0..-430.0).contains(&py) && self.player.vy.abs() > 55.0;
             if crossing {
@@ -474,6 +521,63 @@ impl Game {
                 }
             }
         }
+    }
+
+    /// Fill a structure's archway with a shimmering portal to `dest`.
+    pub fn activate_portal(&mut self, px: i32, base: i32, dest: Planet) {
+        let rect = Generator::portal_interior(px, base);
+        let hue = (dest.hue * 255.0) as u8;
+        for y in rect.1..=rect.3 {
+            for x in rect.0..=rect.2 {
+                let m = self.world.mat(x, y);
+                if m == M::Empty || m == M::Portal || m.kind() == crate::materials::Kind::Gas || m.kind() == crate::materials::Kind::Liquid {
+                    let mut c = Cell::new(M::Portal, &mut self.world.rng);
+                    c.temp = hue;
+                    self.world.set(x, y, c);
+                }
+            }
+        }
+        self.portals.retain(|(r, _)| *r != rect);
+        self.portals.push((rect, dest));
+        let (cx, cy) = ((rect.0 + rect.2) as f32 * 0.5, (rect.1 + rect.3) as f32 * 0.5);
+        for k in 0..120 {
+            let a = self.fx.rng.rangef(0.0, std::f32::consts::TAU);
+            let sp = self.fx.rng.rangef(40.0, 200.0);
+            let col = crate::planets::hue_rgb(self.spells.portal_hue + (k % 6) as f32 * 0.05, 0.7, 1.0);
+            let life = self.fx.rng.rangef(0.5, 1.4);
+            self.fx.mote(cx, cy, a.cos() * sp, a.sin() * sp, life, col, 1.5, 40.0, 0.0);
+        }
+    }
+
+    /// Arrive on another planet, next to its portal, which opens back to where you came from.
+    pub fn enter_planet(&mut self, dest: Planet) {
+        let prev = std::mem::replace(&mut self.planet, dest.clone());
+        let gen = Generator::with_planet(self.seed, dest.clone());
+        let (px, base, _) = gen.portals_near(PORTAL_HOME - 1, PORTAL_HOME + 1)[0];
+        let spawn = (px as f32 + 15.0, base as f32 - 9.0);
+        self.world = World::with_gen(gen, self.seed, spawn.0, spawn.1);
+        self.player.x = spawn.0;
+        self.player.y = spawn.1;
+        self.player.vx = 0.0;
+        self.player.vy = 0.0;
+        self.player.grapple = None;
+        self.spawn = spawn;
+        self.portals.clear();
+        self.spells.clear();
+        self.mobs.clear();
+        self.fx.clear();
+        self.spells.portal_hue = prev.hue;
+        self.activate_portal(px, base, prev.clone());
+        self.dest = prev;
+        self.cam = self.player.center();
+        self.in_space = false;
+        self.travel = None;
+        self.fx.flash = 1.0;
+        if !dest.weather {
+            self.weather.set(crate::weather::Sky::Clear);
+        }
+        self.toast(format!("WELCOME TO {}", dest.name), dest.color());
+        self.toast(dest.kind.name().to_string(), [200, 200, 220]);
     }
 
     pub fn say(&mut self, text: impl Into<String>, color: [u8; 3]) {
@@ -698,6 +802,10 @@ impl Game {
                 }
                 Some((px, -700.0, "space".into()))
             }
+            "portal" => {
+                let best = gen.portals_near(pxi - 20000, pxi + 20000).into_iter().min_by_key(|p| (p.0 - pxi).abs())?;
+                Some((best.0 as f32 + 15.0, best.1 as f32 - 9.0, "the nearest portal".into()))
+            }
             "caves" | "cave" => Some((px, surf(pxi) + 110.0, "the caves".into())),
             "lava" | "deep" | "underworld" => Some((px, surf(pxi) + 300.0, "the lava caverns".into())),
             "beach" => {
@@ -746,7 +854,7 @@ impl Game {
 }
 
 const COMMANDS: [&str; 13] = ["help", "tp", "time", "weather", "summon", "kill", "heal", "fly", "god", "gold", "pos", "seed", "clear"];
-const PLACES: [&str; 17] = ["volcano", "geyser", "ruin", "altar", "island", "space", "caves", "lava", "ocean", "beach", "forest", "plains", "jungle", "desert", "tundra", "spawn", "~"];
+const PLACES: [&str; 18] = ["portal", "volcano", "geyser", "ruin", "altar", "island", "space", "caves", "lava", "ocean", "beach", "forest", "plains", "jungle", "desert", "tundra", "spawn", "~"];
 
 /// Minecraft-style suggestions for a partly typed command: where the current word
 /// starts in `buf`, and the options that match it.

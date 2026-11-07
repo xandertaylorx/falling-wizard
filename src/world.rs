@@ -62,6 +62,10 @@ pub struct World {
 
 impl World {
     pub fn new(seed: u64, gx: f32, gy: f32) -> Self {
+        Self::with_gen(Generator::new(seed), seed, gx, gy)
+    }
+
+    pub fn with_gen(gen: Generator, seed: u64, gx: f32, gy: f32) -> Self {
         let pcx = (gx.floor() as i32).div_euclid(CHUNK);
         let pcy = (gy.floor() as i32).div_euclid(CHUNK);
         let mut w = World {
@@ -72,7 +76,7 @@ impl World {
             surf: vec![0; WW],
             store: HashMap::new(),
             dirty: vec![false; (WCX * WCY) as usize],
-            gen: Generator::new(seed),
+            gen,
             active: vec![false; SCW * SCH],
             next: vec![false; SCW * SCH],
             rng: Rng::new(seed ^ 0x5151),

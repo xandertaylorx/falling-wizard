@@ -594,7 +594,14 @@ impl Mobs {
         let biome = world.gen.biome(x as i32);
         let in_water = world.mat(x as i32, y as i32) == M::Water;
         use MobKind::*;
-        let table: &[(MobKind, f32)] = if in_water {
+        let alien: Vec<(MobKind, f32)> = world.gen.planet.creatures.iter().map(|k| (*k, 1.0)).collect();
+        let table: &[(MobKind, f32)] = if !world.gen.planet.is_earth() && !(in_water && world.gen.planet.sea == Some(M::Water)) {
+            if alien.is_empty() || y < -400.0 {
+                &[(Wisp, 1.0)]
+            } else {
+                &alien
+            }
+        } else if in_water {
             if biome == Biome::Ocean {
                 &[(Fish, 4.0), (Shark, 1.0)]
             } else {

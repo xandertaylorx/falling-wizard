@@ -285,7 +285,9 @@ impl Ui {
         let (px, py) = p.center();
         let surf = game.world.surface_at(px as i32);
         let depth = ((py - surf as f32) / 4.0).round() as i32;
-        let place = if py < -520.0 {
+        let place = if !game.planet.is_earth() && py > -240.0 && depth <= 1 {
+            format!("{}  -  {}", game.planet.name, game.planet.kind.name())
+        } else if py < -520.0 {
             "ASTRAL EXPANSE".to_string()
         } else if py < -240.0 {
             "SKY ISLES".to_string()
@@ -356,7 +358,7 @@ impl Ui {
         let total = n as f32 * size + (n - 1) as f32 * gap;
         let x0 = (sw - total) * 0.5;
         let y = sh - size - 18.0;
-        const KEYS: [&str; 15] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Q", "R", "G"];
+        const KEYS: [&str; 16] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Q", "R", "G", "P"];
         for (k, sp) in SPELL_BAR.iter().enumerate() {
             let x = x0 + k as f32 * (size + gap);
             if self.hot(x, y, size, size) && self.pressed {
@@ -382,6 +384,81 @@ impl Ui {
 }
 
 impl Ui {
+    /// A pixel planet: continents and seas, lit from the top-left, with an atmosphere rim.
+    pub fn planet_sphere(&self, p: &crate::planets::Planet, cx: f32, cy: f32, r: f32, px: f32, time: f32) {
+        let land = {
+            let b = p.top.base_color();
+            [(b[0] as f32 * p.tint[0]).min(255.0) as u8, (b[1] as f32 * p.tint[1]).min(255.0) as u8, (b[2] as f32 * p.tint[2]).min(255.0) as u8]
+        };
+        let sea = p.sea.map(|m| m.base_color());
+        let n = (r / px).ceil() as i32;
+        for j in -n..=n {
+            for i in -n..=n {
+                let (dx, dy) = (i as f32 * px, j as f32 * px);
+                let d = (dx * dx + dy * dy).sqrt();
+                if d > r {
+                    if d < r + px * 1.5 {
+                        let c = p.sky_horizon;
+                        draw_rectangle(cx + dx, cy + dy, px, px, Color::from_rgba(c[0], c[1], c[2], 110));
+                    }
+                    continue;
+                }
+                let (u, v) = (dx / r, dy / r);
+                let z = (1.0 - u * u - v * v).max(0.0).sqrt();
+                let spin = time * 0.15 + p.gx as f32 * 0.7;
+                let lon = u.atan2(z) + spin;
+                let lat = v;
+                let nse = crate::noise::fbm(lon * 2.2 + 10.0, lat * 2.5 + p.gy as f32, 3, (p.gx * 31 + p.gy) as u32);
+                let mut c = match sea {
+                    Some(s) if nse < 0.5 => s,
+                    _ => land,
+                };
+                if lat.abs() > 0.82 && p.kind != crate::planets::Kind::Lava {
+                    c = [236, 240, 248];
+                }
+                let light = (0.35 + 0.65 * (z * 0.7 - u * 0.35 - v * 0.35 + 0.3)).clamp(0.12, 1.15);
+                let col = Color::from_rgba((c[0] as f32 * light).min(255.0) as u8, (c[1] as f32 * light).min(255.0) as u8, (c[2] as f32 * light).min(255.0) as u8, 255);
+                draw_rectangle(cx + dx, cy + dy, px, px, col);
+            }
+        }
+    }
+
+    /// Choose a destination for the Portal Wand. Returns the clicked planet's index.
+    pub fn planet_picker(&mut self, game: &Game, list: &[crate::planets::Planet], time: f32) -> Option<usize> {
+        let (sw, sh) = (screen_width(), screen_height());
+        draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.01, 0.0, 0.04, 0.82));
+        self.text_center("CHOOSE A DESTINATION", sw * 0.5, 34.0, 3.0, ACCENT);
+        self.text_center("THEN SHOOT A PORTAL STRUCTURE WITH THE PORTAL WAND   -   RIGHT CLICK OR ESC TO CLOSE", sw * 0.5, 66.0, 1.0, MUTED);
+        let cols = 6;
+        let (cw, ch) = (((sw - 60.0) / cols as f32).min(200.0), 82.0);
+        let x0 = (sw - cw * cols as f32) * 0.5;
+        let mut picked = None;
+        for (i, p) in list.iter().enumerate() {
+            let (x, y) = (x0 + (i % cols) as f32 * cw + 4.0, 90.0 + (i / cols) as f32 * (ch + 6.0));
+            if y + ch > sh - 10.0 {
+                break;
+            }
+            let hot = self.over(x, y, cw - 8.0, ch);
+            let sel = *p == game.dest;
+            draw_rectangle(x, y, cw - 8.0, ch, if hot { Color::new(1.0, 1.0, 1.0, 0.08) } else { PANEL });
+            let c = p.color();
+            draw_rectangle(x, y, 3.0, ch, Color::from_rgba(c[0], c[1], c[2], 255));
+            draw_rectangle_lines(x, y, cw - 8.0, ch, if sel { 2.0 } else { 1.0 }, if sel { ACCENT } else if hot { Color::new(1.0, 1.0, 1.0, 0.3) } else { LINE });
+            self.planet_sphere(p, x + 34.0, y + ch * 0.5, 22.0, 3.0, time);
+            let name: String = p.name.chars().take(11).collect();
+            self.font.draw(&name, x + 64.0, y + 14.0, 2.0, if sel { ACCENT } else { TEXT });
+            self.font.draw(p.kind.name(), x + 64.0, y + 38.0, 1.0, MUTED);
+            let here = *p == game.planet;
+            let dist = if here { "YOU ARE HERE".to_string() } else { format!("{:.1} LY   G {:.1}", game.planet.light_years(p), p.gravity) };
+            self.font.draw(&dist, x + 64.0, y + 54.0, 1.0, if here { Color::from_rgba(140, 230, 150, 255) } else { MUTED });
+            if hot && self.pressed {
+                picked = Some(i);
+                self.clicked = true;
+            }
+        }
+        picked
+    }
+
     /// Chat history (fades out when closed) and the input line when open.
     pub fn chat(&self, game: &Game, input: Option<&str>, time: f32, sel: usize) {
         let sh = screen_height();

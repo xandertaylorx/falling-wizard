@@ -5,6 +5,7 @@ mod game;
 mod materials;
 mod mobs;
 mod noise;
+mod planets;
 mod player;
 mod render;
 mod settings;
@@ -54,6 +55,8 @@ enum Screen {
     Controls,
     Dead,
     Chat,
+    Planets,
+    Warp,
 }
 
 fn random_seed() -> u64 {
@@ -201,6 +204,9 @@ struct App {
     /// Highlighted suggestion, and the text Tab is cycling completions for.
     sugg: usize,
     tab_base: Option<String>,
+    warp_t: f32,
+    warp_dest: Option<planets::Planet>,
+    picker_list: Vec<planets::Planet>,
     /// Esc pressed this frame and not yet handled (so one press can't open and close a menu).
     esc: bool,
 }
@@ -234,6 +240,9 @@ async fn run(args: Vec<String>) {
         history: Vec::new(),
         sugg: 0,
         tab_base: None,
+        warp_t: 0.0,
+        warp_dest: None,
+        picker_list: Vec::new(),
         esc: false,
     };
 
@@ -268,13 +277,11 @@ async fn run(args: Vec<String>) {
                 (1.0, "menu"),
                 (3.6, "surface_mobs"),
                 (6.4, "spells"),
-                (7.4, "chat"),
-                (9.6, "volcano"),
-                (11.6, "deep_lava"),
-                (13.6, "sky_isles"),
-                (15.6, "space"),
-                (17.6, "night_storm"),
-                (19.6, "ocean"),
+                (9.6, "portal"),
+                (11.0, "picker"),
+                (13.4, "warp"),
+                (16.4, "planet"),
+                (21.4, "planet2"),
                 (secs - 0.4, "settings"),
             ];
             if shot_k < shots.len() && now >= shots[shot_k].0 {
@@ -367,30 +374,25 @@ fn script_controls(app: &mut App, t: f64, secs: f64) -> Controls {
         g.player.teleport(x, y + 6.0, &g.world);
         g.cam = g.player.center();
     };
+    if at(8.0, 8.02) {
+        g.command("/tp portal");
+    }
     if at(10.0, 10.02) {
-        warp(0.0, 300.0, true, g);
+        app.picker_list = planets::Planet::nearest(0, 0, 31);
+        app.screen = Screen::Planets;
     }
-    if at(12.0, 12.02) {
-        warp(0.0, -330.0, false, g);
+    if at(11.5, 11.52) && app.picker_list.len() > 2 {
+        app.warp_dest = Some(app.picker_list[1].clone());
+        app.warp_t = 0.0;
+        app.screen = Screen::Warp;
     }
-    if at(14.0, 14.02) {
-        warp(0.0, -640.0, false, g);
+    if at(17.0, 17.02) && app.picker_list.len() > 4 {
+        app.warp_dest = Some(app.picker_list[4].clone());
+        app.warp_t = 0.0;
+        app.screen = Screen::Warp;
     }
-    if at(16.0, 16.02) {
-        warp(0.0, -20.0, true, g);
-        g.weather.time = 0.02;
-        g.weather.set(weather::Sky::Storm);
-    }
-    if at(18.0, 18.02) {
-        g.command("/tp ocean");
-        g.weather.time = 0.45;
-        g.weather.set(weather::Sky::Clear);
-    }
-    if t > 12.0 && t < 16.0 {
-        // Hover so the sky shots aren't of a falling wizard.
-        g.player.vy = g.player.vy.min(0.0);
-        g.player.flight = player::MAX_FLIGHT;
-    }
+    let _ = warp;
+
     g.player.hp = g.player.hp.max(40.0);
     if t > secs - 1.0 && app.screen == Screen::Play {
         app.back = Screen::Pause;
@@ -428,11 +430,36 @@ impl App {
                 if self.take_esc() {
                     self.screen = Screen::Pause;
                 }
+                if std::mem::take(&mut self.game.picker) {
+                    self.picker_list = planets::Planet::nearest(self.game.planet.gx, self.game.planet.gy, 31);
+                    self.screen = Screen::Planets;
+                }
+                if let Some(dest) = self.game.travel.take() {
+                    self.warp_dest = Some(dest);
+                    self.warp_t = 0.0;
+                    self.screen = Screen::Warp;
+                }
                 let slash = is_key_pressed(KeyCode::Slash);
                 if (is_key_pressed(KeyCode::T) || slash) && self.screen == Screen::Play {
                     while get_char_pressed().is_some() {}
                     self.chat_buf = if slash { "/".into() } else { String::new() };
                     self.screen = Screen::Chat;
+                }
+            }
+            Screen::Planets => {
+                let ctl = Controls { aim: self.game.aim, ..Default::default() };
+                self.game.update(dt, &ctl, false);
+                if self.take_esc() || is_mouse_button_pressed(MouseButton::Right) {
+                    self.screen = Screen::Play;
+                }
+            }
+            Screen::Warp => {
+                self.warp_t += dt;
+                if self.warp_t >= 3.6 {
+                    if let Some(dest) = self.warp_dest.take() {
+                        self.game.enter_planet(dest);
+                    }
+                    self.screen = Screen::Play;
                 }
             }
             Screen::Chat => {
@@ -505,12 +532,16 @@ impl App {
         };
         clear_background(BLACK);
         let time = self.game.time;
-        self.renderer.draw(&mut self.game, &view, shake, time);
+        if self.screen == Screen::Warp {
+            self.draw_warp();
+        } else {
+            self.renderer.draw(&mut self.game, &view, shake, time);
+        }
 
         // ----- sound -----
         let sounds: Vec<Sfx> = self.game.sounds.drain(..).collect();
         if let Some(a) = &mut self.audio {
-            if matches!(self.screen, Screen::Play | Screen::Dead | Screen::Chat) {
+            if matches!(self.screen, Screen::Play | Screen::Dead | Screen::Chat | Screen::Menu | Screen::Planets) {
                 for s in sounds {
                     a.play(s);
                 }
@@ -528,6 +559,16 @@ impl App {
                 self.crosshair(&view);
                 show_mouse(false);
             }
+            Screen::Planets => {
+                self.ui.hud(&mut self.game, &view, self.fps, false);
+                if let Some(i) = self.ui.planet_picker(&self.game, &self.picker_list, self.game.time) {
+                    let p = self.picker_list[i].clone();
+                    self.game.toast(format!("PORTAL WAND TUNED TO {}", p.name), p.color());
+                    self.game.dest = p;
+                    self.screen = Screen::Play;
+                }
+            }
+            Screen::Warp => {}
             Screen::Chat => {
                 self.ui.hud(&mut self.game, &view, self.fps, self.settings.show_fps);
                 let sel = if self.tab_base.is_some() { 0 } else { self.sugg };
@@ -577,6 +618,7 @@ impl App {
             KeyCode::Q,
             KeyCode::R,
             KeyCode::G,
+            KeyCode::P,
         ];
         for (k, key) in keys.iter().enumerate() {
             if is_key_pressed(*key) {
@@ -615,6 +657,7 @@ impl App {
             secondary: is_mouse_button_down(MouseButton::Right),
             paint: is_mouse_button_down(MouseButton::Middle) || (g.sandbox && is_key_down(KeyCode::Space)),
             interact: is_key_pressed(KeyCode::E),
+            secondary_pressed: is_mouse_button_pressed(MouseButton::Right),
         }
     }
 
@@ -647,15 +690,103 @@ impl App {
         self.ui.font.draw(text, cx - w * 0.5, y, scale, col);
     }
 
+    /// Lightspeed: a turning galaxy, stars stretching into streaks, then the planet rushing up.
+    fn draw_warp(&mut self) {
+        let Some(dest) = self.warp_dest.clone() else { return };
+        let t = self.warp_t;
+        let (sw, sh) = (screen_width(), screen_height());
+        let (cx, cy) = (sw * 0.5, sh * 0.5);
+        clear_background(Color::from_rgba(3, 2, 10, 255));
+        let px = 4.0;
+        let dot = |x: f32, y: f32, c: Color| draw_rectangle((x / px).floor() * px, (y / px).floor() * px, px, px, c);
+        // Galaxy spiral.
+        for k in 0..600 {
+            let arm = (k % 3) as f32;
+            let r = (k / 3) as f32 * 2.2;
+            let a = arm * 2.094 + r * 0.011 + t * 0.35;
+            let jitter = (noise::hash3(k, 1, 9) % 100) as f32 / 100.0 * 14.0 - 7.0;
+            let c = planets::hue_rgb(0.62 + arm * 0.08 + r * 0.0004, 0.5, 0.9);
+            dot(cx + a.cos() * (r + jitter), cy + a.sin() * (r + jitter) * 0.6, Color::from_rgba(c[0], c[1], c[2], 70));
+        }
+        // Lightspeed streaks.
+        let speed = (t / 1.2).min(1.0).powi(2) * (1.0 - ((t - 2.6) / 0.8).clamp(0.0, 1.0) * 0.8);
+        let dc = dest.color();
+        for k in 0..320 {
+            let h = noise::hash3(k, 7, 3);
+            let ang = (h % 10000) as f32 / 10000.0 * std::f32::consts::TAU;
+            let z = ((h >> 14) % 1000) as f32 / 1000.0;
+            let z = (z + t * (0.25 + speed * 1.4)).fract();
+            let d = z * z * z * sw.max(sh) * 0.75;
+            let len = 4.0 + speed * z * 120.0;
+            let col = if k % 4 == 0 { Color::from_rgba(dc[0], dc[1], dc[2], 230) } else { Color::from_rgba(220, 230, 255, (120.0 + z * 135.0) as u8) };
+            let steps = (len / px) as i32 + 1;
+            for s in 0..steps {
+                let dd = d + s as f32 * px;
+                dot(cx + ang.cos() * dd, cy + ang.sin() * dd, col);
+            }
+        }
+        // The destination rushes up.
+        if t > 2.4 {
+            let r = ((t - 2.4) / 1.1).min(1.0).powi(2) * sh * 0.42 + 6.0;
+            self.ui.planet_sphere(&dest, cx, cy, r, 6.0, t);
+        }
+        if t < 0.4 {
+            draw_rectangle(0.0, 0.0, sw, sh, Color::new(1.0, 1.0, 1.0, 1.0 - t / 0.4));
+        }
+        if t > 3.3 {
+            draw_rectangle(0.0, 0.0, sw, sh, Color::new(1.0, 1.0, 1.0, ((t - 3.3) / 0.3).min(1.0)));
+        }
+        let ly = self.game.planet.light_years(&dest);
+        self.ui.text_center(&format!("WARPING TO {}", dest.name), cx, sh - 90.0, 3.0, Color::from_rgba(dc[0], dc[1], dc[2], 255));
+        self.ui.text_center(&format!("{}   -   {:.1} LIGHT YEARS", dest.kind.name(), ly), cx, sh - 56.0, 2.0, MUTED);
+    }
+
     fn menu(&mut self) {
         let (sw, sh) = (screen_width(), screen_height());
         draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.02, 0.01, 0.05, 0.2));
         let cx = sw * 0.5;
         let ty = sh * 0.2;
         let scale = (sw / 140.0).floor().clamp(4.0, 9.0);
-        self.title("FALLING WIZARD", ty, scale, Color::new(0.97, 0.93, 0.86, 1.0));
+        // Interactive background: sparkles follow the mouse, clicks cast spells into the world.
+        let view = View::new(self.game.cam.0, self.game.cam.1, sw, sh, 1.0);
+        let (mx, my) = mouse_position();
+        let (wx, wy) = view.to_world(mx, my);
+        let t = self.game.time;
+        let hue = (t * 0.1).fract();
+        let c = planets::hue_rgb(hue, 0.6, 1.0);
+        let (vx, vy) = (self.shake_rng.rangef(-20.0, 20.0), self.shake_rng.rangef(-30.0, 5.0));
+        self.game.fx.mote(wx, wy, vx, vy, 0.7, c, 1.2, 30.0, 0.0);
+        let panel = (cx - 150.0, sh * 0.48 - 16.0, 300.0, 5.0 * 42.0 + 20.0);
+        let over_panel = mx > panel.0 && mx < panel.0 + panel.2 && my > panel.1 && my < panel.1 + panel.3;
+        if is_mouse_button_pressed(MouseButton::Left) && !over_panel && my > ty + scale * 9.0 {
+            use spells::Card::*;
+            let pool = [Fireball, Lightning, Bomb, Frost, Tornado, Seeds, AcidBall, Hurricane, BlackHole];
+            let card = pool[self.shake_rng.range(0, pool.len() as i32) as usize];
+            let from = (wx + self.shake_rng.rangef(-40.0, 40.0), wy - 60.0);
+            let ang = (wy - from.1).atan2(wx - from.0);
+            let shot = spells::Shot { card, mods: Default::default(), payload: None };
+            let g = &mut self.game;
+            g.spells.fire(&shot, from, ang, &mut g.world, &mut g.fx, &mut g.mobs);
+        }
+        // Waving title; letters hop when the mouse passes over them.
+        let title = "FALLING WIZARD";
+        let w = self.ui.font.width(title, scale);
+        let mut x = cx - w * 0.5;
+        for (i, ch) in title.chars().enumerate() {
+            let s = ch.to_string();
+            let lw = 6.0 * scale;
+            let near = (mx - (x + lw * 0.5)).abs() < lw * 0.6 && (my - (ty + 3.5 * scale)).abs() < scale * 6.0;
+            let bob = (t * 2.2 + i as f32 * 0.45).sin() * scale * 0.8 - if near { scale * 2.5 } else { 0.0 };
+            let tint = planets::hue_rgb(t * 0.05 + i as f32 * 0.035, if near { 0.6 } else { 0.18 }, 1.0);
+            let col = Color::from_rgba(tint[0], tint[1], tint[2], 255);
+            self.ui.font.draw(&s, x + scale, ty + bob + scale, scale, Color::new(0.08, 0.04, 0.14, 0.8));
+            self.ui.font.draw(&s, x, ty + bob, scale, col);
+            x += lw;
+        }
+        self.ui.text_center("CLICK ANYWHERE TO CAST A SPELL", cx, ty + scale * 7.0 + 30.0, 1.0, MUTED);
         draw_rectangle(cx - 40.0, ty + scale * 7.0 + 18.0, 80.0, 2.0, ACCENT);
         let mut y = sh * 0.48;
+        let _ = TEXT;
         let w = 260.0;
         self.ui.panel(cx - 150.0, y - 16.0, 300.0, 5.0 * 42.0 + 20.0);
         if self.ui.button("PLAY", cx, y, w) {
@@ -764,6 +895,7 @@ impl App {
             ("RIGHT MOUSE", "DIG"),
             ("1-9 0 - = Q R G / WHEEL", "CHOOSE SPELL"),
             ("E", "OPEN CHEST / USE ALTAR"),
+            ("PORTAL WAND (P)", "RMB PICK PLANET, LMB OPEN PORTAL"),
             ("T  /  /", "CHAT  /  COMMANDS  (/HELP)"),
             ("B", "SANDBOX BRUSH"),
             ("ESC  /  F11", "PAUSE  /  FULLSCREEN"),

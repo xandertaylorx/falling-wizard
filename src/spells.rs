@@ -27,9 +27,10 @@ pub enum Card {
     Wind,
     Hurricane,
     Tornado,
+    PortalWand,
 }
 
-pub const SPELL_BAR: [Card; 15] = [
+pub const SPELL_BAR: [Card; 16] = [
     Card::Spark,
     Card::Fireball,
     Card::Bomb,
@@ -45,6 +46,7 @@ pub const SPELL_BAR: [Card; 15] = [
     Card::Wind,
     Card::Hurricane,
     Card::Tornado,
+    Card::PortalWand,
 ];
 
 impl Card {
@@ -62,6 +64,7 @@ impl Card {
             Card::Wind => "Wind",
             Card::Hurricane => "Hurricane",
             Card::Tornado => "Tornado",
+            Card::PortalWand => "Portal Wand",
             Card::Seeds => "Seeds of Life",
             Card::Torrent => "Torrent",
             Card::DigBeam => "Digging Beam",
@@ -82,6 +85,7 @@ impl Card {
             Card::Wind => "Hold to blow a gale",
             Card::Hurricane => "Huge blast that flings everything",
             Card::Tornado => "A twister that rips up the land",
+            Card::PortalWand => "Right click: pick a planet. Shoot a portal structure",
             Card::Seeds => "Scatter seeds that grow",
             Card::Torrent => "Spray of water",
             Card::DigBeam => "Hold to bore through rock",
@@ -102,6 +106,7 @@ impl Card {
             Card::Wind => 0.15,
             Card::Hurricane => 40.0,
             Card::Tornado => 30.0,
+            Card::PortalWand => 5.0,
             Card::Seeds => 8.0,
             Card::Torrent => 0.5,
             Card::DigBeam => 0.5,
@@ -122,6 +127,7 @@ impl Card {
             Card::Wind => 0.02,
             Card::Hurricane => 1.0,
             Card::Tornado => 0.8,
+            Card::PortalWand => 0.5,
             Card::Seeds => 0.3,
             Card::Torrent => 0.02,
             Card::DigBeam => 0.0,
@@ -142,6 +148,7 @@ impl Card {
             Card::Wind => (["#####..", "......#", "####..#", "....##.", "######.", "......#", "..####."], [200, 228, 240], [255, 255, 255]),
             Card::Hurricane => (["..###..", ".#...#.", "#..+..#", "#.+.#.#", "#..#..#", ".#...#.", "..##..."], [170, 210, 255], [255, 255, 255]),
             Card::Tornado => (["#######", ".#####.", "..###..", "..##...", "...##..", "...#...", "..+...."], [176, 176, 188], [230, 230, 240]),
+            Card::PortalWand => (["..+#+..", ".#...#.", "+..#..+", "#.#+#.#", "+..#..+", ".#...#.", "..+#+.."], [120, 230, 255], [255, 120, 220]),
             Card::BlackHole => (["..+++..", ".+###+.", "+##.##+", "+#...#+", "+##.##+", ".+###+.", "..+++.."], [20, 10, 30], [190, 110, 255]),
             Card::Seeds => (["...#...", ".##.##.", "..###..", "...#...", "...#...", "..+++..", ".+++++."], [110, 200, 80], [130, 92, 56]),
             Card::Torrent => (["...#...", "..###..", ".##+##.", ".#+###.", ".#####.", "..###..", "......."], [60, 130, 230], [180, 220, 255]),
@@ -254,12 +261,16 @@ pub struct Spells {
     bolts: Vec<(Vec<(f32, f32)>, f32)>,
     pub holes: Vec<Hole>,
     pub tornadoes: Vec<Twister>,
+    /// Hue of the planet the Portal Wand is tuned to.
+    pub portal_hue: f32,
+    /// Where portal bolts landed this step, for the game to check against structures.
+    pub portal_hits: Vec<(f32, f32)>,
     pub sounds: Vec<Sfx>,
 }
 
 impl Spells {
     pub fn new() -> Self {
-        Self { projs: Vec::new(), teleport: None, beam: None, bolts: Vec::new(), holes: Vec::new(), tornadoes: Vec::new(), sounds: Vec::new() }
+        Self { projs: Vec::new(), teleport: None, beam: None, bolts: Vec::new(), holes: Vec::new(), tornadoes: Vec::new(), portal_hue: 0.58, portal_hits: Vec::new(), sounds: Vec::new() }
     }
 
     pub fn clear(&mut self) {
@@ -336,6 +347,7 @@ impl Spells {
                 return 0;
             }
             Card::BlackHole => (90.0, 0.9, 0.0, Sfx::Zap),
+            Card::PortalWand => (260.0, 1.4, 0.0, Sfx::Zap),
             Card::Wind => {
                 self.gust((x, y), (ux, uy), false, world, fx, mobs);
                 return 0;
@@ -491,7 +503,7 @@ impl Spells {
                     return false;
                 }
                 let m = world.mat(cx, cy);
-                let mob_hit = mobs.hit_test(nx, ny, 0.5);
+                let mob_hit = if p.card == Card::PortalWand { None } else { mobs.hit_test(nx, ny, 0.5) };
                 if let Some(i) = mob_hit {
                     use crate::mobs::Dmg;
                     let kind = match p.card {
@@ -569,6 +581,9 @@ impl Spells {
                 }
                 // Closer cells are ripped free more easily; nothing is immune.
                 let grip = 1.0 - d / reach;
+                if c.mat.indestructible() {
+                    continue;
+                }
                 let p = match c.mat.kind() {
                     crate::materials::Kind::Static => 0.05 + grip * grip * 0.55,
                     _ => 0.35 + grip * 0.65,
@@ -658,7 +673,7 @@ impl Spells {
                         world.set(cx, cy, Cell::EMPTY);
                     }
                 }
-                K::Static if strong && !matches!(c.mat, M::Chest | M::Altar) => {
+                K::Static if strong && !matches!(c.mat, M::Chest | M::Altar) && !c.mat.indestructible() => {
                     let hardness = match c.mat {
                         M::Basalt => 0.03,
                         M::Stone | M::Brick | M::MoonRock => 0.12,
@@ -761,6 +776,17 @@ impl Spells {
     fn impact(&mut self, p: &Proj, world: &mut World, fx: &mut Fx, spawned: &mut Vec<(Shot, (f32, f32), f32)>) {
         let r = p.radius();
         match p.card {
+            Card::PortalWand => {
+                for k in 0..90 {
+                    let a = fx.rng.rangef(0.0, std::f32::consts::TAU);
+                    let sp = fx.rng.rangef(30.0, 170.0);
+                    let col = crate::planets::hue_rgb(self.portal_hue + (k % 5) as f32 * 0.06 - 0.12, 0.75, 1.0);
+                    let life = fx.rng.rangef(0.4, 1.1);
+                    fx.mote(p.x, p.y, a.cos() * sp, a.sin() * sp, life, col, 1.2, 60.0, 0.0);
+                }
+                self.portal_hits.push((p.x - p.vx.signum(), p.y - p.vy.signum()));
+                self.sounds.push(Sfx::Chime);
+            }
             Card::BlackHole => {
                 self.holes.push(Hole { x: p.x, y: p.y, age: 0.0, eaten: Vec::new() });
                 self.sounds.push(Sfx::Thunder);
@@ -813,6 +839,7 @@ impl Spells {
                 Card::Frost => ([255, 255, 255], [150, 210, 255]),
                 Card::Teleport => ([250, 230, 255], [170, 110, 255]),
                 Card::BlackHole => ([10, 0, 20], [190, 110, 255]),
+                Card::PortalWand => ([255, 255, 255], crate::planets::hue_rgb(self.portal_hue + (p.life * 6.0).sin() * 0.08, 0.8, 1.0)),
                 Card::AcidBall => ([220, 255, 180], [110, 232, 64]),
                 _ => ([255, 255, 255], [200, 200, 200]),
             };

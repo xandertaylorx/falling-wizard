@@ -101,6 +101,13 @@ impl Fx {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.particles.clear();
+        self.explosions.clear();
+        self.attractors.clear();
+        self.tornadoes.clear();
+    }
+
     pub fn count(&self) -> usize {
         self.particles.len()
     }
@@ -290,6 +297,7 @@ impl Fx {
                         continue;
                     }
                     M::Fire => continue,
+                    m if m.indestructible() => continue,
                     M::Gunpowder => {
                         world.ignite_at(px, py);
                         continue;
@@ -379,6 +387,9 @@ impl Fx {
                     continue;
                 }
                 if m == M::Empty || !world.in_window(px, py) || m.kind() == Kind::Gas || m == M::Fire {
+                    continue;
+                }
+                if m.indestructible() {
                     continue;
                 }
                 let p = if m == M::Basalt { chance * 0.3 } else { chance };

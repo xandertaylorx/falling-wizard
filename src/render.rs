@@ -285,7 +285,10 @@ impl Renderer {
         }
         let wind = game.weather.wind_now();
         let sway_amp = 0.55 + (wind.abs() / 45.0).min(1.2);
-        let sky_ctx = SkyCtx { view: *view, day, tod, rain, clouds, time, far: &self.far, near: &self.near };
+        let planet = &game.world.gen.planet;
+        let tint = planet.tint;
+        let tinted = !planet.is_earth();
+        let sky_ctx = SkyCtx { view: *view, day, tod, rain, clouds, top: planet.sky_top, horizon: planet.sky_horizon, time, far: &self.far, near: &self.near };
         let sky_light = [0.92 * day + 0.04, 0.95 * day + 0.05, 1.0 * day + 0.09];
 
         let (mut fire, mut lava) = (0, 0);
@@ -393,6 +396,14 @@ impl Renderer {
                         (lerp3([196, 46, 8], [255, 176, 48], v), [2.0, 0.8, 0.15], 1.0)
                     }
                     M::Gold if hash3(gx, gy, (frame / 6) as u32) % 97 == 0 => ([255, 250, 215], [0.6, 0.55, 0.3], 1.0),
+                    M::Portal => {
+                        let hue = c.temp as f32 / 255.0;
+                        let (dxp, dyp) = (gx as f32, gy as f32);
+                        let swirl = ((dxp * 0.45 + dyp * 0.3 + time * 5.0).sin() + (dyp * 0.5 - time * 3.0 + dxp * 0.2).sin()) * 0.25 + 0.5;
+                        let spark = hash3(gx, gy, (frame / 3) as u32) % 23 == 0;
+                        let col = if spark { [255, 255, 255] } else { crate::planets::hue_rgb(hue + (swirl - 0.5) * 0.12, 0.45 + swirl * 0.4, 0.65 + swirl * 0.35) };
+                        (col, [col[0] as f32 / 255.0 * 2.2, col[1] as f32 / 255.0 * 2.2, col[2] as f32 / 255.0 * 2.2], 0.15)
+                    }
                     M::Plant if c.shade > 248 => ([232, 84, 96], [0.0; 3], 0.3),
                     M::Plant if c.shade > 241 => ([250, 220, 84], [0.0; 3], 0.3),
                     M::Oil if c.temp > 20 => (shade(lerp3(M::Oil.base_color(), [150, 60, 30], c.temp as f32 / 120.0), c.shade, 0.3), [0.0; 3], 0.6),
@@ -426,6 +437,11 @@ impl Renderer {
                 }
                 if is_sky {
                     e = sky_light;
+                }
+                let terrain = (matches!(c.mat.kind(), Kind::Static | Kind::Powder) && c.mat.emissive().is_none() && !c.mat.indestructible())
+                    || (c.mat == M::Empty && wall > 0 && tree.is_none());
+                if tinted && terrain {
+                    rgb = [(rgb[0] as f32 * tint[0]).min(255.0) as u8, (rgb[1] as f32 * tint[1]).min(255.0) as u8, (rgb[2] as f32 * tint[2]).min(255.0) as u8];
                 }
                 // Ambient sky light: full outdoors, fading with depth below the surface.
                 let depth = (gy - world.surf[wx as usize]) as f32;
@@ -593,6 +609,8 @@ struct SkyCtx<'a> {
     tod: f32,
     rain: f32,
     clouds: f32,
+    top: [u8; 3],
+    horizon: [u8; 3],
     time: f32,
     far: &'a [f32],
     near: &'a [f32],
@@ -604,8 +622,9 @@ fn sky(c: &SkyCtx, vx: usize, vy: usize, gy: i32) -> [u8; 3] {
     let v = &c.view;
     let (sx, sy) = (vx as f32 - MARGIN as f32, vy as f32 - MARGIN as f32);
     let t = ((gy as f32 + 200.0) / 240.0).clamp(0.0, 1.0);
-    let day = lerp3([60, 112, 196], [184, 212, 234], t);
-    let night = lerp3([6, 10, 28], [26, 34, 62], t);
+    let day = lerp3(c.top, c.horizon, t);
+    let dim = |k: [u8; 3], f: f32| [(k[0] as f32 * f) as u8, (k[1] as f32 * f) as u8, (k[2] as f32 * f) as u8];
+    let night = lerp3(lerp3([6, 10, 28], dim(c.top, 0.12), 0.5), lerp3([26, 34, 62], dim(c.horizon, 0.2), 0.5), t);
     let mut col = lerp3(night, day, c.day);
     let dusk = (1.0 - (c.day - 0.35).abs() * 4.0).clamp(0.0, 1.0);
     col = lerp3(col, [236, 140, 96], dusk * t * 0.55);
@@ -669,11 +688,13 @@ fn sky(c: &SkyCtx, vx: usize, vy: usize, gy: i32) -> [u8; 3] {
 
     if space < 0.6 {
         let m = 1.0 - space / 0.6;
+        let hz = c.horizon;
+        let sc = |k: f32, b: [u8; 3]| [(hz[0] as f32 * k * 0.6 + b[0] as f32 * 0.4) as u8, (hz[1] as f32 * k * 0.6 + b[1] as f32 * 0.4) as u8, (hz[2] as f32 * k * 0.6 + b[2] as f32 * 0.4) as u8];
         if v.top * 0.7 + sy >= c.near[vx] {
-            return lerp3(col, lerp3([20, 24, 40], [84, 112, 150], c.day), 0.88 * m);
+            return lerp3(col, lerp3([20, 24, 40], sc(0.5, [84, 112, 150]), c.day), 0.88 * m);
         }
         if v.top * 0.45 + sy >= c.far[vx] {
-            return lerp3(col, lerp3([30, 36, 58], [126, 154, 192], c.day), 0.8 * m);
+            return lerp3(col, lerp3([30, 36, 58], sc(0.72, [126, 154, 192]), c.day), 0.8 * m);
         }
     }
     let n = value_noise((v.left * 0.25 + sx + c.time * 1.5) * 0.03, (v.top * 0.25 + sy) * 0.1, 55);
