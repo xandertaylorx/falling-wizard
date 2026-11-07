@@ -27,7 +27,7 @@ Paste this into Terminal on a Mac:
 curl -fsSL https://fw.crooli.com/install.sh | bash
 ```
 
-It builds the game on your machine (a couple of minutes the first time), adds **Falling Wizard** to your Applications, and gives you a `falling-wizard` command. After that the game keeps itself up to date: when a new version is out, the main menu shows an **Update available** button.
+It builds the game on your machine (a couple of minutes the first time), adds **Falling Wizard** to your Applications, and gives you a `falling-wizard` command. After that the game keeps itself up to date: when a new version is out, the main menu shows an **Update available** button, then a progress bar while it rebuilds.
 
 <details>
 <summary><b>Build it yourself</b></summary>
@@ -54,6 +54,8 @@ Every new world starts on a **Create World** screen: name it, pick a seed, and c
 - **Survival:** health and a flight meter, real danger, and commands off (unless you switch them on).
 
 Then set the creature level (peaceful, normal or hordes), whether the weather changes, and whether you start on Earth or a random planet.
+
+Worlds save automatically (every minute, when you warp, and when you leave), including every block you've changed on every planet you've visited. **Play** on the main menu lists your worlds, with an **Open worlds folder** button. They live in `~/Library/Application Support/Falling Wizard/worlds`.
 
 <br>
 
@@ -188,6 +190,7 @@ Written in Rust with [macroquad](https://github.com/not-fl3/macroquad), with **n
 | `render.rs` | Sky, lighting shaders, compositing |
 | `ui.rs` | Pixel font, HUD, planet selector, chat |
 | `audio.rs` | Synthesised sound |
+| `saves.rs` | World saves on disk |
 | `updater.rs` | Self-updates |
 | `game.rs` · `main.rs` | Game state, commands, screens |
 | `tools/make_icon.py` | Draws the app icon |

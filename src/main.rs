@@ -8,6 +8,7 @@ mod noise;
 mod planets;
 mod player;
 mod render;
+mod saves;
 mod settings;
 mod spells;
 mod ui;
@@ -72,6 +73,7 @@ enum Screen {
     Planets,
     Warp,
     NewWorld,
+    Worlds,
 }
 
 fn random_seed() -> u64 {
@@ -228,6 +230,11 @@ struct App {
     nw_seed: String,
     nw_focus: Option<u8>,
     picker_list: Vec<planets::Planet>,
+    /// The world list: saves on disk, selected row, delete awaiting confirmation, scroll.
+    worlds: Vec<saves::SaveInfo>,
+    world_sel: usize,
+    world_del: bool,
+    world_scroll: usize,
     /// Esc pressed this frame and not yet handled (so one press can't open and close a menu).
     esc: bool,
 }
@@ -272,6 +279,10 @@ async fn run(args: Vec<String>) {
         nw_seed: String::new(),
         nw_focus: None,
         picker_list: Vec::new(),
+        worlds: Vec::new(),
+        world_sel: 0,
+        world_del: false,
+        world_scroll: 0,
         esc: false,
     };
 
@@ -682,6 +693,7 @@ impl App {
             }
             Screen::Warp => {}
             Screen::NewWorld => self.new_world_screen(),
+            Screen::Worlds => self.worlds_screen(),
             Screen::Chat => {
                 self.ui.hud(&mut self.game, &view, self.fps, self.settings.show_fps);
                 let src = self.tab_base.clone().unwrap_or_else(|| self.chat_buf.clone());
@@ -903,18 +915,12 @@ impl App {
         let w = 260.0;
         self.ui.panel(cx - 150.0, y - 16.0, 300.0, 5.0 * 42.0 + 20.0);
         if self.ui.button("PLAY", cx, y, w) {
-            self.game.cam = self.game.player.center();
-            self.menu_x = 0.0;
-            self.screen = Screen::Play;
+            self.open_worlds();
         }
         y += 42.0;
         if self.ui.button("NEW WORLD", cx, y, w) {
-            let seed = random_seed();
-            self.nw = game::WorldOptions::new(seed);
-            self.nw_seed = seed.to_string();
-            self.nw_focus = Some(0);
-            while get_char_pressed().is_some() {}
-            self.screen = Screen::NewWorld;
+            self.worlds = saves::list();
+            self.start_new_world();
         }
         y += 42.0;
         if self.ui.button("SETTINGS", cx, y, w) {
@@ -928,6 +934,7 @@ impl App {
         }
         y += 42.0;
         if self.ui.button("QUIT", cx, y, w) {
+            self.game.save();
             std::process::exit(0);
         }
         let mode = if self.game.options.creative { "CREATIVE" } else { "SURVIVAL" };
@@ -948,6 +955,18 @@ impl App {
             Status::Ready => ("UPDATE READY  -  CLICK TO RESTART", Color::from_rgba(140, 230, 150, 255), true),
             Status::Failed => ("UPDATE FAILED  -  CLICK TO RETRY", DANGER, true),
         };
+        if status == Status::Updating {
+            // Live progress: stage and a bar.
+            let (stage, p) = self.updater.as_ref().map(|u| u.progress()).unwrap_or_default();
+            let bw = 260.0;
+            let (x, y) = (sw - 20.0 - bw, sh - 46.0);
+            draw_rectangle(x - 10.0, y - 10.0, bw + 20.0, 44.0, Color::new(0.0, 0.0, 0.0, 0.55));
+            self.ui.text(&format!("UPDATING  -  {}", stage), x, y, 1.0, ACCENT);
+            self.ui.text_right(&format!("{}%", (p * 100.0).round() as i32), x + bw, y, 1.0, MUTED);
+            draw_rectangle(x, y + 16.0, bw, 6.0, Color::new(1.0, 1.0, 1.0, 0.1));
+            draw_rectangle(x, y + 16.0, bw * p.clamp(0.0, 1.0), 6.0, ACCENT);
+            return;
+        }
         let w = self.ui.font.width(label, 2.0);
         let (x, y) = (sw - 20.0 - w, sh - 34.0);
         let (mx, my) = mouse_position();
@@ -1069,10 +1088,153 @@ impl App {
             if opts.name.trim().is_empty() {
                 opts.name = "New World".into();
             }
+            let dir = saves::new_dir(&opts.name);
             self.game = Game::with_options(opts);
+            self.game.save_dir = Some(dir);
+            self.game.save();
+            self.game.cam = self.game.player.center();
             self.screen = Screen::Play;
         }
         if self.ui.button("BACK", x + w * 0.5 + 120.0, y, 160.0) || self.take_esc() {
+            self.screen = if self.worlds.is_empty() { Screen::Menu } else { Screen::Worlds };
+        }
+    }
+
+    fn open_worlds(&mut self) {
+        self.game.save();
+        self.worlds = saves::list();
+        self.world_sel = 0;
+        self.world_del = false;
+        self.world_scroll = 0;
+        self.screen = Screen::Worlds;
+    }
+
+    fn start_new_world(&mut self) {
+        let seed = random_seed();
+        self.nw = game::WorldOptions::new(seed);
+        self.nw_seed = seed.to_string();
+        self.nw_focus = Some(0);
+        while get_char_pressed().is_some() {}
+        self.screen = Screen::NewWorld;
+    }
+
+    fn play_world(&mut self, i: usize) {
+        let Some(info) = self.worlds.get(i) else { return };
+        match Game::load(&info.dir) {
+            Some(g) => {
+                self.game = g;
+                self.game.save();
+                self.menu_x = 0.0;
+                self.screen = Screen::Play;
+            }
+            None => self.game.toast("COULDN'T OPEN THAT WORLD", [255, 120, 110]),
+        }
+    }
+
+    /// Pick a saved world, Minecraft style.
+    fn worlds_screen(&mut self) {
+        let (sw, sh) = (screen_width(), screen_height());
+        draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.02, 0.01, 0.05, 0.74));
+        self.title("SELECT WORLD", sh * 0.08, 5.0, TEXT);
+        let cx = sw * 0.5;
+        let w = (sw * 0.6).clamp(360.0, 640.0);
+        let x = cx - w * 0.5;
+        let top = sh * 0.2;
+        let row_h = 58.0;
+        let rows = (((sh * 0.78 - 130.0) - top) / row_h).floor().max(2.0) as usize;
+        let n = self.worlds.len();
+        let (mx, my) = mouse_position();
+        self.ui.panel(x - 12.0, top - 12.0, w + 24.0, rows as f32 * row_h + 16.0);
+        if n == 0 {
+            self.ui.text_center("NO WORLDS YET", cx, top + rows as f32 * row_h * 0.5 - 20.0, 3.0, TEXT);
+            self.ui.text_center("CREATE ONE AND IT'S SAVED AUTOMATICALLY", cx, top + rows as f32 * row_h * 0.5 + 16.0, 1.0, MUTED);
+        } else {
+            let wheel = mouse_wheel().1;
+            if wheel < 0.0 && self.world_scroll + rows < n {
+                self.world_scroll += 1;
+            } else if wheel > 0.0 && self.world_scroll > 0 {
+                self.world_scroll -= 1;
+            }
+            if is_key_pressed(KeyCode::Down) && self.world_sel + 1 < n {
+                self.world_sel += 1;
+                self.world_del = false;
+            }
+            if is_key_pressed(KeyCode::Up) && self.world_sel > 0 {
+                self.world_sel -= 1;
+                self.world_del = false;
+            }
+            self.world_sel = self.world_sel.min(n - 1);
+            if self.world_sel < self.world_scroll {
+                self.world_scroll = self.world_sel;
+            } else if self.world_sel >= self.world_scroll + rows {
+                self.world_scroll = self.world_sel + 1 - rows;
+            }
+            let mut play = None;
+            for (k, i) in (self.world_scroll..n.min(self.world_scroll + rows)).enumerate() {
+                let ry = top + k as f32 * row_h;
+                let hot = mx > x && mx < x + w && my > ry && my < ry + row_h - 6.0;
+                let sel = i == self.world_sel;
+                let bg = if sel { Color::new(1.0, 0.71, 0.29, 0.18) } else if hot { Color::new(1.0, 1.0, 1.0, 0.07) } else { Color::new(1.0, 1.0, 1.0, 0.03) };
+                draw_rectangle(x, ry, w, row_h - 6.0, bg);
+                if sel {
+                    draw_rectangle(x, ry, 3.0, row_h - 6.0, ACCENT);
+                }
+                let info = &self.worlds[i];
+                self.ui.text(&info.name.to_uppercase(), x + 16.0, ry + 9.0, 2.0, if sel { ACCENT } else { TEXT });
+                let mode = if info.creative { "CREATIVE" } else { "SURVIVAL" };
+                let planet = if info.planet.is_empty() { "EARTH".to_string() } else { info.planet.to_uppercase() };
+                self.ui.text(&format!("{mode}  -  ON {planet}"), x + 16.0, ry + 32.0, 1.0, MUTED);
+                self.ui.text_right(&saves::ago(info.played), x + w - 14.0, ry + 32.0, 1.0, MUTED);
+                if hot && is_mouse_button_pressed(MouseButton::Left) {
+                    if sel {
+                        play = Some(i);
+                    }
+                    self.world_sel = i;
+                    self.world_del = false;
+                }
+            }
+            if n > rows {
+                self.ui.text_center(&format!("{} WORLDS  -  SCROLL FOR MORE", n), cx, top + rows as f32 * row_h + 12.0, 1.0, MUTED);
+            }
+            if is_key_pressed(KeyCode::Enter) {
+                play = Some(self.world_sel);
+            }
+            if let Some(i) = play {
+                self.play_world(i);
+                return;
+            }
+        }
+        let mut y = top + rows as f32 * row_h + 34.0;
+        let bw = (w - 12.0) * 0.5;
+        if n > 0 {
+            if self.ui.button("PLAY SELECTED WORLD", cx - bw * 0.5 - 6.0, y, bw) {
+                self.play_world(self.world_sel);
+                return;
+            }
+            let del = if self.world_del { "CLICK AGAIN TO DELETE" } else { "DELETE" };
+            if self.ui.button(del, cx + bw * 0.5 + 6.0, y, bw) {
+                if self.world_del {
+                    let dir = self.worlds[self.world_sel].dir.clone();
+                    if self.game.save_dir.as_ref() == Some(&dir) {
+                        self.game.save_dir = None;
+                    }
+                    saves::delete(&dir);
+                    self.worlds = saves::list();
+                    self.world_del = false;
+                } else {
+                    self.world_del = true;
+                }
+            }
+            y += 42.0;
+        }
+        if self.ui.button("CREATE NEW WORLD", cx - bw * 0.5 - 6.0, y, bw) {
+            self.start_new_world();
+        }
+        if self.ui.button("OPEN WORLDS FOLDER", cx + bw * 0.5 + 6.0, y, bw) {
+            saves::open_folder();
+        }
+        y += 42.0;
+        if self.ui.button("BACK", cx, y, 200.0) || self.take_esc() {
             self.screen = Screen::Menu;
         }
     }
@@ -1099,6 +1261,7 @@ impl App {
         }
         y += 42.0;
         if self.ui.button("MAIN MENU", cx, y, w) {
+            self.game.save();
             self.menu_x = 0.0;
             self.screen = Screen::Menu;
         }

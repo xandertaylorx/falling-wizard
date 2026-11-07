@@ -45,7 +45,13 @@ else
 fi
 
 say "Building (a couple of minutes the first time)..."
-cargo build --release --quiet --manifest-path "$DIR/src/Cargo.toml"
+if [ -n "${FW_PROGRESS:-}" ]; then
+  # The game reads these lines to show a progress bar.
+  echo "::total:$(grep -c '^name = ' "$DIR/src/Cargo.lock" 2>/dev/null || echo 60)"
+  cargo build --release --manifest-path "$DIR/src/Cargo.toml" 2>&1
+else
+  cargo build --release --quiet --manifest-path "$DIR/src/Cargo.toml"
+fi
 
 say "Installing..."
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$BIN"

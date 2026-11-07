@@ -11,39 +11,18 @@ import math, os, struct, subprocess, tempfile, zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# 16x22 wizard, placed on a 32x32 grid. '.' is transparent.
-WIZARD = [
-    "..............G.",
-    "..........H..GGG",
-    ".........HH...G.",
-    "........HHH...T.",
-    ".......HHHH...T.",
-    "......hHHHH...T.",
-    "......hHsHH...T.",
-    ".....hHsssHH..T.",
-    ".....hHHsHHH..T.",
-    "...BBBBBBBBBBBT.",
-    ".....FFFFFF...T.",
-    ".....FeFFeF...T.",
-    ".....WWWWWW...T.",
-    "....RWWWWWWR..T.",
-    "...RRWWWWWWRRFT.",
-    "...RRRWWWWRRRRT.",
-    "..RRRRRWWRRRRRT.",
-    "..RRRRRRRRRRRRT.",
-    "..DRRRRRRRRRRDT.",
-    "..DDRRRRRRRRDDT.",
-    "...DDDDDDDDDD.T.",
-    "....KK....KK..T.",
-]
+# The wizard exactly as he appears in the game (player.rs), facing right.
+SPRITE = [".h...", ".hh..", ".hsh.", "hhhhh", ".ffe.", ".www.", "rrwrr", ".rrr.", ".rrr.", ".b.b."]
 PAL = {
-    "H": (108, 82, 220), "h": (78, 58, 176), "s": (255, 214, 90), "B": (88, 66, 196),
-    "F": (242, 202, 166), "e": (28, 20, 40), "W": (238, 238, 246), "R": (72, 58, 182),
-    "D": (48, 38, 130), "K": (58, 40, 36), "T": (146, 96, 52), "G": (200, 250, 255),
+    "h": (92, 70, 196), "s": (255, 220, 110), "f": (236, 196, 160), "e": (30, 20, 30),
+    "w": (230, 230, 236), "r": (64, 50, 160), "b": (60, 44, 40),
 }
-N = 27  # scene grid size
-WX, WY = 5, 1  # wizard top-left on the grid
-STAFF = (WX + 14 + 0.5, WY + 0.5)  # glowing tip
+N = 16          # scene grid
+WX, WY = 5, 3   # sprite top-left
+# Staff from the hand up and to the right, like in game, with a glowing tip.
+STAFF = [(9, 7), (10, 6), (11, 5)]
+TIP = (12, 4)
+GLOW = (12.5, 4.5)
 
 
 def h(x, y):
@@ -57,31 +36,32 @@ def mix(a, b, t):
     return tuple(a[i] + (b[i] - a[i]) * t for i in range(3))
 
 
+def shade(c, gx, gy, amt=0.18):
+    f = 1.0 + ((h(gx, gy) % 256) / 255.0 - 0.5) * amt
+    return tuple(min(255, v * f) for v in c)
+
+
 def cell(gx, gy):
-    """Colour of one cell of the 32x32 pixel-art scene."""
-    # Wizard on top.
+    """One cell of the scene: the in-game wizard on a grassy hill under the game's sky."""
     lx, ly = gx - WX, gy - WY
-    if 0 <= ly < len(WIZARD) and 0 <= lx < 16:
-        ch = WIZARD[ly][lx]
-        if ch != ".":
-            return PAL[ch]
-    # Ground.
-    if gy == 23:
-        return (106, 186, 80) if h(gx, 1) % 5 else (132, 208, 96)
-    if gy == 24:
-        return (84, 150, 64) if h(gx, 2) % 3 == 0 else (118, 82, 54)
-    if gy > 24:
-        return (96, 66, 44) if h(gx, gy) % 4 == 0 else (116, 80, 54)
-    # Night sky, a small moon off to the side, a few stars.
-    t = gy / 23.0
-    sky = mix((16, 13, 40), (70, 42, 110), t)
-    d = math.hypot(gx + 0.5 - 5.0, gy + 0.5 - 5.5)
-    if d < 3.2:
-        return (246, 234, 202)
-    if d < 5.5:
-        sky = mix(sky, (120, 96, 160), (1 - (d - 3.2) / 2.3) * 0.35)
-    if h(gx * 7 + 3, gy * 3 + 1) % 23 == 0 and gy < 18 and d > 5:
-        return (226, 224, 255)
+    if 0 <= ly < len(SPRITE) and 0 <= lx < 5 and SPRITE[ly][lx] != ".":
+        return PAL[SPRITE[ly][lx]]
+    if (gx, gy) in STAFF:
+        return (130, 86, 44)
+    if (gx, gy) == TIP:
+        return (170, 235, 255)
+    if gy == 13:
+        return shade((78, 156, 62), gx, gy, 0.3)
+    if gy == 14:
+        return shade((112, 78, 52), gx, gy, 0.35)
+    if gy > 14:
+        return shade((98, 92, 102), gx, gy, 0.45)
+    if gy == 12 and gx in (1, 13, 14):
+        return (72, 164, 62)  # grass tufts
+    # The game's daytime sky, with one small cloud.
+    sky = mix((62, 106, 178), (182, 210, 230), gy / 12.0)
+    if (gy == 2 and 1 <= gx <= 3) or (gy == 1 and gx == 2):
+        return mix(sky, (244, 246, 250), 0.85)
     return sky
 
 
@@ -106,9 +86,9 @@ def render(size):
             gx, gy = (x - m) / unit, (y - m) / unit
             c = cell(min(N - 1, max(0, int(gx))), min(N - 1, max(0, int(gy))))
             # Soft glow from the staff tip.
-            g = math.hypot(gx - STAFF[0], gy - STAFF[1])
-            if g < 4:
-                c = mix(c, (190, 245, 255), (1 - g / 4) ** 2 * 0.5)
+            g = math.hypot(gx - GLOW[0], gy - GLOW[1])
+            if g < 2.2:
+                c = mix(c, (200, 245, 255), (1 - g / 2.2) ** 2 * 0.5)
             px += bytes((int(c[0]), int(c[1]), int(c[2]), int(a * 255)))
     return bytes(px)
 

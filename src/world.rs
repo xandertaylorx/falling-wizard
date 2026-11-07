@@ -29,6 +29,9 @@ const SPC: usize = CU / SC;
 const N4: [(i32, i32); 4] = [(0, 1), (-1, 0), (1, 0), (0, -1)];
 const N8: [(i32, i32); 8] = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)];
 
+/// A chunk as saved to disk: position, cells and background wall.
+pub type SavedChunk = ((i32, i32), Vec<Cell>, Vec<u8>);
+
 struct Stored {
     cells: Vec<Cell>,
     wall: Vec<u8>,
@@ -66,6 +69,11 @@ impl World {
     }
 
     pub fn with_gen(gen: Generator, seed: u64, gx: f32, gy: f32) -> Self {
+        Self::with_saved(gen, seed, gx, gy, Vec::new())
+    }
+
+    /// Build a world, restoring previously modified chunks from a save.
+    pub fn with_saved(gen: Generator, seed: u64, gx: f32, gy: f32, saved: Vec<SavedChunk>) -> Self {
         let pcx = (gx.floor() as i32).div_euclid(CHUNK);
         let pcy = (gy.floor() as i32).div_euclid(CHUNK);
         let mut w = World {
@@ -87,14 +95,50 @@ impl World {
             explosions: Vec::new(),
             wind: 0.0,
         };
+        for (key, cells, wall) in saved {
+            w.store.insert(key, Stored { cells, wall, dirty: true });
+        }
         for j in 0..WCY {
             for i in 0..WCX {
-                let (c, wl) = w.gen.chunk(w.ox / CHUNK + i, w.oy / CHUNK + j);
-                w.blit(i, j, &c, &wl);
+                let key = (w.ox / CHUNK + i, w.oy / CHUNK + j);
+                if let Some(s) = w.store.remove(&key) {
+                    w.blit(i, j, &s.cells, &s.wall);
+                    w.dirty[(j * WCX + i) as usize] = true;
+                    for sy in 0..SPC {
+                        for sx in 0..SPC {
+                            w.next[(j as usize * SPC + sy) * SCW + i as usize * SPC + sx] = true;
+                        }
+                    }
+                } else {
+                    let (c, wl) = w.gen.chunk(key.0, key.1);
+                    w.blit(i, j, &c, &wl);
+                }
             }
         }
         w.update_surf();
         w
+    }
+
+    /// Every chunk that differs from freshly generated terrain, for saving.
+    pub fn export(&self) -> Vec<SavedChunk> {
+        let mut out: Vec<SavedChunk> = self.store.iter().filter(|(_, s)| s.dirty).map(|(k, s)| (*k, s.cells.clone(), s.wall.clone())).collect();
+        let (cx0, cy0) = (self.ox.div_euclid(CHUNK), self.oy.div_euclid(CHUNK));
+        for j in 0..WCY {
+            for i in 0..WCX {
+                if !self.dirty[(j * WCX + i) as usize] {
+                    continue;
+                }
+                let mut cells = Vec::with_capacity(CU * CU);
+                let mut wall = Vec::with_capacity(CU * CU);
+                for r in 0..CU {
+                    let src = (j as usize * CU + r) * WW + i as usize * CU;
+                    cells.extend_from_slice(&self.cells[src..src + CU]);
+                    wall.extend_from_slice(&self.wall[src..src + CU]);
+                }
+                out.push(((cx0 + i, cy0 + j), cells, wall));
+            }
+        }
+        out
     }
 
     // ---------- streaming ----------

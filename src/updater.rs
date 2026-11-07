@@ -21,6 +21,8 @@ pub enum Status {
 
 pub struct Updater {
     status: Arc<Mutex<Status>>,
+    /// While updating: what it's doing and how far along (0..1).
+    progress: Arc<Mutex<(String, f32)>>,
 }
 
 impl Updater {
@@ -47,26 +49,59 @@ impl Updater {
             };
             *s.lock().unwrap() = result;
         });
-        Self { status }
+        Self { status, progress: Arc::new(Mutex::new((String::new(), 0.0))) }
+    }
+
+    pub fn progress(&self) -> (String, f32) {
+        self.progress.lock().unwrap().clone()
     }
 
     pub fn status(&self) -> Status {
         self.status.lock().unwrap().clone()
     }
 
-    /// Run the installer in the background (same command as the website).
+    /// Run the installer in the background (same command as the website),
+    /// following its output to report progress.
     pub fn update(&self) {
+        use std::io::{BufRead, BufReader};
         *self.status.lock().unwrap() = Status::Updating;
-        let s = self.status.clone();
+        *self.progress.lock().unwrap() = ("STARTING".into(), 0.02);
+        let (s, prog) = (self.status.clone(), self.progress.clone());
         std::thread::spawn(move || {
-            let ok = Command::new("bash")
+            let set = |stage: &str, p: f32| *prog.lock().unwrap() = (stage.to_string(), p);
+            let child = Command::new("bash")
                 .arg("-c")
-                .arg(format!("curl -fsSL {INSTALL} | FW_NO_OPEN=1 bash"))
-                .stdout(Stdio::null())
+                .arg(format!("curl -fsSL {INSTALL} | FW_NO_OPEN=1 FW_PROGRESS=1 bash 2>&1"))
+                .stdout(Stdio::piped())
                 .stderr(Stdio::null())
-                .status()
-                .map(|st| st.success())
-                .unwrap_or(false);
+                .spawn();
+            let Ok(mut child) = child else {
+                *s.lock().unwrap() = Status::Failed;
+                return;
+            };
+            let (mut total, mut done) = (60.0f32, 0.0f32);
+            if let Some(out) = child.stdout.take() {
+                for line in BufReader::new(out).lines().map_while(Result::ok) {
+                    if let Some(n) = line.strip_prefix("::total:") {
+                        total = n.trim().parse().unwrap_or(60.0f32).max(1.0);
+                    } else if line.contains("Fetching") || line.contains("Updating") {
+                        set("DOWNLOADING", 0.06);
+                    } else if line.contains("Installing Rust") {
+                        set("INSTALLING RUST", 0.04);
+                    } else if line.contains("Building") {
+                        set("BUILDING", 0.1);
+                    } else if line.trim_start().starts_with("Compiling") {
+                        done += 1.0;
+                        set("BUILDING", 0.1 + (done / total).min(1.0) * 0.82);
+                    } else if line.trim_start().starts_with("Finished") {
+                        set("BUILDING", 0.93);
+                    } else if line.contains("Installing") {
+                        set("INSTALLING", 0.97);
+                    }
+                }
+            }
+            let ok = child.wait().map(|st| st.success()).unwrap_or(false);
+            set(if ok { "DONE" } else { "FAILED" }, 1.0);
             *s.lock().unwrap() = if ok { Status::Ready } else { Status::Failed };
         });
     }

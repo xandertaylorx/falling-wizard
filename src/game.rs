@@ -128,6 +128,11 @@ pub struct Game {
     /// Planet picker requested (right click with the Portal Wand).
     pub picker: bool,
     pub options: WorldOptions,
+    /// Where this world is saved; None for the menu backdrop and tests.
+    pub save_dir: Option<std::path::PathBuf>,
+    autosave: f32,
+    /// Open portals on planets you're not on right now.
+    portal_mem: std::collections::HashMap<(i32, i32), Vec<((i32, i32, i32, i32), Planet)>>,
 }
 
 impl Game {
@@ -176,6 +181,9 @@ impl Game {
             travel: None,
             picker: false,
             options,
+            save_dir: None,
+            autosave: 0.0,
+            portal_mem: std::collections::HashMap::new(),
         };
         game.apply_mode();
         game.mobs.density = [0.0, 1.0, 2.2][game.options.creatures.min(2)];
@@ -318,6 +326,12 @@ impl Game {
 
     /// Advance one frame. `idle` runs the world without the player acting (menus).
     pub fn update(&mut self, dt: f32, ctl: &Controls, idle: bool) {
+        if self.save_dir.is_some() && !idle {
+            self.autosave += dt;
+            if self.autosave > 60.0 {
+                self.save();
+            }
+        }
         self.time += dt;
         self.aim = ctl.aim;
         let (ax, ay) = ctl.aim;
@@ -656,18 +670,23 @@ impl Game {
 
     /// Arrive on another planet, next to its portal, which opens back to where you came from.
     pub fn enter_planet(&mut self, dest: Planet) {
+        self.save_chunks();
+        let left = std::mem::take(&mut self.portals);
+        self.portal_mem.insert((self.planet.gx, self.planet.gy), left);
         let prev = std::mem::replace(&mut self.planet, dest.clone());
         let gen = Generator::with_planet(self.seed, dest.clone());
         let (px, base, style) = gen.portals_near(PORTAL_HOME - 1, PORTAL_HOME + 1)[0];
         let spawn = (px as f32 + 15.0, base as f32 - 9.0);
-        self.world = World::with_gen(gen, self.seed, spawn.0, spawn.1);
+        self.world = self.build_world(gen, spawn);
+        self.portals = self.portal_mem.remove(&(dest.gx, dest.gy)).unwrap_or_default();
         self.player.x = spawn.0;
         self.player.y = spawn.1;
         self.player.vx = 0.0;
         self.player.vy = 0.0;
         self.player.grapple = None;
         self.spawn = spawn;
-        self.portals.clear();
+        let home = Generator::portal_interior(px, base);
+        self.portals.retain(|(r, _)| *r != home);
         self.spells.clear();
         self.mobs.clear();
         self.fx.clear();
@@ -684,6 +703,111 @@ impl Game {
         self.refresh_planet_names();
         self.toast(format!("WELCOME TO {}", dest.name), dest.color());
         self.toast(dest.kind.name().to_string(), [200, 200, 220]);
+    }
+
+    /// A world for the current planet, with any chunks you changed last time restored.
+    fn build_world(&self, gen: Generator, at: (f32, f32)) -> World {
+        let saved = match &self.save_dir {
+            Some(dir) => crate::saves::read_chunks(dir, self.planet.gx, self.planet.gy),
+            None => Vec::new(),
+        };
+        World::with_saved(gen, self.seed, at.0, at.1, saved)
+    }
+
+    fn save_chunks(&self) {
+        if let Some(dir) = &self.save_dir {
+            let _ = crate::saves::write_chunks(dir, self.planet.gx, self.planet.gy, &self.world.export());
+        }
+    }
+
+    /// Write everything to the world's save folder.
+    pub fn save(&mut self) {
+        let Some(dir) = self.save_dir.clone() else { return };
+        self.autosave = 0.0;
+        self.save_chunks();
+        let o = &self.options;
+        let mut t = String::new();
+        let mut kv = |k: &str, v: String| t.push_str(&format!("{k}={v}\n"));
+        kv("name", o.name.clone());
+        kv("seed", o.seed.to_string());
+        kv("creative", o.creative.to_string());
+        kv("commands", o.commands.to_string());
+        kv("creatures", o.creatures.to_string());
+        kv("weather", o.weather.to_string());
+        kv("alien_start", o.alien_start.to_string());
+        kv("planet", format!("{},{}", self.planet.gx, self.planet.gy));
+        kv("planet_name", self.planet.name.clone());
+        kv("pos", format!("{},{}", self.player.x, self.player.y));
+        kv("spawn", format!("{},{}", self.spawn.0, self.spawn.1));
+        kv("gold", self.player.gold.to_string());
+        kv("hp", self.player.hp.to_string());
+        kv("time", format!("{},{}", self.weather.time, self.weather.day));
+        kv("played", crate::saves::now().to_string());
+        let mut all: Vec<((i32, i32), &((i32, i32, i32, i32), Planet))> = self.portals.iter().map(|p| ((self.planet.gx, self.planet.gy), p)).collect();
+        for (k, list) in &self.portal_mem {
+            all.extend(list.iter().map(|p| (*k, p)));
+        }
+        for ((gx, gy), ((x0, y0, x1, y1), d)) in all {
+            kv("portal", format!("{gx},{gy},{x0},{y0},{x1},{y1},{},{}", d.gx, d.gy));
+        }
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(dir.join("world.txt"), t);
+    }
+
+    /// Open a saved world.
+    pub fn load(dir: &std::path::Path) -> Option<Game> {
+        let meta = crate::saves::read_meta(dir)?;
+        let get = |k: &str| meta.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.as_str()).unwrap_or("");
+        let pair = |k: &str| -> Option<(f32, f32)> {
+            let (a, b) = get(k).split_once(',')?;
+            Some((a.parse().ok()?, b.parse().ok()?))
+        };
+        let planet_at = |gx: i32, gy: i32| if gx == 0 && gy == 0 { Planet::earth() } else { Planet::at(gx, gy).unwrap_or_else(Planet::earth) };
+        let options = WorldOptions {
+            name: get("name").to_string(),
+            seed: get("seed").parse().ok()?,
+            creative: get("creative") == "true",
+            commands: get("commands") == "true",
+            creatures: get("creatures").parse().unwrap_or(1),
+            weather: get("weather") != "false",
+            alien_start: false,
+        };
+        let alien = get("alien_start") == "true";
+        let mut g = Game::with_options(options);
+        g.options.alien_start = alien;
+        g.save_dir = Some(dir.to_path_buf());
+        let (pgx, pgy) = pair("planet").unwrap_or((0.0, 0.0));
+        g.planet = planet_at(pgx as i32, pgy as i32);
+        for (k, v) in meta.iter().filter(|(k, _)| k == "portal") {
+            let _ = k;
+            let n: Vec<i32> = v.split(',').filter_map(|x| x.parse().ok()).collect();
+            if n.len() == 8 {
+                g.portal_mem.entry((n[0], n[1])).or_default().push(((n[2], n[3], n[4], n[5]), planet_at(n[6], n[7])));
+            }
+        }
+        g.portals = g.portal_mem.remove(&(g.planet.gx, g.planet.gy)).unwrap_or_default();
+        let pos = pair("pos").unwrap_or(g.spawn);
+        g.spawn = pair("spawn").unwrap_or(pos);
+        let gen = Generator::with_planet(g.seed, g.planet.clone());
+        g.world = g.build_world(gen, pos);
+        g.player.x = pos.0;
+        g.player.y = pos.1;
+        g.player.gold = get("gold").parse().unwrap_or(g.player.gold);
+        g.player.hp = get("hp").parse().unwrap_or(g.player.hp);
+        if let Some((tm, d)) = pair("time") {
+            g.weather.time = tm;
+            g.weather.day = d as u32;
+        }
+        if !g.planet.is_earth() {
+            g.dest = Planet::earth();
+            g.spells.portal_hue = g.dest.hue;
+        }
+        g.refresh_planet_names();
+        g.cam = g.player.center();
+        g.mobs.clear();
+        g.chat.clear();
+        g.say(format!("Welcome back to {}.", g.options.name), [200, 200, 220]);
+        Some(g)
     }
 
     pub fn say(&mut self, text: impl Into<String>, color: [u8; 3]) {
