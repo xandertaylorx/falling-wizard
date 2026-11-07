@@ -84,6 +84,7 @@ pub struct Game {
     cooldown: f32,
     hitstop: f32,
     booms: f32,
+    in_space: bool,
     pub time: f32,
 }
 
@@ -120,6 +121,7 @@ impl Game {
             cooldown: 0.0,
             hitstop: 0.0,
             booms: 0.0,
+            in_space: false,
             time: 0.0,
         };
         game.say("Press T to chat or / for commands. Try /help", [200, 200, 220]);
@@ -303,11 +305,13 @@ impl Game {
             self.mobs.update(&mut self.world, &mut self.player, &mut self.fx, dt);
         }
 
-        for (x, y, r) in self.fx.explosions.drain(..).collect::<Vec<_>>() {
+        self.hitstop = self.hitstop.max(std::mem::take(&mut self.fx.hitstop));
+        self.booms += std::mem::take(&mut self.fx.kick);
+        for (x, y, r, kind) in self.fx.explosions.drain(..).collect::<Vec<_>>() {
             if !idle {
                 self.player.blast(x, y, r);
             }
-            self.mobs.damage_area(x, y, r as f32 * 1.8, r as f32 * 3.0, &mut self.fx);
+            self.mobs.damage_area(x, y, r as f32 * 1.8, r as f32 * 3.0, kind, &mut self.fx);
             self.sounds.push(if r <= 5 { Sfx::Pop } else { Sfx::Boom });
             self.booms += 1.0;
             if r >= 8 {
@@ -347,12 +351,52 @@ impl Game {
                 self.player.vy = (self.player.vy - 380.0 * dt).max(-140.0);
             }
         }
-        let wind = self.weather.wind_now();
+        // Breaking the atmosphere: low gravity above it, fire on the way through.
+        let (_, py) = self.player.center();
+        let thin = ((-py - 420.0) / 100.0).clamp(0.0, 1.0);
+        self.player.grav = 1.0 - thin * 0.72;
+        if !idle {
+            let crossing = (-540.0..-430.0).contains(&py) && self.player.vy.abs() > 55.0;
+            if crossing {
+                let (cx, cy) = self.player.center();
+                for _ in 0..5 {
+                    let back = -self.player.vy.signum();
+                    let (vx, vy) = (self.fx.rng.rangef(-30.0, 30.0), back * self.fx.rng.rangef(60.0, 140.0));
+                    let col = if self.fx.rng.chance(0.5) { [255, 200, 120] } else { [255, 120, 50] };
+                    let x = cx + self.fx.rng.rangef(-3.0, 3.0);
+                    self.fx.spark(x, cy, vx, vy, 0.4, col);
+                }
+                self.fx.shake = self.fx.shake.max(1.5);
+            }
+            let up_high = if self.in_space { py < -470.0 } else { py < -490.0 };
+            if up_high != self.in_space {
+                self.in_space = up_high;
+                self.fx.flash = self.fx.flash.max(0.4);
+                self.fx.shake = (self.fx.shake + 6.0).min(14.0);
+                self.sounds.push(Sfx::Thunder);
+                self.sounds.push(Sfx::Whoosh);
+                if up_high {
+                    self.toast("LEAVING THE ATMOSPHERE", [170, 220, 255]);
+                    self.toast("LOW GRAVITY", [200, 200, 220]);
+                } else {
+                    self.toast("RE-ENTERING THE ATMOSPHERE", [255, 190, 120]);
+                }
+            }
+        }
+        let wind = self.weather.wind_now() * (1.0 - thin);
         self.world.wind = wind;
         self.fx.wind = wind;
         let pc = self.player.center();
         self.weather.ambience(&self.world, &mut self.fx, pc);
         self.weather.update(dt, &mut self.world, &mut self.fx, pc, &mut self.sounds);
+        for (x, y) in std::mem::take(&mut self.weather.strikes) {
+            self.mobs.damage_area(x, y, 12.0, 45.0, crate::mobs::Dmg::Lightning, &mut self.fx);
+            let (cx, cy) = self.player.center();
+            if !idle && (cx - x).powi(2) + (cy - y).powi(2) < 10.0 * 10.0 {
+                self.player.hurt(30.0);
+                self.player.vy -= 90.0;
+            }
+        }
 
         // Zoom out a little during big chain reactions.
         self.booms *= (1.0 - 1.5 * dt).max(0.0);
@@ -468,8 +512,8 @@ impl Game {
         match a(0) {
             "help" => {
                 for l in [
-                    "/tp <x> <y>  or  /tp spawn|volcano|geyser|ruin|island|space|caves|lava|forest|desert|tundra",
-                    "/time set day|noon|night|midnight|<0-1>     /weather clear|rain|storm",
+                    "/tp <x> <y>  or  /tp spawn|volcano|geyser|ruin|island|space|caves|lava|ocean|beach|forest|plains|jungle|desert|tundra",
+                    "/time set day|noon|night|midnight|<0-1>     /weather clear|cloudy|rain|storm|fog|windy",
                     "/summon <creature> [count]     /kill [pets]     /heal     /pos     /seed",
                     "/fly  (infinite flight)     /god  (can't be hurt)     /gold <n>     /clear",
                 ] {
@@ -509,21 +553,25 @@ impl Game {
                     }
                 }
             }
-            "weather" => match a(1) {
-                "clear" | "sun" => {
-                    self.weather.set(0.0, false);
-                    self.say("Weather cleared", OK);
+            "weather" => {
+                use crate::weather::Sky;
+                let kind = match a(1) {
+                    "clear" | "sun" => Some(Sky::Clear),
+                    "cloudy" | "clouds" => Some(Sky::Cloudy),
+                    "rain" | "snow" => Some(Sky::Rain),
+                    "storm" | "thunder" => Some(Sky::Storm),
+                    "fog" => Some(Sky::Fog),
+                    "windy" | "wind" | "sandstorm" => Some(Sky::Windy),
+                    _ => None,
+                };
+                match kind {
+                    Some(k) => {
+                        self.weather.set(k);
+                        self.say(format!("Weather set to {}", k.name().to_lowercase()), OK);
+                    }
+                    None => self.say("Use /weather clear|cloudy|rain|storm|fog|windy", ERR),
                 }
-                "rain" => {
-                    self.weather.set(0.6, false);
-                    self.say("It's raining", OK);
-                }
-                "storm" | "thunder" => {
-                    self.weather.set(1.0, true);
-                    self.say("A storm rolls in", OK);
-                }
-                _ => self.say("Use /weather clear|rain|storm", ERR),
-            },
+            }
             "summon" | "spawn" => {
                 let name: String = a(1).chars().filter(|c| c.is_alphanumeric()).collect();
                 let found = crate::mobs::ALL_MOBS.iter().find(|k| k.name().to_lowercase().replace(' ', "") == name || format!("{:?}", k).to_lowercase() == name);
@@ -652,12 +700,37 @@ impl Game {
             }
             "caves" | "cave" => Some((px, surf(pxi) + 110.0, "the caves".into())),
             "lava" | "deep" | "underworld" => Some((px, surf(pxi) + 300.0, "the lava caverns".into())),
-            "forest" | "desert" | "tundra" | "snow" => {
+            "beach" => {
+                for k in 0..800 {
+                    for x in [pxi + k * 25, pxi - k * 25] {
+                        let o = gen.ocean(x);
+                        if o > 0.05 && o < 0.3 && gen.surface(x) < crate::worldgen::SEA {
+                            return Some((x as f32, surf(x) - 14.0, "the beach".into()));
+                        }
+                    }
+                }
+                None
+            }
+            "forest" | "desert" | "tundra" | "snow" | "ocean" | "plains" | "jungle" => {
+                use crate::worldgen::Biome;
                 let want = match what {
-                    "forest" => crate::worldgen::Biome::Forest,
-                    "desert" => crate::worldgen::Biome::Desert,
-                    _ => crate::worldgen::Biome::Snow,
+                    "forest" => Biome::Forest,
+                    "desert" => Biome::Desert,
+                    "ocean" => Biome::Ocean,
+                    "plains" => Biome::Plains,
+                    "jungle" => Biome::Jungle,
+                    _ => Biome::Snow,
                 };
+                if want == Biome::Ocean {
+                    for k in 0..800 {
+                        for x in [pxi + k * 50, pxi - k * 50] {
+                            if gen.ocean(x) > 0.9 {
+                                return Some((x as f32, crate::worldgen::SEA as f32 - 16.0, "the ocean".into()));
+                            }
+                        }
+                    }
+                    return None;
+                }
                 for k in 0..400 {
                     for x in [pxi + k * 50, pxi - k * 50] {
                         if gen.biome(x) == want && gen.biome(x + 40) == want {
@@ -673,7 +746,7 @@ impl Game {
 }
 
 const COMMANDS: [&str; 13] = ["help", "tp", "time", "weather", "summon", "kill", "heal", "fly", "god", "gold", "pos", "seed", "clear"];
-const PLACES: [&str; 13] = ["volcano", "geyser", "ruin", "altar", "island", "space", "caves", "lava", "forest", "desert", "tundra", "spawn", "~"];
+const PLACES: [&str; 17] = ["volcano", "geyser", "ruin", "altar", "island", "space", "caves", "lava", "ocean", "beach", "forest", "plains", "jungle", "desert", "tundra", "spawn", "~"];
 
 /// Minecraft-style suggestions for a partly typed command: where the current word
 /// starts in `buf`, and the options that match it.
@@ -689,7 +762,7 @@ pub fn suggest(buf: &str) -> (usize, Vec<String>) {
         (1, "tp") => PLACES.iter().filter(|p| **p != "~").map(|s| s.to_string()).collect(),
         (1, "time") => vec!["set".into()],
         (2, "time") if parts[1] == "set" => ["day", "noon", "evening", "night", "midnight"].iter().map(|s| s.to_string()).collect(),
-        (1, "weather") => ["clear", "rain", "storm"].iter().map(|s| s.to_string()).collect(),
+        (1, "weather") => ["clear", "cloudy", "rain", "storm", "fog", "windy"].iter().map(|s| s.to_string()).collect(),
         (1, "summon") | (1, "spawn") => mobs,
         (2, "summon") | (2, "spawn") => ["1", "3", "5", "10"].iter().map(|s| s.to_string()).collect(),
         (1, "kill") => vec!["pets".into()],
@@ -705,7 +778,7 @@ pub fn usage(buf: &str) -> Option<&'static str> {
     Some(match cmd {
         "tp" => "/tp <place>  or  /tp <x> <y>",
         "time" => "/time set <day|noon|evening|night|midnight|0-1>",
-        "weather" => "/weather <clear|rain|storm>",
+        "weather" => "/weather <clear|cloudy|rain|storm|fog|windy>",
         "summon" | "spawn" => "/summon <creature> [count]",
         "kill" => "/kill [pets]",
         "gold" | "give" => "/gold <amount>",

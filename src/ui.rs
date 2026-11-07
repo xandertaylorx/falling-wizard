@@ -297,7 +297,7 @@ impl Ui {
             game.world.gen.biome(px as i32).name().to_uppercase()
         };
         self.text_right(&place, sw - 20.0, 20.0, 2.0, TEXT);
-        self.text_right(game.weather.label(), sw - 20.0, 40.0, 1.0, MUTED);
+        self.text_right(&format!("{}  -  {}", game.weather.clock_text(), game.weather.label()), sw - 20.0, 40.0, 1.0, MUTED);
         if show_fps {
             self.text_right(&format!("{} FPS  SIM {:.1}MS", fps.round() as i32, game.sim_ms), sw - 20.0, 54.0, 1.0, MUTED);
         }

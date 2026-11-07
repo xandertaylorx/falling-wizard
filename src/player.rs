@@ -48,6 +48,8 @@ pub struct Player {
     dash_cd: f32,
     pub grapple: Option<(f32, f32)>,
     pub god: bool,
+    /// Gravity multiplier (low in space).
+    pub grav: f32,
     pub infinite_flight: bool,
     /// Wall the wizard is sliding on (-1 left, 1 right, 0 none).
     wall: f32,
@@ -77,6 +79,7 @@ impl Player {
             dash_cd: 0.0,
             grapple: None,
             god: false,
+            grav: 1.0,
             infinite_flight: false,
             wall: 0.0,
         }
@@ -202,7 +205,7 @@ impl Player {
         let (cx, cy) = ((self.x + PW * 0.5) as i32, (self.y + PH * 0.6) as i32);
         let swimming = world.mat(cx, cy).kind() == Kind::Liquid;
         if self.dash_t <= 0.0 {
-            self.vy += GRAVITY * dt * if swimming { 0.35 } else { 1.0 };
+            self.vy += GRAVITY * self.grav * dt * if swimming { 0.35 } else { 1.0 };
         }
         if let Some((ax, ay)) = self.grapple {
             let (cx, cy) = self.center();
@@ -264,7 +267,7 @@ impl Player {
         if self.infinite_flight {
             self.flight = MAX_FLIGHT;
         }
-        self.vy = self.vy.min(190.0);
+        self.vy = self.vy.min(190.0 * self.grav.max(0.4));
         if self.dash_t <= 0.0 && self.grapple.is_none() {
             self.vx = self.vx.clamp(-120.0, 120.0);
         }

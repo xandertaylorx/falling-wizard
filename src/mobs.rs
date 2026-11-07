@@ -10,6 +10,19 @@ use crate::render::Canvas;
 use crate::world::World;
 use crate::worldgen::Biome;
 
+/// What dealt the killing blow decides how a creature dies.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Dmg {
+    Physical,
+    Fire,
+    Lightning,
+    Frost,
+    Acid,
+    Blast,
+    Void,
+    Wind,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MobKind {
     Zombie,
@@ -34,6 +47,8 @@ pub enum MobKind {
     Wisp,
     CloudSprite,
     Mushling,
+    Fish,
+    Shark,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -45,6 +60,7 @@ enum Ai {
     Ghost,
     Burrower,
     Dragon,
+    Swimmer,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -181,6 +197,16 @@ const fn spec(kind: MobKind) -> Spec {
             pal: &[(b'c', [240, 244, 252]), (b'e', [60, 80, 124])],
             hp: 30.0, speed: 30.0, dmg: 8.0, ai: Ai::Flyer, ranged: Ranged::Zap, gib: M::Steam, light: None, fire_immune: false, water_hurts: false, gold: 4,
         },
+        Fish => Spec {
+            sprite: &["..ff..", "fffffe", ".ffff.", "t....."],
+            pal: &[(b'f', [240, 160, 60]), (b'e', [20, 20, 30]), (b't', [255, 200, 90])],
+            hp: 8.0, speed: 40.0, dmg: 0.0, ai: Ai::Swimmer, ranged: Ranged::None, gib: M::Blood, light: None, fire_immune: false, water_hurts: false, gold: 1,
+        },
+        Shark => Spec {
+            sprite: &[".......s......", "......sss.....", "ssssssssssssss", ".sswwwwwwwwkss", "ss..wwwwwwwtt.", "s......ss....."],
+            pal: &[(b's', [100, 116, 136]), (b'w', [222, 226, 232]), (b'k', [20, 20, 30]), (b't', [240, 240, 240])],
+            hp: 90.0, speed: 70.0, dmg: 20.0, ai: Ai::Swimmer, ranged: Ranged::None, gib: M::Blood, light: None, fire_immune: false, water_hurts: false, gold: 8,
+        },
         Mushling => Spec {
             sprite: &[".ccc.", "ccccc", ".fef.", ".fff.", ".f.f."],
             pal: &[(b'c', [90, 232, 212]), (b'f', [222, 212, 192]), (b'e', [30, 30, 30])],
@@ -189,11 +215,11 @@ const fn spec(kind: MobKind) -> Spec {
     }
 }
 
-pub const ALL_MOBS: [MobKind; 22] = {
+pub const ALL_MOBS: [MobKind; 24] = {
     use MobKind::*;
     [
         Zombie, Skeleton, Slime, DemonEye, Bat, FireImp, Lion, Tiger, Scorpion, SnowWolf, Yeti, Golem, Salamander, Worm, Dragon, Ghost,
-        StarJelly, MoonHopper, VoidEye, Wisp, CloudSprite, Mushling,
+        StarJelly, MoonHopper, VoidEye, Wisp, CloudSprite, Mushling, Fish, Shark,
     ]
 };
 
@@ -223,6 +249,8 @@ impl MobKind {
             Wisp => "Wisp",
             CloudSprite => "Cloud Sprite",
             Mushling => "Mushling",
+            Fish => "Fish",
+            Shark => "Shark",
         }
     }
 }
@@ -248,6 +276,7 @@ pub struct Mob {
     breath: f32,
     segs: Vec<(f32, f32)>,
     pub pet: bool,
+    last_hit: Dmg,
 }
 
 /// A body flung by its death; it tumbles and splatters where it lands.
@@ -261,6 +290,7 @@ struct Corpse {
     spin: f32,
     t: f32,
     facing: f32,
+    style: Dmg,
 }
 
 struct MobShot {
@@ -339,6 +369,7 @@ impl Mobs {
             breath: 0.0,
             segs,
             pet: false,
+            last_hit: Dmg::Physical,
         });
     }
 
@@ -375,11 +406,12 @@ impl Mobs {
             .map(|(c, _)| c)
     }
 
-    pub fn hurt(&mut self, i: usize, dmg: f32, knock: (f32, f32), fx: &mut Fx) {
+    pub fn hurt_by(&mut self, i: usize, dmg: f32, knock: (f32, f32), kind: Dmg, fx: &mut Fx) {
         let m = &mut self.list[i];
         if m.hp <= 0.0 {
             return;
         }
+        m.last_hit = kind;
         m.hp -= dmg;
         m.hurt = 0.15;
         let heavy = matches!(spec(m.kind).ai, Ai::Dragon | Ai::Burrower) || m.kind == MobKind::Golem;
@@ -395,7 +427,7 @@ impl Mobs {
         self.sounds.push(Sfx::Hit);
     }
 
-    pub fn damage_area(&mut self, x: f32, y: f32, r: f32, dmg: f32, fx: &mut Fx) {
+    pub fn damage_area(&mut self, x: f32, y: f32, r: f32, dmg: f32, kind: Dmg, fx: &mut Fx) {
         for i in 0..self.list.len() {
             if self.list[i].pet {
                 continue;
@@ -408,7 +440,7 @@ impl Mobs {
             if d < r {
                 let k = 1.0 - d / r;
                 let (dx, dy) = ((cx - x) / d.max(1.0), (cy - y) / d.max(1.0));
-                self.hurt(i, dmg * (0.4 + 0.6 * k), (dx * 120.0 * k, dy * 120.0 * k - 60.0 * k), fx);
+                self.hurt_by(i, dmg * (0.4 + 0.6 * k), (dx * 120.0 * k, dy * 120.0 * k - 60.0 * k), kind, fx);
             }
         }
     }
@@ -426,7 +458,7 @@ impl Mobs {
         }
         for (i, h) in hit.into_iter().enumerate() {
             if h {
-                self.hurt(i, dmg, (0.0, -40.0), fx);
+                self.hurt_by(i, dmg, (0.0, -40.0), Dmg::Lightning, fx);
             }
         }
     }
@@ -473,6 +505,7 @@ impl Mobs {
                 if d < 6.0 && !m.pet {
                     m.hp -= 120.0 * dt;
                     m.hurt = 0.05;
+                    m.last_hit = Dmg::Void;
                 }
             }
         }
@@ -494,7 +527,7 @@ impl Mobs {
             m.vy += uy * force * k - force * 0.35 * k;
             m.on_ground = false;
             if dmg > 0.0 && !m.pet {
-                self.hurt(i, dmg * k, (0.0, 0.0), fx);
+                self.hurt_by(i, dmg * k, (0.0, 0.0), Dmg::Wind, fx);
             }
         }
     }
@@ -515,9 +548,27 @@ impl Mobs {
                 if !m.pet {
                     m.hp -= 22.0 * dt;
                     m.hurt = m.hurt.max(0.04);
+                    m.last_hit = Dmg::Wind;
                 }
             }
         }
+    }
+
+    /// Up to `n` hostile creatures within `range`, nearest first: (index, x, y).
+    pub fn near_list(&self, x: f32, y: f32, range: f32, n: usize) -> Vec<(usize, f32, f32)> {
+        let mut v: Vec<(usize, f32, f32, f32)> = self
+            .list
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| !m.pet && m.hp > 0.0)
+            .map(|(i, m)| {
+                let (cx, cy) = Self::center(m);
+                (i, cx, cy, (cx - x).powi(2) + (cy - y).powi(2))
+            })
+            .filter(|t| t.3 < range * range)
+            .collect();
+        v.sort_by(|a, b| a.3.partial_cmp(&b.3).unwrap());
+        v.into_iter().take(n).map(|t| (t.0, t.1, t.2)).collect()
     }
 
     pub fn freeze(&mut self, i: usize, secs: f32) {
@@ -541,15 +592,25 @@ impl Mobs {
         let surf = world.gen.surface(x as i32);
         let depth = y as i32 - surf;
         let biome = world.gen.biome(x as i32);
+        let in_water = world.mat(x as i32, y as i32) == M::Water;
         use MobKind::*;
-        let table: &[(MobKind, f32)] = if y < -520.0 {
+        let table: &[(MobKind, f32)] = if in_water {
+            if biome == Biome::Ocean {
+                &[(Fish, 4.0), (Shark, 1.0)]
+            } else {
+                &[(Fish, 1.0)]
+            }
+        } else if y < -520.0 {
             &[(StarJelly, 3.0), (MoonHopper, 3.0), (VoidEye, 2.0), (Wisp, 2.0), (Dragon, 0.35)]
         } else if y < -230.0 {
             &[(CloudSprite, 3.0), (DemonEye, 1.0), (Wisp, 1.5), (Dragon, 0.4)]
         } else if depth < 10 {
             match (biome, night) {
                 (Biome::Forest, false) => &[(Slime, 3.0), (Tiger, 1.0), (Bat, 0.3)],
-                (Biome::Forest, true) => &[(Zombie, 4.0), (DemonEye, 3.0), (Slime, 1.0), (Ghost, 0.5)],
+                (Biome::Plains, false) => &[(Slime, 3.0), (Lion, 1.0)],
+                (Biome::Jungle, false) => &[(Tiger, 3.0), (Slime, 1.5), (Bat, 1.0)],
+                (Biome::Ocean, _) => &[(DemonEye, 1.0)],
+                (Biome::Forest | Biome::Plains | Biome::Jungle, true) => &[(Zombie, 4.0), (DemonEye, 3.0), (Slime, 1.0), (Ghost, 0.5)],
                 (Biome::Desert, false) => &[(Scorpion, 3.0), (Lion, 2.0)],
                 (Biome::Desert, true) => &[(Zombie, 2.0), (Ghost, 2.0), (Scorpion, 1.0), (DemonEye, 1.0)],
                 (Biome::Snow, false) => &[(SnowWolf, 3.0), (Yeti, 1.0)],
@@ -575,6 +636,11 @@ impl Mobs {
         let free = |x0: i32, y0: i32| (0..h).all(|dy| (0..w).all(|dx| world.mat(x0 + dx, y0 + dy).passable()) && world.in_window(x0, y0 + dy));
         let (xi, yi) = (x as i32, y as i32);
         match s.ai {
+            Ai::Swimmer => {
+                if in_water {
+                    self.spawn(kind, x, y);
+                }
+            }
             Ai::Flyer | Ai::Ghost | Ai::Dragon => {
                 if free(xi, yi) || s.ai == Ai::Ghost {
                     self.spawn(kind, x, y);
@@ -627,16 +693,18 @@ impl Mobs {
 
             // Environment.
             let here = world.mat(cx as i32, cy as i32);
-            let env = match here {
-                M::Fire if !s.fire_immune => 14.0,
-                M::Lava if !s.fire_immune => 50.0,
-                M::Acid => 25.0,
-                M::Water if s.water_hurts => 30.0,
-                _ => 0.0,
+            let (env, kind) = match here {
+                M::Fire if !s.fire_immune => (14.0, Dmg::Fire),
+                M::Lava if !s.fire_immune => (50.0, Dmg::Fire),
+                M::Acid => (25.0, Dmg::Acid),
+                M::Water if s.water_hurts => (30.0, Dmg::Physical),
+                _ => (0.0, Dmg::Physical),
             };
+            let out_of_water = s.ai == Ai::Swimmer && here.kind() != MK::Liquid;
             if env > 0.0 {
                 m.hp -= env * dt;
                 m.hurt = m.hurt.max(0.05);
+                m.last_hit = kind;
             }
 
             // Pets chase the nearest hostile creature, otherwise follow you.
@@ -758,6 +826,45 @@ impl Mobs {
                         m.vy = -m.vy * 0.6;
                     }
                 }
+                Ai::Swimmer => {
+                    if out_of_water {
+                        // Flop about on land.
+                        m.vy = (m.vy + 260.0 * dt).min(180.0);
+                        m.vx *= 1.0 - 2.0 * dt;
+                        if Self::solid_at(world, m.x, m.y + m.vy * dt, m.w, m.h) {
+                            m.vy = -60.0;
+                            m.vx = (m.t * 7.0).sin() * 40.0;
+                        }
+                    } else {
+                        let player_in_water = world.mat(gx as i32, gy as i32).kind() == MK::Liquid;
+                        let (tx, ty) = if aggro && player_in_water && s.dmg > 0.0 { (gx, gy) } else { (cx + m.facing * 30.0, cy + (m.t * 0.8).sin() * 6.0) };
+                        let (ax, ay) = (tx - cx, ty - cy);
+                        let l = (ax * ax + ay * ay).sqrt().max(1.0);
+                        m.vx += ax / l * s.speed * 2.0 * dt;
+                        m.vy += ay / l * s.speed * 2.0 * dt;
+                        let sp = (m.vx * m.vx + m.vy * m.vy).sqrt();
+                        if sp > s.speed {
+                            m.vx *= s.speed / sp;
+                            m.vy *= s.speed / sp;
+                        }
+                        let ahead = world.mat((cx + m.vx.signum() * (m.w * 0.5 + 1.0)) as i32, (cy + m.vy * 0.05) as i32);
+                        if ahead.kind() != MK::Liquid {
+                            m.vx = -m.vx;
+                            m.vy = -m.vy * 0.5;
+                            m.facing = m.vx.signum();
+                        }
+                    }
+                    let (nx, ny) = (m.x + m.vx * dt, m.y + m.vy * dt);
+                    if !Self::solid_at(world, nx, ny, m.w, m.h) {
+                        m.x = nx;
+                        m.y = ny;
+                    } else {
+                        m.vx = -m.vx * 0.5;
+                    }
+                    if m.vx.abs() > 2.0 {
+                        m.facing = m.vx.signum();
+                    }
+                }
                 Ai::Burrower => {
                     let inside = world.mat(cx as i32, cy as i32).solid();
                     if inside {
@@ -862,7 +969,7 @@ impl Mobs {
         }
         self.shots.append(&mut new_shots);
         for (i, dmg, dir) in pet_hits {
-            self.hurt(i, dmg, (dir * 60.0, -40.0), fx);
+            self.hurt_by(i, dmg, (dir * 60.0, -40.0), Dmg::Physical, fx);
         }
         self.update_shots(world, player, fx, dt);
         self.update_corpses(world, fx, dt);
@@ -903,22 +1010,70 @@ impl Mobs {
     fn gib(&mut self, m: &Mob, fx: &mut Fx) {
         let s = spec(m.kind);
         let (cx, cy) = Self::center(m);
-        if m.segs.is_empty() && s.gib != M::Empty {
-            // Ragdoll: fling the body; it splatters when it lands.
-            let up = fx.rng.rangef(70.0, 140.0);
-            self.corpses.push(Corpse {
-                kind: m.kind,
-                x: cx,
-                y: cy,
-                vx: m.vx * 1.4 + fx.rng.rangef(-40.0, 40.0),
-                vy: m.vy.min(0.0) * 1.2 - up,
-                rot: 0.0,
-                spin: fx.rng.rangef(-14.0, 14.0),
-                t: 0.0,
-                facing: m.facing,
-            });
-        } else {
-            self.splatter(m.kind, cx, cy, &m.segs, fx);
+        let style = m.last_hit;
+        match style {
+            Dmg::Frost => {
+                // Shatters into ice.
+                let n = ((m.w * m.h) as usize / 2).clamp(8, 50);
+                for k in 0..n {
+                    let a = fx.rng.rangef(0.0, std::f32::consts::TAU);
+                    let sp = fx.rng.rangef(40.0, 140.0);
+                    let mat = if k % 3 == 0 { M::Ice } else { M::Snow };
+                    let sh = fx.rng.next_u32() as u8;
+                    fx.debris(cx, cy, a.cos() * sp, a.sin() * sp - 60.0, mat, sh);
+                }
+                fx.burst(cx, cy, 40, 120.0, crate::fx::FROST);
+                self.sounds.push(Sfx::Freeze);
+            }
+            Dmg::Acid => {
+                // Melts into a puddle of goo with a hiss of fumes.
+                let n = ((m.w * m.h) as usize / 2).clamp(6, 40);
+                for _ in 0..n {
+                    let (vx, vy) = (fx.rng.rangef(-25.0, 25.0), fx.rng.rangef(-20.0, 10.0));
+                    let sh = fx.rng.next_u32() as u8;
+                    let ox = fx.rng.rangef(-2.0, 2.0);
+                    fx.debris(cx + ox, cy, vx, vy, M::Goo, sh);
+                }
+                for _ in 0..16 {
+                    let (vx, vy) = (fx.rng.rangef(-10.0, 10.0), fx.rng.rangef(-50.0, -20.0));
+                    fx.mote(cx, cy, vx, vy, 1.2, [150, 220, 120], 0.3, -10.0, 10.0);
+                }
+                self.sounds.push(Sfx::Splash);
+            }
+            Dmg::Void => {
+                // Spaghettified: stretched into a thin stream of pieces.
+                for k in 0..30 {
+                    let t = k as f32 / 30.0;
+                    let sh = fx.rng.next_u32() as u8;
+                    fx.debris(cx + (t - 0.5) * 8.0, cy, (t - 0.5) * 30.0, 0.0, s.gib, sh);
+                }
+            }
+            _ if m.segs.is_empty() && s.gib != M::Empty => {
+                // Ragdoll, flung according to what killed it.
+                let (power, up) = match style {
+                    Dmg::Blast => (2.6, 160.0),
+                    Dmg::Wind => (3.0, 120.0),
+                    Dmg::Lightning => (0.8, 120.0),
+                    _ => (1.4, 100.0),
+                };
+                let up = up * fx.rng.rangef(0.7, 1.3);
+                self.corpses.push(Corpse {
+                    kind: m.kind,
+                    x: cx,
+                    y: cy,
+                    vx: m.vx * power + fx.rng.rangef(-40.0, 40.0),
+                    vy: m.vy.min(0.0) * power * 0.6 - up,
+                    rot: 0.0,
+                    spin: fx.rng.rangef(-14.0, 14.0) * if style == Dmg::Wind { 2.0 } else { 1.0 },
+                    t: 0.0,
+                    facing: m.facing,
+                    style,
+                });
+                if style == Dmg::Lightning {
+                    fx.burst(cx, cy, 30, 90.0, [200, 230, 255]);
+                }
+            }
+            _ => self.splatter(m.kind, cx, cy, &m.segs, fx),
         }
         let big = s.hp >= 100.0;
         if big {
@@ -946,8 +1101,7 @@ impl Mobs {
                 if m.solid() || m.kind() == MK::Liquid || !world.in_window(nx as i32, ny as i32) {
                     let speed = (c.vx * c.vx + c.vy * c.vy).sqrt();
                     if speed > 70.0 || c.t > 1.2 {
-                        self.splatter(c.kind, c.x, c.y, &[], fx);
-                        self.sounds.push(Sfx::Pop);
+                        self.land(c, world, fx);
                         return false;
                     }
                     c.vy = -c.vy * 0.4;
@@ -958,13 +1112,44 @@ impl Mobs {
                 c.x = nx;
                 c.y = ny;
             }
+            if matches!(c.style, Dmg::Fire | Dmg::Lightning) && fx.rng.chance(0.5) {
+                let col = if c.style == Dmg::Fire { [255, 140, 40] } else { [180, 220, 255] };
+                let (vx, vy) = (fx.rng.rangef(-20.0, 20.0), fx.rng.rangef(-40.0, -10.0));
+                fx.spark(c.x, c.y, vx, vy, 0.4, col);
+            }
             if c.t > 3.0 {
-                self.splatter(c.kind, c.x, c.y, &[], fx);
+                self.land(c, world, fx);
                 return false;
             }
             true
         });
         self.corpses = corpses;
+    }
+
+    /// A falling body hits the ground: burnt ones crumble to ash, others splatter.
+    fn land(&mut self, c: &Corpse, world: &mut World, fx: &mut Fx) {
+        match c.style {
+            Dmg::Fire | Dmg::Lightning => {
+                for _ in 0..14 {
+                    let (vx, vy) = (fx.rng.rangef(-30.0, 30.0), fx.rng.rangef(-60.0, -10.0));
+                    let mat = if c.style == Dmg::Lightning && fx.rng.chance(0.4) { M::Bone } else { M::Coal };
+                    fx.debris(c.x, c.y - 1.0, vx, vy, mat, 40);
+                }
+                for k in 0..4 {
+                    let (gx, gy) = (c.x as i32 + k - 2, c.y as i32 - 2);
+                    if world.mat(gx, gy) == M::Empty {
+                        let sm = Cell::gas(M::Smoke, &mut world.rng, 60, 120);
+                        world.set(gx, gy, sm);
+                    }
+                }
+                fx.burst(c.x, c.y, 16, 50.0, [255, 160, 60]);
+                self.sounds.push(Sfx::Hit);
+            }
+            _ => {
+                self.splatter(c.kind, c.x, c.y, &[], fx);
+                self.sounds.push(Sfx::Pop);
+            }
+        }
     }
 
     /// Burst a body into its gib material and sparks.
@@ -1126,7 +1311,19 @@ impl Mobs {
                     let line = s.sprite[sy as usize].as_bytes();
                     let col = if c.facing >= 0.0 { sx as usize } else { line.len() - 1 - sx as usize };
                     if let Some(&(_, rgb)) = s.pal.iter().find(|p| p.0 == line[col]) {
-                        cv.put(c.x as i32 + dx, c.y as i32 + dy, [(rgb[0] as f32 * 0.8) as u8, (rgb[1] as f32 * 0.8) as u8, (rgb[2] as f32 * 0.8) as u8]);
+                        let out = match c.style {
+                            Dmg::Fire => {
+                                let ember = ((c.t * 20.0 + (dx * 3 + dy) as f32).sin() > 0.7) as u8;
+                                if ember == 1 { [255, 120, 30] } else { [34, 26, 24] }
+                            }
+                            Dmg::Lightning if ((c.t * 24.0) as i32) % 2 == 0 && c.t < 0.6 => {
+                                // X-ray flash: the skeleton shows through.
+                                if (dx + dy) % 2 == 0 { [240, 250, 255] } else { [40, 60, 120] }
+                            }
+                            Dmg::Lightning => [50, 44, 48],
+                            _ => [(rgb[0] as f32 * 0.8) as u8, (rgb[1] as f32 * 0.8) as u8, (rgb[2] as f32 * 0.8) as u8],
+                        };
+                        cv.put(c.x as i32 + dx, c.y as i32 + dy, out);
                     }
                 }
             }

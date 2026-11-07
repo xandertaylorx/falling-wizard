@@ -371,7 +371,7 @@ impl Spells {
                 self.beam = Some((x, y, bx, by));
                 if hit {
                     self.sounds.push(Sfx::Dig);
-                    mobs.damage_area(bx, by, 3.0, 40.0 * (1.0 / 60.0) * 3.0, fx);
+                    mobs.damage_area(bx, by, 3.0, 40.0 * (1.0 / 60.0) * 3.0, crate::mobs::Dmg::Physical, fx);
                     return fx.dissolve(world, bx, by, 2 + m.heavy as i32, 0.45);
                 }
                 return 0;
@@ -392,11 +392,42 @@ impl Spells {
                 }
                 pts.push((bx, by));
                 mobs.damage_line(x, y, bx, by, 3.0, 26.0 * (1.0 + 0.6 * m.heavy as f32), fx);
+                // Forks branching off the main bolt.
+                for _ in 0..4 {
+                    let k = fx.rng.range(1, pts.len().max(2) as i32) as usize;
+                    let (mut fxp, mut fyp) = pts[k.min(pts.len() - 1)];
+                    let mut fork = vec![(fxp, fyp)];
+                    let a = ang + fx.rng.rangef(-1.1, 1.1);
+                    for _ in 0..fx.rng.range(3, 7) {
+                        fxp += a.cos() * 5.0 + fx.rng.rangef(-2.5, 2.5);
+                        fyp += a.sin() * 5.0 + fx.rng.rangef(-2.5, 2.5);
+                        fork.push((fxp, fyp));
+                    }
+                    self.bolts.push((fork, 0.28));
+                }
+                // Chain to nearby creatures.
+                for (i, mx, my) in mobs.near_list(bx, by, 50.0, 3) {
+                    let mut arc = vec![(bx, by)];
+                    for s in 1..6 {
+                        let t = s as f32 / 6.0;
+                        arc.push((bx + (mx - bx) * t + fx.rng.rangef(-3.0, 3.0), by + (my - by) * t + fx.rng.rangef(-3.0, 3.0)));
+                    }
+                    arc.push((mx, my));
+                    self.bolts.push((arc, 0.3));
+                    mobs.hurt_by(i, 18.0, (0.0, -60.0), crate::mobs::Dmg::Lightning, fx);
+                    fx.burst(mx, my, 14, 80.0, [200, 230, 255]);
+                }
                 fx.explode(world, bx, by, 3 + m.heavy as i32 * 2, 0.6);
-                fx.burst(bx, by, 25, 120.0, [255, 250, 200]);
-                fx.flash = fx.flash.max(0.25);
-                self.bolts.push((pts, 0.18));
+                world.scorch(bx as i32, by as i32, 6, 0.8);
+                fx.burst(bx, by, 50, 160.0, [210, 235, 255]);
+                fx.burst(bx, by, 20, 90.0, [255, 250, 200]);
+                fx.flash = fx.flash.max(0.6);
+                fx.shake = (fx.shake + 8.0).min(14.0);
+                fx.hitstop = fx.hitstop.max(0.07);
+                fx.kick += 3.0;
+                self.bolts.push((pts, 0.35));
                 self.sounds.push(Sfx::Zap);
+                self.sounds.push(Sfx::Thunder);
                 if let Some(p) = &shot.payload {
                     let p = (**p).clone();
                     self.fire(&p, (bx - ux * 2.0, by - uy * 2.0), ang + std::f32::consts::PI, world, fx, mobs);
@@ -462,7 +493,15 @@ impl Spells {
                 let m = world.mat(cx, cy);
                 let mob_hit = mobs.hit_test(nx, ny, 0.5);
                 if let Some(i) = mob_hit {
-                    mobs.hurt(i, p.damage(), (p.vx * 0.3, p.vy * 0.3 - 30.0), fx);
+                    use crate::mobs::Dmg;
+                    let kind = match p.card {
+                        Card::Fireball => Dmg::Fire,
+                        Card::Frost => Dmg::Frost,
+                        Card::AcidBall => Dmg::Acid,
+                        Card::Bomb => Dmg::Blast,
+                        _ => Dmg::Physical,
+                    };
+                    mobs.hurt_by(i, p.damage(), (p.vx * 0.3, p.vy * 0.3 - 30.0), kind, fx);
                     if p.card == Card::Frost {
                         mobs.freeze(i, 3.0);
                     }
@@ -744,7 +783,7 @@ impl Spells {
                     let s = fx.rng.rangef(30.0, 90.0);
                     fx.debris(p.x - p.vx.signum(), p.y - 1.0, a.cos() * s, a.sin() * s - 40.0, M::Acid, 128);
                 }
-                fx.explosions.push((p.x, p.y, 2));
+                fx.explosions.push((p.x, p.y, 2, crate::mobs::Dmg::Acid));
                 self.sounds.push(Sfx::Splash);
             }
             _ => {}
@@ -811,7 +850,10 @@ impl Spells {
                 }
             }
         }
-        for (pts, _) in &self.bolts {
+        for (pts, life) in &self.bolts {
+            if *life < 0.25 && ((life * 40.0) as i32) % 2 == 1 {
+                continue; // afterglow strobe
+            }
             for w in pts.windows(2) {
                 let (a, b) = (w[0], w[1]);
                 let n = ((b.0 - a.0).abs().max((b.1 - a.1).abs()) as i32).max(1);

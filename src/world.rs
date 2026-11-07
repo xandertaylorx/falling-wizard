@@ -315,6 +315,36 @@ impl World {
         self.set(gx, gy, c);
     }
 
+    /// Blacken solid ground around a blast or strike; fuse sand to glass if `glass` > 0.
+    pub fn scorch(&mut self, gx: i32, gy: i32, r: i32, glass: f32) {
+        for dy in -r..=r {
+            for dx in -r..=r {
+                let d2 = dx * dx + dy * dy;
+                if d2 > r * r {
+                    continue;
+                }
+                let (x, y) = (gx + dx - self.ox, gy + dy - self.oy);
+                if !Self::inb(x, y) {
+                    continue;
+                }
+                let i = Self::li(x, y);
+                let c = self.cells[i];
+                if c.mat == M::Sand && d2 * 4 <= r * r && self.rng.chance(glass) {
+                    let mut g = Cell::new(M::Glass, &mut self.rng);
+                    g.shade = 90;
+                    self.lset(x, y, g);
+                } else if c.mat.solid() && self.rng.chance(0.7) {
+                    self.cells[i].shade = c.shade / 3;
+                    if c.mat == M::Grass {
+                        let mut d = Cell::new(M::Dirt, &mut self.rng);
+                        d.shade = 20;
+                        self.lset(x, y, d);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn back(&self, gx: i32, gy: i32) -> M {
         let (x, y) = (gx - self.ox, gy - self.oy);
         if Self::inb(x, y) {

@@ -274,7 +274,7 @@ async fn run(args: Vec<String>) {
                 (13.6, "sky_isles"),
                 (15.6, "space"),
                 (17.6, "night_storm"),
-                (19.6, "far_biome"),
+                (19.6, "ocean"),
                 (secs - 0.4, "settings"),
             ];
             if shot_k < shots.len() && now >= shots[shot_k].0 {
@@ -379,14 +379,12 @@ fn script_controls(app: &mut App, t: f64, secs: f64) -> Controls {
     if at(16.0, 16.02) {
         warp(0.0, -20.0, true, g);
         g.weather.time = 0.02;
-        g.weather.rain = 1.0;
-        g.weather.storm = true;
+        g.weather.set(weather::Sky::Storm);
     }
     if at(18.0, 18.02) {
-        warp(2600.0, -20.0, true, g);
+        g.command("/tp ocean");
         g.weather.time = 0.45;
-        g.weather.rain = 0.0;
-        g.weather.storm = false;
+        g.weather.set(weather::Sky::Clear);
     }
     if t > 12.0 && t < 16.0 {
         // Hover so the sky shots aren't of a falling wizard.

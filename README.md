@@ -10,10 +10,11 @@ cargo run --release
 ## The world
 
 - **Infinite** in every direction, generated chunk by chunk as you explore.
-- **Surface biomes:** forest (grass, oaks, flowers), desert (dunes, cacti, quicksand) and tundra (snow, pines, ice, mountains).
+- **Surface biomes:** oceans (sea level, sandy floors, kelp, fish and sharks) with beaches, plains, forests, jungles (huge trees with vines), deserts (dunes, cacti, quicksand) and tundra (snow, pines, ice, mountains). Low valleys fill into lakes.
 - **Going down:** caves that widen with depth, gravel that caves in, pockets of flammable gas, ruins holding chests and wand altars, and finally basalt caverns with lava lakes.
 - **Going up:** cloud platforms and grassy sky isles. Higher still, the sky fades into starry space with a ringed planet, and floating astral islands of moon rock, glowing crystals and glowshrooms.
-- **Weather:** a day/night cycle, rain that puts out fires and fills pools, and lightning storms that set trees alight.
+- **Day and weather:** a clock and day counter, sunrise and sunset, and weather that drifts between clear, cloudy, rain, thunderstorms, fog and wind. Rain puts out fires and makes puddles, snow falls and settles in the tundra, windy weather becomes a sandstorm in the desert, and storms throw lightning that seeks out trees and can hit you.
+- **Leaving the atmosphere:** a glowing band (and aurora at night) marks the edge of the sky. Crossing it flashes, shakes and streaks fire behind you, and above it gravity is low.
 
 ## Creatures
 
@@ -30,7 +31,8 @@ Spark Bolt, Fireball, Bomb, Lightning, Frost, Acid Ball, Torrent, Seeds of Life,
 - **Trees and plants** live on a background layer: you, water and sand pass straight through them, but they still catch fire and burn away.
 - **Oil:** a thin film just burns, but a big concentrated pool explodes when lit, and the bigger the pool, the bigger the blasts.
 - **Atmosphere:** wind gusts push smoke and rain, leaves fall from trees, dust drifts in the light, snow falls in the tundra, sand blows across deserts, fireflies come out at night and water drips in caves.
-- **Ragdolls:** creatures you kill go flying and splatter where they land.
+- **Reactive deaths:** creatures die according to what killed them. Fire turns them to ash, lightning fries them with a skeleton flash, frost shatters them into ice, acid melts them into goo, explosions and wind send them flying, and black holes spaghettify them.
+- **Lightning:** forks, chains to nearby creatures, flashes the screen, freezes the frame for a moment, scorches the ground and fuses sand into glass.
 - **Volcanoes and geysers:** volcanoes erupt lava every so often, and geysers blast water into the air.
 - **Chests and altars:** chests in ruins and on sky islands hold gold. Altars restore you and set your respawn point.
 

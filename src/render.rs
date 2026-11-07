@@ -272,7 +272,8 @@ impl Renderer {
 
         let world = &game.world;
         let frame = world.frame;
-        let day = game.weather.daylight();
+        let clouds = game.weather.clouds;
+        let day = game.weather.daylight() * (1.0 - clouds * 0.35);
         let tod = game.weather.time;
         let rain = game.weather.rain;
 
@@ -284,7 +285,7 @@ impl Renderer {
         }
         let wind = game.weather.wind_now();
         let sway_amp = 0.55 + (wind.abs() / 45.0).min(1.2);
-        let sky_ctx = SkyCtx { view: *view, day, tod, rain, time, far: &self.far, near: &self.near };
+        let sky_ctx = SkyCtx { view: *view, day, tod, rain, clouds, time, far: &self.far, near: &self.near };
         let sky_light = [0.92 * day + 0.04, 0.95 * day + 0.05, 1.0 * day + 0.09];
 
         let (mut fire, mut lava) = (0, 0);
@@ -428,7 +429,7 @@ impl Renderer {
                 }
                 // Ambient sky light: full outdoors, fading with depth below the surface.
                 let depth = (gy - world.surf[wx as usize]) as f32;
-                let open = if gy < -260 { 0.9 } else { day * 0.85 + 0.15 } * (1.0 - rain * 0.25);
+                let open = if gy < -260 { 0.9 } else { day * 0.85 + 0.15 };
                 let amb = if depth <= 3.0 { 1.0 } else { (1.0 - (depth - 3.0) / 70.0).max(0.0) } * open;
                 alb[o] = rgb[0];
                 alb[o + 1] = rgb[1];
@@ -519,6 +520,20 @@ impl Renderer {
         self.comp.set_uniform("u_flip", self.flip);
         draw_texture_ex(&self.alb_tex, ox, oy, WHITE, DrawTextureParams { dest_size: Some(vec2(wf * s, hf * s)), ..Default::default() });
         gl_use_default_material();
+        // Fog and sandstorm haze near the surface.
+        let (_, ppy) = game.player.center();
+        let near_surface = 1.0 - ((ppy - game.world.surface_at(ppx as i32) as f32) / 60.0).clamp(0.0, 1.0);
+        let fog = game.weather.fog * near_surface;
+        if fog > 0.02 {
+            let (sw, sh) = (screen_width(), screen_height());
+            for k in 0..8 {
+                let a = fog * 0.32 * (0.55 + k as f32 * 0.06);
+                draw_rectangle(0.0, sh * k as f32 / 8.0, sw, sh / 8.0 + 1.0, Color::new(0.78, 0.8, 0.84, a));
+            }
+        }
+        if game.weather.sand > 0.02 {
+            draw_rectangle(0.0, 0.0, screen_width(), screen_height(), Color::new(0.86, 0.7, 0.45, game.weather.sand * 0.28));
+        }
         game.spells.end_frame();
     }
 }
@@ -577,6 +592,7 @@ struct SkyCtx<'a> {
     day: f32,
     tod: f32,
     rain: f32,
+    clouds: f32,
     time: f32,
     far: &'a [f32],
     near: &'a [f32],
@@ -593,9 +609,23 @@ fn sky(c: &SkyCtx, vx: usize, vy: usize, gy: i32) -> [u8; 3] {
     let mut col = lerp3(night, day, c.day);
     let dusk = (1.0 - (c.day - 0.35).abs() * 4.0).clamp(0.0, 1.0);
     col = lerp3(col, [236, 140, 96], dusk * t * 0.55);
-    col = lerp3(col, [120, 126, 138], c.rain * 0.6);
+    col = lerp3(col, lerp3([60, 64, 76], [150, 156, 166], c.day), c.clouds * 0.45 + c.rain * 0.3);
     let space = ((-(gy as f32) - 260.0) / 340.0).clamp(0.0, 1.0);
     col = lerp3(col, [3, 3, 10], space);
+    // The edge of the atmosphere: a thin glowing band, with aurora curtains at night.
+    let band = (gy as f32 + 480.0).abs();
+    if band < 14.0 {
+        let wave = (v.left * 0.6 + sx) * 0.045 + c.time * 0.7;
+        let k = (1.0 - band / 14.0).powi(2) * (0.45 + 0.25 * wave.sin());
+        col = lerp3(col, lerp3([90, 220, 200], [140, 120, 255], (wave * 0.5).sin() * 0.5 + 0.5), k);
+    }
+    if c.day < 0.3 && (-(gy as f32)) > 380.0 && (-(gy as f32)) < 520.0 {
+        let curtain = ((v.left * 0.3 + sx) * 0.09 + c.time * 0.4).sin() * ((v.left * 0.3 + sx) * 0.023).sin();
+        if curtain > 0.35 {
+            let k = (curtain - 0.35) * 0.9 * (1.0 - c.day / 0.3);
+            col = lerp3(col, [80, 255, 170], k * 0.5);
+        }
+    }
 
     // Stars and a ringed planet.
     let stars = (1.0 - c.day * 1.4).max(space).max(0.0) * (1.0 - c.rain);
@@ -647,9 +677,9 @@ fn sky(c: &SkyCtx, vx: usize, vy: usize, gy: i32) -> [u8; 3] {
         }
     }
     let n = value_noise((v.left * 0.25 + sx + c.time * 1.5) * 0.03, (v.top * 0.25 + sy) * 0.1, 55);
-    let cloudy = 0.6 - c.rain * 0.2;
+    let cloudy = 0.66 - c.clouds * 0.3;
     if n > cloudy && space < 0.8 {
-        let cc = lerp3([60, 64, 84], [244, 246, 250], c.day.max(0.15));
+        let cc = lerp3(lerp3([60, 64, 84], [244, 246, 250], c.day.max(0.15)), [92, 96, 108], c.rain * 0.7);
         col = lerp3(col, cc, ((n - cloudy) * 3.0).min(0.85) * (1.0 - space));
     }
     col

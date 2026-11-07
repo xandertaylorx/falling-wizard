@@ -30,7 +30,10 @@ pub struct Fx {
     /// Full-screen flash (lightning), decays quickly.
     pub flash: f32,
     /// Explosions this step as (x, y, radius), consumed by the game for sound/damage.
-    pub explosions: Vec<(f32, f32, i32)>,
+    pub explosions: Vec<(f32, f32, i32, crate::mobs::Dmg)>,
+    /// Requested freeze-frame and zoom punch, consumed by the game.
+    pub hitstop: f32,
+    pub kick: f32,
     /// Black holes pulling particles in.
     pub attractors: Vec<(f32, f32)>,
     /// Tornadoes: (x, ground y, height).
@@ -45,10 +48,11 @@ pub const SPARK: [u8; 3] = [255, 200, 90];
 pub const FROST: [u8; 3] = [170, 230, 255];
 pub const MAGIC: [u8; 3] = [200, 140, 255];
 pub const RAIN: [u8; 3] = [150, 180, 230];
+pub const SNOWF: [u8; 3] = [244, 248, 255];
 
 impl Fx {
     pub fn new(seed: u64) -> Self {
-        Self { particles: Vec::with_capacity(MAX_PARTICLES), shake: 0.0, flash: 0.0, explosions: Vec::new(), attractors: Vec::new(), tornadoes: Vec::new(), wind: 0.0, time: 0.0, rng: Rng::new(seed ^ 0xF00D) }
+        Self { particles: Vec::with_capacity(MAX_PARTICLES), shake: 0.0, flash: 0.0, explosions: Vec::new(), hitstop: 0.0, kick: 0.0, attractors: Vec::new(), tornadoes: Vec::new(), wind: 0.0, time: 0.0, rng: Rng::new(seed ^ 0xF00D) }
     }
 
     pub fn spark(&mut self, x: f32, y: f32, vx: f32, vy: f32, life: f32, col: [u8; 3]) {
@@ -161,6 +165,22 @@ impl Fx {
                     return false;
                 }
                 let m = world.mat(cx, cy);
+                if p.col == SNOWF && p.mat == M::Empty {
+                    if m == M::Fire && self.rng.chance(0.3) {
+                        world.set(cx, cy, Cell::EMPTY);
+                        return false;
+                    }
+                    if !m.passable() {
+                        // Snow settles and builds up.
+                        if m.kind() != Kind::Liquid && self.rng.chance(0.05) && world.mat(cx, cy - 1) == M::Empty {
+                            world.place(cx, cy - 1, M::Snow);
+                        }
+                        return false;
+                    }
+                    p.x = nx;
+                    p.y = ny;
+                    continue;
+                }
                 if p.col == RAIN && p.mat == M::Empty {
                     if m == M::Fire {
                         world.set(cx, cy, Cell::EMPTY);
@@ -210,6 +230,12 @@ impl Fx {
         self.flash = (self.flash - dt * 3.0).max(0.0);
     }
 
+    pub fn snow_flake(&mut self, x: f32, y: f32, wind: f32) {
+        if self.particles.len() < MAX_PARTICLES - 800 {
+            self.particles.push(Particle { x, y, vx: wind * 0.5, vy: 28.0, mat: M::Empty, shade: 0, life: 9.0, col: SNOWF, glow: 0.0, gravity: 0.0, flutter: 35.0 });
+        }
+    }
+
     pub fn rain_drop(&mut self, x: f32, y: f32, wind: f32) {
         if self.particles.len() < MAX_PARTICLES {
             self.particles.push(Particle { x, y, vx: wind, vy: 260.0, mat: M::Empty, shade: 0, life: 2.0, col: RAIN, glow: 0.0, gravity: 0.0, flutter: 0.0 });
@@ -219,7 +245,10 @@ impl Fx {
     /// Blast a circle out of the world, flinging debris and lighting fires.
     /// `fire` scales how much flame is left behind (0..1).
     pub fn explode(&mut self, world: &mut World, x: f32, y: f32, r: i32, fire: f32) {
-        self.explosions.push((x, y, r));
+        self.explosions.push((x, y, r, if fire >= 0.9 { crate::mobs::Dmg::Fire } else { crate::mobs::Dmg::Blast }));
+        if r >= 6 {
+            world.scorch(x as i32, y as i32, r + 2, 0.55);
+        }
         self.shake = (self.shake + 1.5 + r as f32 * 0.6).min(14.0);
         let (cx, cy) = (x.floor() as i32, y.floor() as i32);
         let rf = r as f32;
@@ -382,6 +411,9 @@ impl Fx {
                 shade(p.mat.base_color(), p.shade, p.mat.variation())
             };
             cv.put(p.x as i32, p.y as i32, rgb);
+            if p.col == RAIN {
+                cv.put((p.x - p.vx * 0.006) as i32, p.y as i32 - 1, rgb);
+            }
         }
     }
 

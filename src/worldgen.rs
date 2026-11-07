@@ -19,6 +19,9 @@ pub enum Biome {
     Forest,
     Desert,
     Snow,
+    Ocean,
+    Plains,
+    Jungle,
 }
 
 impl Biome {
@@ -27,9 +30,20 @@ impl Biome {
             Biome::Forest => "Forest",
             Biome::Desert => "Desert",
             Biome::Snow => "Tundra",
+            Biome::Ocean => "Ocean",
+            Biome::Plains => "Plains",
+            Biome::Jungle => "Jungle",
         }
     }
+
+    /// Grassy biomes share topsoil, tufts and night creatures.
+    pub fn green(self) -> bool {
+        matches!(self, Biome::Forest | Biome::Plains | Biome::Jungle)
+    }
 }
+
+/// Sea level: columns whose ground lies below it are flooded.
+pub const SEA: i32 = 14;
 
 const VG: i32 = 700;
 const GG: i32 = 260;
@@ -49,14 +63,31 @@ impl Generator {
         fbm(x as f32 * 0.0021, 7.3, 2, self.s.wrapping_add(11))
     }
 
+    /// 1 in the open ocean, 0 inland.
+    pub fn ocean(&self, x: i32) -> f32 {
+        let c = fbm(x as f32 * 0.0011, 11.0, 3, self.s.wrapping_add(40));
+        let c = if x.abs() < 300 { c.max(0.45) } else { c }; // spawn on land
+        smooth(0.40, 0.31, c)
+    }
+
     pub fn biome(&self, x: i32) -> Biome {
+        if self.ocean(x) > 0.5 {
+            return Biome::Ocean;
+        }
         let b = self.biome_value(x);
         if b < 0.38 {
             Biome::Desert
         } else if b > 0.62 {
             Biome::Snow
         } else {
-            Biome::Forest
+            let h = fbm(x as f32 * 0.0017, 3.3, 2, self.s.wrapping_add(41));
+            if h > 0.6 {
+                Biome::Jungle
+            } else if h < 0.4 {
+                Biome::Plains
+            } else {
+                Biome::Forest
+            }
         }
     }
 
@@ -69,7 +100,11 @@ impl Generator {
         let mount = smooth(0.52, 0.72, b);
         let hills = (fbm(fx * 0.011, 0.5, 4, self.s) - 0.5) * 70.0 * rough;
         let peaks = (fbm(fx * 0.006, 3.1, 3, self.s.wrapping_add(5)) - 0.42).max(0.0) * 320.0 * mount;
-        (hills - peaks) as i32
+        let land = hills - peaks;
+        // Ocean basins: blend down to a sandy sea floor.
+        let o = self.ocean(x);
+        let floor = SEA as f32 + 24.0 + fbm(fx * 0.02, 5.0, 2, self.s.wrapping_add(42)) * 22.0;
+        (land + (floor - land) * o) as i32
     }
 
     /// Ruin in grid cell (gx, gy): (centre x, floor y, half-width, has altar).
@@ -151,7 +186,7 @@ impl Generator {
         for lx in 0..CHUNK {
             let x = x0 + lx;
             let surf = self.surface(x);
-            if y0 + CHUNK < surf - 2 {
+            if y0 + CHUNK < surf.min(SEA) - 30 {
                 continue; // all sky
             }
             let biome = self.biome(x);
@@ -162,6 +197,9 @@ impl Generator {
                 let (m, w, shade) = self.base(x, y, surf, biome, topsoil, &mut rng);
                 if m == M::Plant {
                     cells[i].back = M::Plant;
+                    if y >= SEA && y < surf {
+                        cells[i].mat = M::Water;
+                    }
                 } else if m != M::Empty {
                     let mut c = Cell::new(m, &mut rng);
                     if let Some(s) = shade {
@@ -186,11 +224,20 @@ impl Generator {
     fn base(&self, x: i32, y: i32, surf: i32, biome: Biome, topsoil: i32, rng: &mut Rng) -> (M, u8, Option<u8>) {
         let d = y - surf;
         if d < 0 {
-            // Grass tufts and flowers just above the forest floor.
-            if biome == Biome::Forest && d >= -2 {
-                let h = hash3(x, 5, self.s);
+            let underwater = y >= SEA;
+            let h = hash3(x, 5, self.s);
+            if underwater {
+                // Kelp sways on the sea floor.
+                if biome == Biome::Ocean && h % 4 == 0 && -d <= 2 + (h >> 8) as i32 % 9 && y > SEA + 2 {
+                    return (M::Plant, 0, None);
+                }
+                return (M::Water, 0, None);
+            }
+            // Grass tufts and flowers just above grassy ground.
+            if biome.green() && d >= -2 {
                 let tall = h % 9 == 0;
-                if (d == -1 && h % 3 == 0) || (d == -2 && tall) {
+                let dense = if biome == Biome::Plains { h % 2 == 0 } else { h % 3 == 0 };
+                if (d == -1 && dense) || (d == -2 && tall) {
                     return (M::Plant, 0, None);
                 }
             }
@@ -220,14 +267,18 @@ impl Generator {
 
         // Surface layers by biome.
         match biome {
-            Biome::Forest => {
+            _ if surf >= SEA - 2 && d < 5 && self.ocean(x) > 0.02 || biome == Biome::Ocean && d < 7 => {
+                return (M::Sand, wall, None); // beaches, lake beds and the sea floor
+            }
+            Biome::Forest | Biome::Plains | Biome::Jungle => {
                 if d == 0 {
                     return (M::Grass, wall, None);
                 }
-                if d < topsoil {
+                if d < topsoil + if biome == Biome::Jungle { 4 } else { 0 } {
                     return (M::Dirt, wall, None);
                 }
             }
+            Biome::Ocean => {}
             Biome::Desert => {
                 if d > 1 && d < 14 && fbm(fx * 0.04, fy * 0.08, 2, s.wrapping_add(21)) > 0.64 {
                     return (M::Quicksand, wall, None);
@@ -556,10 +607,17 @@ impl Generator {
         };
         for slot in (x0 - 12).div_euclid(SLOT)..=(x0 + CHUNK + 12).div_euclid(SLOT) {
             let h = hash3(slot, 77, self.s);
-            if h % 100 >= 55 {
+            let tx = slot * SLOT + ((h >> 8) % (SLOT as u32 - 3)) as i32;
+            let biome = self.biome(tx);
+            let chance = match biome {
+                Biome::Jungle => 92,
+                Biome::Plains => 12,
+                Biome::Ocean => 0,
+                _ => 55,
+            };
+            if h % 100 >= chance || self.surface(tx) >= SEA {
                 continue;
             }
-            let tx = slot * SLOT + ((h >> 8) % (SLOT as u32 - 3)) as i32;
             if tx.abs() < 8 || self.volcano_near(tx).is_some() {
                 continue; // keep spawn clear
             }
@@ -568,19 +626,30 @@ impl Generator {
                 continue;
             }
             let base = s0.max(s1);
-            let height = 9 + ((h >> 16) % 11) as i32;
+            let height = if biome == Biome::Jungle { 16 + ((h >> 16) % 14) as i32 } else { 9 + ((h >> 16) % 11) as i32 };
             let top = base - height;
             if top - 10 > y0 + CHUNK || base < y0 {
                 continue;
             }
             let hv = |a: i32, b: i32| hash3(a, b, h);
-            match self.biome(tx) {
-                Biome::Forest => {
+            match biome {
+                Biome::Forest | Biome::Plains | Biome::Jungle => {
                     for y in top..base {
                         put(tx, y, M::Wood, (hv(tx, y) % 90) as u8 + 60, true, cells);
                         put(tx + 1, y, M::Wood, (hv(tx + 1, y) % 90) as u8 + 20, true, cells);
                     }
-                    let (rx, ry) = (5 + (h >> 20) as i32 % 3, 4 + (h >> 22) as i32 % 2);
+                    let jungle = biome == Biome::Jungle;
+                    let (rx, ry) = if jungle { (8 + (h >> 20) as i32 % 3, 5) } else { (5 + (h >> 20) as i32 % 3, 4 + (h >> 22) as i32 % 2) };
+                    if jungle {
+                        // Hanging vines.
+                        for k in 0..6 {
+                            let vx = tx - rx + 1 + (hv(k, 9) % (2 * rx as u32)) as i32;
+                            let len = 4 + (hv(k, 10) % 9) as i32;
+                            for vy in 0..len {
+                                put(vx, top + ry - 1 + vy, M::Plant, 0, false, cells);
+                            }
+                        }
+                    }
                     for dy in -ry - 1..=ry {
                         for dx in -rx - 1..=rx + 1 {
                             let e = (dx as f32 / rx as f32).powi(2) + (dy as f32 / ry as f32).powi(2);
@@ -602,6 +671,7 @@ impl Generator {
                         }
                     }
                 }
+                Biome::Ocean => {}
                 Biome::Desert => {
                     if h % 3 != 0 {
                         continue;
