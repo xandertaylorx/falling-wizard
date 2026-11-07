@@ -45,6 +45,12 @@ pub struct Controls {
     pub interact: bool,
 }
 
+pub struct ChatLine {
+    pub text: String,
+    pub age: f32,
+    pub color: [u8; 3],
+}
+
 pub struct Toast {
     pub text: String,
     pub t: f32,
@@ -70,6 +76,7 @@ pub struct Game {
     pub sounds: Vec<Sfx>,
     pub sim_ms: f32,
     pub toasts: Vec<Toast>,
+    pub chat: Vec<ChatLine>,
     pub prompt: Option<String>,
     pub fizzle: f32,
     spawn: (f32, f32),
@@ -87,7 +94,7 @@ impl Game {
         let world = World::new(seed, spawn.0, spawn.1);
         let player = Player::new(spawn.0, spawn.1);
         let cam = player.center();
-        Self {
+        let mut game = Self {
             world,
             player,
             fx: Fx::new(seed),
@@ -105,6 +112,7 @@ impl Game {
             sounds: Vec::new(),
             sim_ms: 0.0,
             toasts: Vec::new(),
+            chat: Vec::new(),
             prompt: None,
             fizzle: 0.0,
             spawn,
@@ -113,7 +121,9 @@ impl Game {
             hitstop: 0.0,
             booms: 0.0,
             time: 0.0,
-        }
+        };
+        game.say("Press T to chat or / for commands. Try /help", [200, 200, 220]);
+        game
     }
 
     pub fn current_spell(&self) -> Card {
@@ -323,8 +333,12 @@ impl Game {
         let target = if self.booms > 4.0 { 0.75 } else { 1.0 };
         self.zoom += (target - self.zoom) * (dt * 2.0).min(1.0);
 
+        self.vents(dt);
         for t in self.toasts.iter_mut() {
             t.t += dt;
+        }
+        for c in self.chat.iter_mut() {
+            c.age += dt;
         }
         self.toasts.retain(|t| t.t < 3.0);
 
@@ -337,6 +351,298 @@ impl Game {
         }
         self.world.recenter(self.cam.0, self.cam.1);
         self.world.prefetch(1);
+    }
+}
+
+impl Game {
+    /// Volcanoes and geysers near the wizard erupt on their own schedules.
+    fn vents(&mut self, dt: f32) {
+        let (px, py) = self.player.center();
+        for (volcano, x, top) in self.world.gen.features_near(px as i32 - 260, px as i32 + 260) {
+            if (top as f32 - py).abs() > 220.0 {
+                continue;
+            }
+            let phase = crate::noise::hash3(x, 3, 1) % 1000;
+            let (period, dur) = if volcano { (45.0, 7.0) } else { (15.0, 3.0) };
+            let t = (self.time + phase as f32 * 0.1) % period;
+            if t >= dur {
+                continue;
+            }
+            let (fx, fy) = (x as f32 + 0.5, top as f32 - 1.0);
+            if !self.world.in_window(x, top) {
+                continue;
+            }
+            if volcano {
+                if t < dt {
+                    self.sounds.push(Sfx::Thunder);
+                    self.fx.shake = (self.fx.shake + 5.0).min(14.0);
+                }
+                for _ in 0..5 {
+                    let (vx, vy) = (self.fx.rng.rangef(-70.0, 70.0), -self.fx.rng.rangef(160.0, 290.0));
+                    let sh = self.fx.rng.next_u32() as u8;
+                    self.fx.debris(fx, fy, vx, vy, M::Lava, sh);
+                }
+                let (vx, vy) = (self.fx.rng.rangef(-40.0, 40.0), -self.fx.rng.rangef(100.0, 220.0));
+                let life = self.fx.rng.rangef(0.4, 1.0);
+                self.fx.spark(fx, fy, vx, vy, life, [255, 160, 50]);
+                if self.fx.rng.chance(0.6) {
+                    let sm = Cell::gas(M::Smoke, &mut self.world.rng, 120, 220);
+                    let sx = x + self.fx.rng.range(-2, 3);
+                    if self.world.mat(sx, top - 3) == M::Empty {
+                        self.world.set(sx, top - 3, sm);
+                    }
+                }
+            } else {
+                for _ in 0..6 {
+                    let (vx, vy) = (self.fx.rng.rangef(-18.0, 18.0), -self.fx.rng.rangef(190.0, 300.0));
+                    let sh = self.fx.rng.next_u32() as u8;
+                    self.fx.debris(fx, fy, vx, vy, M::Water, sh);
+                }
+                if self.fx.rng.chance(0.5) && self.world.mat(x, top - 3) == M::Empty {
+                    let st = Cell::gas(M::Steam, &mut self.world.rng, 40, 90);
+                    self.world.set(x, top - 3, st);
+                }
+            }
+        }
+    }
+
+    pub fn say(&mut self, text: impl Into<String>, color: [u8; 3]) {
+        self.chat.push(ChatLine { text: text.into(), age: 0.0, color });
+        if self.chat.len() > 50 {
+            self.chat.remove(0);
+        }
+    }
+
+    pub fn teleport_to(&mut self, x: f32, y: f32) {
+        self.world.recenter(x, y);
+        self.fx.dissolve(&mut self.world, x + 1.5, y + 4.0, 6, 1.0);
+        self.player.teleport(x, y + 4.0, &self.world);
+        self.player.vy = 0.0;
+        self.cam = self.player.center();
+        self.mobs.clear();
+    }
+
+    /// Chat line from the T / slash prompt.
+    pub fn command(&mut self, line: &str) {
+        const INFO: [u8; 3] = [200, 200, 220];
+        const OK: [u8; 3] = [140, 230, 150];
+        const ERR: [u8; 3] = [255, 120, 110];
+        let line = line.trim();
+        if line.is_empty() {
+            return;
+        }
+        let Some(cmd) = line.strip_prefix('/') else {
+            self.say(format!("<Wizard> {}", line), [235, 230, 220]);
+            return;
+        };
+        self.say(format!("/{}", cmd), [150, 145, 160]);
+        let args: Vec<String> = cmd.split_whitespace().map(|a| a.to_lowercase()).collect();
+        let a = |i: usize| args.get(i).map(|s| s.as_str()).unwrap_or("");
+        let (px, py) = self.player.center();
+        match a(0) {
+            "help" => {
+                for l in [
+                    "/tp <x> <y>  or  /tp spawn|volcano|geyser|ruin|island|space|caves|lava|forest|desert|tundra",
+                    "/time set day|noon|night|midnight|<0-1>     /weather clear|rain|storm",
+                    "/summon <creature> [count]     /kill [pets]     /heal     /pos     /seed",
+                    "/fly  (infinite flight)     /god  (can't be hurt)     /gold <n>     /clear",
+                ] {
+                    self.say(l, INFO);
+                }
+            }
+            "tp" => {
+                let target: Option<(f32, f32, String)> = match (a(1).parse::<f32>(), a(2).parse::<f32>()) {
+                    (Ok(x), Ok(y)) => Some((x, y, format!("{} {}", x, y))),
+                    _ => self.find_place(a(1), px, py),
+                };
+                match target {
+                    Some((x, y, what)) => {
+                        self.teleport_to(x, y);
+                        self.say(format!("Teleported to {}", what), OK);
+                    }
+                    None => self.say("Try /tp volcano, /tp ruin, /tp space, /tp 0 -50 ...", ERR),
+                }
+            }
+            "time" => {
+                let t = match a(2) {
+                    "day" | "morning" => Some(0.3),
+                    "noon" => Some(0.5),
+                    "evening" | "dusk" => Some(0.72),
+                    "night" => Some(0.85),
+                    "midnight" => Some(0.0),
+                    v => v.parse::<f32>().ok().map(|v| v.rem_euclid(1.0)),
+                };
+                match (a(1), t) {
+                    ("set", Some(t)) => {
+                        self.weather.time = t;
+                        self.say(format!("Time set to {:.2}", t), OK);
+                    }
+                    _ => {
+                        let t = self.weather.time;
+                        self.say(format!("Time is {:.2} (0 midnight, 0.5 noon). Use /time set night", t), INFO);
+                    }
+                }
+            }
+            "weather" => match a(1) {
+                "clear" | "sun" => {
+                    self.weather.set(0.0, false);
+                    self.say("Weather cleared", OK);
+                }
+                "rain" => {
+                    self.weather.set(0.6, false);
+                    self.say("It's raining", OK);
+                }
+                "storm" | "thunder" => {
+                    self.weather.set(1.0, true);
+                    self.say("A storm rolls in", OK);
+                }
+                _ => self.say("Use /weather clear|rain|storm", ERR),
+            },
+            "summon" | "spawn" => {
+                let name: String = a(1).chars().filter(|c| c.is_alphanumeric()).collect();
+                let found = crate::mobs::ALL_MOBS.iter().find(|k| k.name().to_lowercase().replace(' ', "") == name || format!("{:?}", k).to_lowercase() == name);
+                match found {
+                    Some(k) => {
+                        let n = a(2).parse::<usize>().unwrap_or(1).clamp(1, 20);
+                        for i in 0..n {
+                            self.mobs.spawn(*k, px + 24.0 + i as f32 * 8.0, py - 20.0);
+                        }
+                        self.say(format!("Summoned {} {}", n, k.name()), OK);
+                    }
+                    None => {
+                        let names: Vec<String> = crate::mobs::ALL_MOBS.iter().map(|k| k.name().to_lowercase().replace(' ', "")).collect();
+                        self.say(format!("Creatures: {}", names.join(" ")), ERR);
+                    }
+                }
+            }
+            "kill" => {
+                let pets = a(1) == "pets";
+                let n = self.mobs.kill_all(pets);
+                self.say(format!("Killed {} {}", n, if pets { "pets" } else { "creatures" }), OK);
+            }
+            "heal" => {
+                self.player.hp = crate::player::MAX_HP;
+                self.player.mana = crate::player::MAX_MANA;
+                self.player.burning = 0.0;
+                self.say("Healed", OK);
+            }
+            "fly" => {
+                self.player.infinite_flight = !self.player.infinite_flight;
+                let on = self.player.infinite_flight;
+                self.say(format!("Infinite flight {}", if on { "on" } else { "off" }), OK);
+            }
+            "god" => {
+                self.player.god = !self.player.god;
+                let on = self.player.god;
+                self.say(format!("God mode {}", if on { "on" } else { "off" }), OK);
+            }
+            "gold" | "give" => {
+                let n = args.iter().find_map(|s| s.parse::<u32>().ok()).unwrap_or(100);
+                self.player.gold += n;
+                self.say(format!("+{} gold", n), OK);
+            }
+            "pos" => {
+                let depth = py as i32 - self.world.surface_at(px as i32);
+                self.say(format!("x {}  y {}  ({} below surface)", px as i32, py as i32, depth), INFO);
+            }
+            "seed" => {
+                let s = self.seed;
+                self.say(format!("World seed {}", s), INFO);
+            }
+            "clear" => self.chat.clear(),
+            other => self.say(format!("Unknown command /{}. Type /help", other), ERR),
+        }
+    }
+
+    /// Where `/tp <name>` goes.
+    fn find_place(&self, what: &str, px: f32, py: f32) -> Option<(f32, f32, String)> {
+        let gen = &self.world.gen;
+        let (pxi, pyi) = (px as i32, py as i32);
+        let surf = |x: i32| gen.surface(x) as f32;
+        match what {
+            "spawn" => {
+                let (x, y) = gen.spawn();
+                Some((x, y, "spawn".into()))
+            }
+            "volcano" | "geyser" => {
+                let want = what == "volcano";
+                let best = gen
+                    .features_near(pxi - 20000, pxi + 20000)
+                    .into_iter()
+                    .filter(|f| f.0 == want)
+                    .min_by_key(|f| (f.1 - pxi).abs())?;
+                let x = best.1 as f32 + if want { 70.0 } else { 8.0 };
+                Some((x, surf(x as i32) - 14.0, format!("the nearest {}", what)))
+            }
+            "ruin" | "chest" | "altar" => {
+                let (gx0, gy0) = (pxi.div_euclid(130), pyi.div_euclid(130));
+                let mut best: Option<(i32, i32, i32)> = None;
+                for r in 0..12 {
+                    for gy in gy0 - r..=gy0 + r {
+                        for gx in gx0 - r..=gx0 + r {
+                            if let Some((x, y, _, altar)) = gen.ruin_at(gx, gy) {
+                                if what == "altar" && !altar {
+                                    continue;
+                                }
+                                let d = (x - pxi).abs() + (y - pyi).abs();
+                                if best.map_or(true, |b| d < b.2) {
+                                    best = Some((x, y, d));
+                                }
+                            }
+                        }
+                    }
+                    if best.is_some() {
+                        break;
+                    }
+                }
+                let (x, y, _) = best?;
+                Some(((x - 4) as f32, (y - 7) as f32, format!("the nearest {}", what)))
+            }
+            "island" | "isles" | "sky" => {
+                let gx0 = pxi.div_euclid(150);
+                for r in 0..30 {
+                    for gx in [gx0 - r, gx0 + r] {
+                        for gy in -6..=-2 {
+                            if let Some((x, y, _, _, false, _)) = gen.island_at(gx, gy) {
+                                return Some((x as f32, (y - 12) as f32, "a sky island".into()));
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            "space" | "astral" | "moon" => {
+                let gx0 = pxi.div_euclid(150);
+                for r in 0..30 {
+                    for gx in [gx0 - r, gx0 + r] {
+                        for gy in -12..=-4 {
+                            if let Some((x, y, _, _, true, _)) = gen.island_at(gx, gy) {
+                                return Some((x as f32, (y - 12) as f32, "an astral island".into()));
+                            }
+                        }
+                    }
+                }
+                Some((px, -700.0, "space".into()))
+            }
+            "caves" | "cave" => Some((px, surf(pxi) + 110.0, "the caves".into())),
+            "lava" | "deep" | "underworld" => Some((px, surf(pxi) + 300.0, "the lava caverns".into())),
+            "forest" | "desert" | "tundra" | "snow" => {
+                let want = match what {
+                    "forest" => crate::worldgen::Biome::Forest,
+                    "desert" => crate::worldgen::Biome::Desert,
+                    _ => crate::worldgen::Biome::Snow,
+                };
+                for k in 0..400 {
+                    for x in [pxi + k * 50, pxi - k * 50] {
+                        if gen.biome(x) == want && gen.biome(x + 40) == want {
+                            return Some((x as f32, surf(x) - 14.0, format!("the {}", what)));
+                        }
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
     }
 }
 

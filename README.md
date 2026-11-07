@@ -23,9 +23,28 @@ They burst into blood, goo, bones or rubble, and drop gold.
 
 ## Spells
 
-Every spell has its own numbered hotbar slot (1–9, 0, -) or use the mouse wheel:
-Spark Bolt, Fireball, Bomb, Lightning, Frost, Acid Ball, Torrent, Seeds of Life, Teleport, Digging Beam and Digging Bolt.
-Chests in ruins and on sky islands hold gold. Altars restore you and set your respawn point.
+Every spell has its own numbered hotbar slot (1–9, 0, -, =) or use the mouse wheel:
+Spark Bolt, Fireball, Bomb, Lightning, Frost, Acid Ball, Torrent, Seeds of Life, Teleport, Digging Beam, Oil Spray and **Black Hole** (rips loose terrain and creatures into itself, then collapses in a blast).
+
+- **Pets:** cast Seeds of Life straight at a creature to tame it (up to three). Pets follow you, fight nearby creatures and wear a heart.
+- **Ragdolls:** creatures you kill go flying and splatter where they land.
+- **Volcanoes and geysers:** volcanoes erupt lava every so often, and geysers blast water into the air.
+- **Chests and altars:** chests in ruins and on sky islands hold gold. Altars restore you and set your respawn point.
+
+## Chat and commands
+
+Press **T** to chat or **/** to type a command (Enter sends, Esc cancels, ↑ repeats the last one):
+
+| Command | What it does |
+|---|---|
+| `/tp volcano` `geyser` `ruin` `altar` `island` `space` `caves` `lava` `forest` `desert` `tundra` `spawn` | Teleport to the nearest one |
+| `/tp <x> <y>` | Teleport to coordinates |
+| `/time set day\|noon\|night\|midnight\|<0-1>` | Change the time of day |
+| `/weather clear\|rain\|storm` | Change the weather |
+| `/summon <creature> [count]` | Spawn creatures (e.g. `/summon dragon`) |
+| `/kill`, `/kill pets` | Remove creatures |
+| `/fly`, `/god` | Infinite flight, can't be hurt |
+| `/heal`, `/gold <n>`, `/pos`, `/seed`, `/clear`, `/help` | Utilities |
 
 ## Getting to space
 
@@ -49,7 +68,8 @@ This is a creative game: there's no fall damage and no hunger. You can only be h
 | F | Grappling vine (press again to let go) |
 | Left mouse | Cast the selected spell |
 | Right mouse | Dig |
-| 1–9, 0, - / mouse wheel | Choose a spell |
+| 1–9, 0, -, = / mouse wheel | Choose a spell |
+| T / / | Chat / commands |
 | E | Open chest / use altar |
 | B | Sandbox brush (paint any material; wheel = size, 1–0 / Z X = material) |
 | Esc | Pause, settings, controls |

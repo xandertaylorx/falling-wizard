@@ -72,6 +72,8 @@ const GLYPHS: &[(char, [&str; 7])] = &[
     ('#', [".#.#.", ".#.#.", "#####", ".#.#.", "#####", ".#.#.", ".#.#."]),
     ('*', [".....", "#.#.#", ".###.", "#####", ".###.", "#.#.#", "....."]),
     ('&', [".##..", "#..#.", "#.#..", ".#...", "#.#.#", "#..#.", ".##.#"]),
+    ('|', ["..#..", "..#..", "..#..", "..#..", "..#..", "..#..", "..#.."]),
+    ('"', [".#.#.", ".#.#.", ".....", ".....", ".....", ".....", "....."]),
 ];
 
 pub struct Font {
@@ -354,7 +356,7 @@ impl Ui {
         let total = n as f32 * size + (n - 1) as f32 * gap;
         let x0 = (sw - total) * 0.5;
         let y = sh - size - 18.0;
-        const KEYS: [&str; 11] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-"];
+        const KEYS: [&str; 12] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "="];
         for (k, sp) in SPELL_BAR.iter().enumerate() {
             let x = x0 + k as f32 * (size + gap);
             if self.hot(x, y, size, size) && self.pressed {
@@ -376,5 +378,29 @@ impl Ui {
         }
         let sp = game.current_spell();
         self.text_center(&format!("{}  -  {}", sp.name().to_uppercase(), sp.desc().to_uppercase()), sw * 0.5, y - 22.0, 2.0, TEXT);
+    }
+}
+
+impl Ui {
+    /// Chat history (fades out when closed) and the input line when open.
+    pub fn chat(&self, game: &Game, input: Option<&str>, time: f32) {
+        let sh = screen_height();
+        let x = 20.0;
+        let open = input.is_some();
+        let base = sh - 146.0;
+        let lines: Vec<_> = game.chat.iter().rev().filter(|l| open || l.age < 10.0).take(if open { 16 } else { 6 }).collect();
+        for (k, l) in lines.iter().enumerate() {
+            let y = base - k as f32 * 20.0;
+            let a = if open { 1.0 } else { ((10.0 - l.age) / 1.5).clamp(0.0, 1.0) };
+            let w = self.font.width(&l.text, 2.0) + 14.0;
+            draw_rectangle(x - 7.0, y - 4.0, w, 20.0, Color::new(0.0, 0.0, 0.0, 0.45 * a));
+            self.font.draw(&l.text, x, y, 2.0, Color::from_rgba(l.color[0], l.color[1], l.color[2], (a * 255.0) as u8));
+        }
+        if let Some(buf) = input {
+            let y = sh - 118.0;
+            draw_rectangle(x - 7.0, y - 5.0, (screen_width() * 0.6).max(520.0), 22.0, Color::new(0.0, 0.0, 0.0, 0.65));
+            let caret = if (time * 2.5) as i32 % 2 == 0 { "_" } else { "" };
+            self.font.draw(&format!("{}{}", buf, caret), x, y, 2.0, TEXT);
+        }
     }
 }

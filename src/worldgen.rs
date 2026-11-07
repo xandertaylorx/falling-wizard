@@ -31,6 +31,11 @@ impl Biome {
     }
 }
 
+const VG: i32 = 700;
+const GG: i32 = 260;
+const VOLC_H: i32 = 48;
+const VOLC_W: i32 = 64;
+
 pub struct Generator {
     s: u32,
 }
@@ -67,6 +72,73 @@ impl Generator {
         (hills - peaks) as i32
     }
 
+    /// Ruin in grid cell (gx, gy): (centre x, floor y, half-width, has altar).
+    pub fn ruin_at(&self, gx: i32, gy: i32) -> Option<(i32, i32, i32, bool)> {
+        const RG: i32 = 130;
+        let h = hash3(gx, gy, self.s ^ 0x7777);
+        if h % 100 >= 50 {
+            return None;
+        }
+        let rx = gx * RG + 20 + (h >> 8) as i32 % (RG - 40);
+        let ry = gy * RG + 20 + (h >> 16) as i32 % (RG - 40);
+        if ry - self.surface(rx) < 22 {
+            return None;
+        }
+        Some((rx, ry, (14 + (h >> 4) as i32 % 8) / 2, (h >> 24) % 4 == 0))
+    }
+
+    /// Floating island in grid cell (gx, gy): (x, top y, half-width, depth, astral, hash).
+    pub fn island_at(&self, gx: i32, gy: i32) -> Option<(i32, i32, i32, i32, bool, u32)> {
+        const IG: i32 = 150;
+        let h = hash3(gx, gy, self.s ^ 0x15EE);
+        let (ix, iy) = (gx * IG + 30 + (h % (IG as u32 - 60)) as i32, gy * IG + ((h >> 8) % (IG as u32 - 40)) as i32);
+        if iy > -260 || h >> 29 < 2 {
+            return None;
+        }
+        Some((ix, iy, 16 + (h >> 16) as i32 % 26, 10 + (h >> 22) as i32 % 16, iy < -520, h))
+    }
+
+    /// Volcanoes and geysers whose x lies in [x0, x1]: (is_volcano, x, vent top y).
+    pub fn features_near(&self, x0: i32, x1: i32) -> Vec<(bool, i32, i32)> {
+        let mut out = Vec::new();
+        for g in x0.div_euclid(VG) - 1..=x1.div_euclid(VG) + 1 {
+            if let Some((vx, base)) = self.volcano_cell(g) {
+                if vx >= x0 && vx <= x1 {
+                    out.push((true, vx, base - VOLC_H + 6));
+                }
+            }
+        }
+        for g in x0.div_euclid(GG) - 1..=x1.div_euclid(GG) + 1 {
+            let h = hash3(g, 92, self.s);
+            if h % 100 >= 45 {
+                continue;
+            }
+            let gx = g * GG + 40 + (h >> 8) as i32 % (GG - 80);
+            if gx >= x0 && gx <= x1 && self.volcano_near(gx).is_none() {
+                out.push((false, gx, self.surface(gx)));
+            }
+        }
+        out
+    }
+
+    fn volcano_cell(&self, g: i32) -> Option<(i32, i32)> {
+        let h = hash3(g, 91, self.s);
+        if h % 100 >= 55 {
+            return None;
+        }
+        let vx = g * VG + 150 + (h >> 8) as i32 % (VG - 300);
+        if vx.abs() < 200 {
+            return None; // not on top of the spawn
+        }
+        Some((vx, self.surface(vx)))
+    }
+
+    /// The volcano whose slopes cover column x, if any: (centre x, base y).
+    fn volcano_near(&self, x: i32) -> Option<(i32, i32)> {
+        let g = x.div_euclid(VG);
+        (g - 1..=g + 1).filter_map(|g| self.volcano_cell(g)).find(|(vx, _)| (x - vx).abs() <= VOLC_W + 2)
+    }
+
     pub fn spawn(&self) -> (f32, f32) {
         (1.0, (self.surface(1).min(self.surface(2)).min(self.surface(3)) - 10) as f32)
     }
@@ -99,6 +171,7 @@ impl Generator {
             }
         }
         self.stamp_pools(cx, cy, &mut cells, &mut rng);
+        self.stamp_vents(cx, cy, &mut cells, &mut rng);
         self.stamp_ruins(cx, cy, &mut cells, &mut rng);
         self.stamp_trees(cx, cy, &mut cells, &mut rng);
         if y0 < -100 {
@@ -282,17 +355,8 @@ impl Generator {
         let (x0, y0) = (cx * CHUNK, cy * CHUNK);
         for gy in (y0 - 20).div_euclid(RG)..=(y0 + CHUNK + 20).div_euclid(RG) {
             for gx in (x0 - 30).div_euclid(RG)..=(x0 + CHUNK + 30).div_euclid(RG) {
-                let h = hash3(gx, gy, self.s ^ 0x7777);
-                if h % 100 >= 50 {
-                    continue;
-                }
-                let rx = gx * RG + 20 + (h >> 8) as i32 % (RG - 40);
-                let ry = gy * RG + 20 + (h >> 16) as i32 % (RG - 40);
-                if ry - self.surface(rx) < 22 {
-                    continue;
-                }
-                let (w, hgt) = (14 + (h >> 4) as i32 % 8, 8);
-                let altar = (h >> 24) % 4 == 0;
+                let Some((rx, ry, half, altar)) = self.ruin_at(gx, gy) else { continue };
+                let (w, hgt) = (half * 2, 8);
                 for y in ry - hgt..=ry {
                     for x in rx - w / 2..=rx + w / 2 {
                         if x < x0 || y < y0 || x >= x0 + CHUNK || y >= y0 + CHUNK {
@@ -363,13 +427,7 @@ impl Generator {
         const IG: i32 = 150;
         for gy in (y0 - 40).div_euclid(IG)..=(y0 + CHUNK + 40).div_euclid(IG) {
             for gx in (x0 - 50).div_euclid(IG)..=(x0 + CHUNK + 50).div_euclid(IG) {
-                let h = hash3(gx, gy, self.s ^ 0x15EE);
-                let (ix, iy) = (gx * IG + 30 + (h % (IG as u32 - 60)) as i32, gy * IG + ((h >> 8) % (IG as u32 - 40)) as i32);
-                if iy > -260 || h >> 29 < 2 {
-                    continue;
-                }
-                let astral = iy < -520;
-                let (rx, depth) = (16 + (h >> 16) as i32 % 26, 10 + (h >> 22) as i32 % 16);
+                let Some((ix, iy, rx, depth, astral, h)) = self.island_at(gx, gy) else { continue };
                 for x in ix - rx..=ix + rx {
                     let t = ((x - ix) as f32 / rx as f32).abs();
                     let top = iy - (value_noise(x as f32 * 0.15, 1.0, h) * 3.0) as i32;
@@ -420,6 +478,63 @@ impl Generator {
         }
     }
 
+    /// Volcano cones with a lava chamber, and geyser shafts over a water pocket.
+    fn stamp_vents(&self, cx: i32, cy: i32, cells: &mut [Cell], rng: &mut Rng) {
+        let (x0, y0) = (cx * CHUNK, cy * CHUNK);
+        let mut set = |x: i32, y: i32, m: M, cells: &mut [Cell]| {
+            if x >= x0 && y >= y0 && x < x0 + CHUNK && y < y0 + CHUNK {
+                let i = ((y - y0) as usize) * CU + (x - x0) as usize;
+                cells[i] = Cell::new(m, rng);
+            }
+        };
+        for x in x0..x0 + CHUNK {
+            if let Some((vx, base)) = self.volcano_near(x) {
+                let dx = (x - vx).abs();
+                let t = (1.0 - dx as f32 / VOLC_W as f32).max(0.0);
+                let mut top = base - (VOLC_H as f32 * t.powf(1.3)) as i32;
+                if dx < 6 {
+                    top = base - VOLC_H + 6; // crater
+                }
+                let ground = self.surface(x);
+                for y in top.max(y0)..ground.min(y0 + CHUNK) {
+                    let m = if value_noise(x as f32 * 0.2, y as f32 * 0.2, 13) > 0.7 { M::Stone } else { M::Basalt };
+                    set(x, y, m, cells);
+                }
+                if dx <= 2 {
+                    for y in (base - VOLC_H + 6).max(y0)..(base + 34).min(y0 + CHUNK) {
+                        set(x, y, M::Empty, cells);
+                    }
+                }
+                // Magma chamber.
+                for y in (base + 28).max(y0)..(base + 50).min(y0 + CHUNK) {
+                    let e = ((x - vx) as f32 / 18.0).powi(2) + ((y - base - 40) as f32 / 9.0).powi(2);
+                    if e <= 1.0 {
+                        set(x, y, M::Lava, cells);
+                    } else if e <= 1.5 {
+                        set(x, y, M::Basalt, cells);
+                    }
+                }
+            }
+        }
+        for (volcano, gx, top) in self.features_near(x0 - 4, x0 + CHUNK + 4) {
+            if volcano {
+                continue;
+            }
+            for y in top - 2..top + 16 {
+                for x in gx - 4..=gx + 4 {
+                    let dx = (x - gx).abs();
+                    if y >= top + 12 && dx <= 3 {
+                        set(x, y, if y >= top + 15 { M::Stone } else { M::Water }, cells);
+                    } else if dx <= 1 && y >= top - 2 {
+                        set(x, y, M::Empty, cells);
+                    } else if dx == 2 && y >= top - 1 || (dx <= 4 && y == top - 1 && dx >= 2) {
+                        set(x, y, M::Stone, cells);
+                    }
+                }
+            }
+        }
+    }
+
     fn stamp_trees(&self, cx: i32, cy: i32, cells: &mut [Cell], rng: &mut Rng) {
         const SLOT: i32 = 11;
         let (x0, y0) = (cx * CHUNK, cy * CHUNK);
@@ -440,7 +555,7 @@ impl Generator {
                 continue;
             }
             let tx = slot * SLOT + ((h >> 8) % (SLOT as u32 - 3)) as i32;
-            if tx.abs() < 8 {
+            if tx.abs() < 8 || self.volcano_near(tx).is_some() {
                 continue; // keep spawn clear
             }
             let (s0, s1) = (self.surface(tx), self.surface(tx + 1));

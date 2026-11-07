@@ -189,6 +189,14 @@ const fn spec(kind: MobKind) -> Spec {
     }
 }
 
+pub const ALL_MOBS: [MobKind; 22] = {
+    use MobKind::*;
+    [
+        Zombie, Skeleton, Slime, DemonEye, Bat, FireImp, Lion, Tiger, Scorpion, SnowWolf, Yeti, Golem, Salamander, Worm, Dragon, Ghost,
+        StarJelly, MoonHopper, VoidEye, Wisp, CloudSprite, Mushling,
+    ]
+};
+
 impl MobKind {
     pub fn name(self) -> &'static str {
         use MobKind::*;
@@ -239,6 +247,20 @@ pub struct Mob {
     wander: f32,
     breath: f32,
     segs: Vec<(f32, f32)>,
+    pub pet: bool,
+}
+
+/// A body flung by its death; it tumbles and splatters where it lands.
+struct Corpse {
+    kind: MobKind,
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+    rot: f32,
+    spin: f32,
+    t: f32,
+    facing: f32,
 }
 
 struct MobShot {
@@ -260,6 +282,7 @@ pub struct Popup {
 
 pub struct Mobs {
     pub list: Vec<Mob>,
+    corpses: Vec<Corpse>,
     shots: Vec<MobShot>,
     timer: f32,
     rng: Rng,
@@ -275,11 +298,12 @@ const N_SEG_DRAGON: usize = 20;
 
 impl Mobs {
     pub fn new(seed: u64) -> Self {
-        Self { list: Vec::new(), shots: Vec::new(), timer: 3.0, rng: Rng::new(seed ^ 0xBEA57), popups: Vec::new(), sounds: Vec::new(), gold: 0, kills: 0, big_hits: 0 }
+        Self { list: Vec::new(), corpses: Vec::new(), shots: Vec::new(), timer: 3.0, rng: Rng::new(seed ^ 0xBEA57), popups: Vec::new(), sounds: Vec::new(), gold: 0, kills: 0, big_hits: 0 }
     }
 
     pub fn clear(&mut self) {
-        self.list.clear();
+        self.list.retain(|m| m.pet);
+        self.corpses.clear();
         self.shots.clear();
     }
 
@@ -314,6 +338,7 @@ impl Mobs {
             wander: 0.0,
             breath: 0.0,
             segs,
+            pet: false,
         });
     }
 
@@ -324,6 +349,9 @@ impl Mobs {
     /// Index of the mob at (x, y), with `pad` cells of slack.
     pub fn hit_test(&self, x: f32, y: f32, pad: f32) -> Option<usize> {
         for (i, m) in self.list.iter().enumerate() {
+            if m.pet {
+                continue;
+            }
             if x >= m.x - pad && x < m.x + m.w + pad && y >= m.y - pad && y < m.y + m.h + pad {
                 return Some(i);
             }
@@ -339,6 +367,7 @@ impl Mobs {
     pub fn nearest(&self, x: f32, y: f32, range: f32) -> Option<(f32, f32)> {
         self.list
             .iter()
+            .filter(|m| !m.pet)
             .map(Self::center)
             .map(|c| (c, (c.0 - x).powi(2) + (c.1 - y).powi(2)))
             .filter(|(_, d)| *d < range * range)
@@ -368,6 +397,9 @@ impl Mobs {
 
     pub fn damage_area(&mut self, x: f32, y: f32, r: f32, dmg: f32, fx: &mut Fx) {
         for i in 0..self.list.len() {
+            if self.list[i].pet {
+                continue;
+            }
             let (cx, cy) = Self::center(&self.list[i]);
             let mut d = ((cx - x).powi(2) + (cy - y).powi(2)).sqrt();
             for s in &self.list[i].segs {
@@ -399,6 +431,53 @@ impl Mobs {
         }
     }
 
+    pub fn kill_all(&mut self, pets: bool) -> usize {
+        let mut n = 0;
+        for m in self.list.iter_mut().filter(|m| m.pet == pets) {
+            m.hp = 0.0;
+            n += 1;
+        }
+        n
+    }
+
+    pub fn pets(&self) -> usize {
+        self.list.iter().filter(|m| m.pet).count()
+    }
+
+    /// Make a creature your pet (up to three; worms won't be tamed).
+    pub fn tame(&mut self, i: usize, fx: &mut Fx) -> bool {
+        if self.pets() >= 3 || self.list[i].kind == MobKind::Worm {
+            return false;
+        }
+        let m = &mut self.list[i];
+        m.pet = true;
+        m.hp = m.max_hp;
+        let (cx, _) = Self::center(m);
+        self.popups.push(Popup { x: cx, y: m.y - 4.0, text: format!("{} TAMED!", m.kind.name()), color: [140, 255, 150], t: 0.0 });
+        fx.burst(cx, m.y, 30, 70.0, [140, 255, 150]);
+        true
+    }
+
+    /// Drag creatures towards a black hole; those at its heart are torn apart.
+    pub fn pull(&mut self, x: f32, y: f32, r: f32, dt: f32, _fx: &mut Fx) {
+        for m in self.list.iter_mut().filter(|m| !m.pet) {
+            let (cx, cy) = Self::center(m);
+            let (dx, dy) = (x - cx, y - cy);
+            let d = (dx * dx + dy * dy).sqrt().max(0.5);
+            if d < r {
+                let k = (1.0 - d / r) * 420.0 * dt;
+                m.vx += dx / d * k;
+                m.vy += dy / d * k;
+                m.x += dx / d * k * dt * 20.0;
+                m.y += dy / d * k * dt * 20.0;
+                if d < 5.0 {
+                    m.hp -= 80.0 * dt;
+                    m.hurt = 0.05;
+                }
+            }
+        }
+    }
+
     pub fn freeze(&mut self, i: usize, secs: f32) {
         self.list[i].frozen = secs;
     }
@@ -411,7 +490,7 @@ impl Mobs {
         }
         self.timer = self.rng.rangef(0.8, 2.2) * if night { 0.6 } else { 1.0 };
         let cap = if night { 16 } else { 11 };
-        if self.list.len() >= cap {
+        if self.list.len() - self.pets() >= cap {
             return;
         }
         let side = self.rng.sign() as f32;
@@ -493,6 +572,8 @@ impl Mobs {
         let (px, py) = player.center();
         let alive = !player.dead();
         let mut new_shots = Vec::new();
+        let hostiles: Vec<(usize, f32, f32)> = self.list.iter().enumerate().filter(|(_, m)| !m.pet).map(|(i, m)| (i, m.x + m.w * 0.5, m.y + m.h * 0.5)).collect();
+        let mut pet_hits: Vec<(usize, f32, f32)> = Vec::new();
         for m in self.list.iter_mut() {
             let s = spec(m.kind);
             m.t += dt;
@@ -516,10 +597,30 @@ impl Mobs {
                 m.hurt = m.hurt.max(0.05);
             }
 
-            let (dx, dy) = (px - cx, py - cy);
+            // Pets chase the nearest hostile creature, otherwise follow you.
+            let mut target: Option<usize> = None;
+            let (gx, gy) = if m.pet {
+                let best = hostiles
+                    .iter()
+                    .map(|&(i, hx, hy)| (i, hx, hy, (hx - cx).powi(2) + (hy - cy).powi(2)))
+                    .filter(|h| h.3 < 100.0 * 100.0)
+                    .min_by(|a, b| a.3.partial_cmp(&b.3).unwrap());
+                match best {
+                    Some((i, hx, hy, _)) => {
+                        target = Some(i);
+                        (hx, hy)
+                    }
+                    None => (px - m.facing * 10.0, py),
+                }
+            } else {
+                (px, py)
+            };
+            let (dx, dy) = (gx - cx, gy - cy);
             let dist = (dx * dx + dy * dy).sqrt();
-            let aggro = alive && dist < 170.0;
-            let dir = if aggro {
+            let aggro = if m.pet { true } else { alive && dist < 170.0 };
+            let dir = if m.pet && target.is_none() && dx.abs() < 10.0 {
+                0.0
+            } else if aggro {
                 dx.signum()
             } else {
                 m.wander -= dt;
@@ -652,7 +753,7 @@ impl Mobs {
                         m.facing = m.vx.signum();
                     }
                     // Fire breath.
-                    if aggro && dist < 80.0 && m.cd <= 0.0 {
+                    if aggro && !m.pet && dist < 80.0 && m.cd <= 0.0 {
                         m.breath = 1.0;
                         m.cd = 4.0;
                     }
@@ -682,7 +783,7 @@ impl Mobs {
             }
 
             // Ranged attacks.
-            if aggro && s.ranged != Ranged::None && s.ai != Ai::Dragon && m.cd <= 0.0 && dist < 110.0 && m.frozen <= 0.0 {
+            if !m.pet && aggro && s.ranged != Ranged::None && s.ai != Ai::Dragon && m.cd <= 0.0 && dist < 110.0 && m.frozen <= 0.0 {
                 m.cd = 2.2 + (m.t * 5.1).sin().abs();
                 let (cx, cy) = Self::center(m);
                 let speed = match s.ranged {
@@ -695,6 +796,16 @@ impl Mobs {
                 new_shots.push(MobShot { x: cx, y: cy - 2.0, vx: dx / l * speed, vy: dy / l * speed + lob, kind: s.ranged, life: 3.0 });
             }
 
+            // Pets bite their target.
+            if m.pet {
+                if let Some(ti) = target {
+                    if dist < (m.w + m.h) * 0.4 + 4.0 && m.attack_cd <= 0.0 {
+                        pet_hits.push((ti, s.dmg * 1.5, m.facing));
+                        m.attack_cd = 0.6;
+                    }
+                }
+                continue;
+            }
             // Contact damage.
             if alive && m.attack_cd <= 0.0 && m.frozen <= 0.0 {
                 let touching = |x: f32, y: f32, w: f32, h: f32| x < player.x + PW && x + w > player.x && y < player.y + PH && y + h > player.y;
@@ -708,7 +819,11 @@ impl Mobs {
             }
         }
         self.shots.append(&mut new_shots);
+        for (i, dmg, dir) in pet_hits {
+            self.hurt(i, dmg, (dir * 60.0, -40.0), fx);
+        }
         self.update_shots(world, player, fx, dt);
+        self.update_corpses(world, fx, dt);
 
         // Deaths and despawns.
         let mut i = 0;
@@ -721,7 +836,16 @@ impl Mobs {
                 self.gib(&m, fx);
                 continue;
             }
-            if far {
+            if far && m.pet {
+                let m = &mut self.list[i];
+                m.x = px - 6.0;
+                m.y = py - 14.0;
+                m.vx = 0.0;
+                m.vy = 0.0;
+                for sg in m.segs.iter_mut() {
+                    *sg = (px, py - 14.0);
+                }
+            } else if far {
                 self.list.swap_remove(i);
                 continue;
             }
@@ -737,10 +861,78 @@ impl Mobs {
     fn gib(&mut self, m: &Mob, fx: &mut Fx) {
         let s = spec(m.kind);
         let (cx, cy) = Self::center(m);
+        if m.segs.is_empty() && s.gib != M::Empty {
+            // Ragdoll: fling the body; it splatters when it lands.
+            let up = fx.rng.rangef(70.0, 140.0);
+            self.corpses.push(Corpse {
+                kind: m.kind,
+                x: cx,
+                y: cy,
+                vx: m.vx * 1.4 + fx.rng.rangef(-40.0, 40.0),
+                vy: m.vy.min(0.0) * 1.2 - up,
+                rot: 0.0,
+                spin: fx.rng.rangef(-14.0, 14.0),
+                t: 0.0,
+                facing: m.facing,
+            });
+        } else {
+            self.splatter(m.kind, cx, cy, &m.segs, fx);
+        }
+        let big = s.hp >= 100.0;
+        if big {
+            self.big_hits += 1;
+            fx.shake = (fx.shake + 6.0).min(14.0);
+        }
+        if !m.pet {
+            self.gold += s.gold;
+            self.kills += 1;
+            self.popups.push(Popup { x: cx, y: cy - 6.0, text: format!("{}  +{} GOLD", m.kind.name(), s.gold), color: [255, 210, 90], t: 0.0 });
+        }
+        self.sounds.push(if big { Sfx::Boom } else { Sfx::Hit });
+    }
+
+    fn update_corpses(&mut self, world: &mut World, fx: &mut Fx, dt: f32) {
+        let mut corpses = std::mem::take(&mut self.corpses);
+        corpses.retain_mut(|c| {
+            c.t += dt;
+            c.vy += 260.0 * dt;
+            c.rot += c.spin * dt;
+            let n = ((c.vx.abs().max(c.vy.abs())) * dt).ceil().max(1.0) as i32;
+            for _ in 0..n {
+                let (nx, ny) = (c.x + c.vx * dt / n as f32, c.y + c.vy * dt / n as f32);
+                let m = world.mat(nx as i32, (ny + 2.0) as i32);
+                if m.solid() || m.kind() == MK::Liquid || !world.in_window(nx as i32, ny as i32) {
+                    let speed = (c.vx * c.vx + c.vy * c.vy).sqrt();
+                    if speed > 70.0 || c.t > 1.2 {
+                        self.splatter(c.kind, c.x, c.y, &[], fx);
+                        self.sounds.push(Sfx::Pop);
+                        return false;
+                    }
+                    c.vy = -c.vy * 0.4;
+                    c.vx *= 0.6;
+                    c.spin *= 0.5;
+                    break;
+                }
+                c.x = nx;
+                c.y = ny;
+            }
+            if c.t > 3.0 {
+                self.splatter(c.kind, c.x, c.y, &[], fx);
+                return false;
+            }
+            true
+        });
+        self.corpses = corpses;
+    }
+
+    /// Burst a body into its gib material and sparks.
+    fn splatter(&mut self, kind: MobKind, cx: f32, cy: f32, segs: &[(f32, f32)], fx: &mut Fx) {
+        let s = spec(kind);
+        let (w, h) = (s.sprite[0].len(), s.sprite.len());
         let mut parts: Vec<(f32, f32)> = vec![(cx, cy)];
-        parts.extend(m.segs.iter().copied());
+        parts.extend(segs.iter().copied());
         for (x, y) in parts {
-            let n = ((m.w * m.h) as usize / 2).clamp(6, 40);
+            let n = (w * h / 2).clamp(6, 40);
             for _ in 0..n {
                 let a = fx.rng.rangef(0.0, std::f32::consts::TAU);
                 let sp = fx.rng.rangef(30.0, 120.0);
@@ -751,15 +943,6 @@ impl Mobs {
             }
             fx.burst(x, y, 12, 90.0, [255, 230, 200]);
         }
-        let big = s.hp >= 100.0;
-        if big {
-            self.big_hits += 1;
-            fx.shake = (fx.shake + 6.0).min(14.0);
-        }
-        self.gold += s.gold;
-        self.kills += 1;
-        self.popups.push(Popup { x: cx, y: cy - 6.0, text: format!("{}  +{} GOLD", m.kind.name(), s.gold), color: [255, 210, 90], t: 0.0 });
-        self.sounds.push(if big { Sfx::Boom } else { Sfx::Pop });
     }
 
     fn update_shots(&mut self, world: &mut World, player: &mut Player, fx: &mut Fx, dt: f32) {
@@ -867,13 +1050,41 @@ impl Mobs {
                         }
                         cv.put(ix, iy, [10, 10, 20]);
                     }
+                    if m.pet {
+                        let (hx, hy) = (m.x as i32 + m.w as i32 / 2 - 1, m.y as i32 - 4);
+                        for (ox, oy) in [(0, 0), (2, 0), (0, 1), (1, 1), (2, 1), (1, 2)] {
+                            cv.put(hx + ox, hy + oy, [255, 96, 130]);
+                        }
+                    }
                     // Health bar once damaged.
                     if m.hp < m.max_hp {
                         let w = m.w as i32;
                         let filled = ((m.hp / m.max_hp).max(0.0) * w as f32) as i32;
                         for k in 0..w {
-                            cv.put(m.x as i32 + k, m.y as i32 - 2, if k < filled { [230, 70, 70] } else { [60, 20, 20] });
+                            let full = if m.pet { [90, 220, 110] } else { [230, 70, 70] };
+                            cv.put(m.x as i32 + k, m.y as i32 - 2, if k < filled { full } else { [60, 20, 20] });
                         }
+                    }
+                }
+            }
+        }
+        for c in &self.corpses {
+            let s = spec(c.kind);
+            let (w, h) = (s.sprite[0].len() as f32, s.sprite.len() as f32);
+            let r = (w.max(h) * 0.75) as i32 + 1;
+            let (sn, cs) = c.rot.sin_cos();
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    // Inverse-rotate each screen pixel back into the sprite.
+                    let (fx_, fy_) = (dx as f32 * cs + dy as f32 * sn, -dx as f32 * sn + dy as f32 * cs);
+                    let (sx, sy) = ((fx_ + w * 0.5).floor() as i32, (fy_ + h * 0.5).floor() as i32);
+                    if sx < 0 || sy < 0 || sx >= w as i32 || sy >= h as i32 {
+                        continue;
+                    }
+                    let line = s.sprite[sy as usize].as_bytes();
+                    let col = if c.facing >= 0.0 { sx as usize } else { line.len() - 1 - sx as usize };
+                    if let Some(&(_, rgb)) = s.pal.iter().find(|p| p.0 == line[col]) {
+                        cv.put(c.x as i32 + dx, c.y as i32 + dy, [(rgb[0] as f32 * 0.8) as u8, (rgb[1] as f32 * 0.8) as u8, (rgb[2] as f32 * 0.8) as u8]);
                     }
                 }
             }

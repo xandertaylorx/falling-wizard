@@ -19,13 +19,14 @@ pub enum Card {
     Teleport,
     AcidBall,
     Lightning,
-    DigBolt,
+    OilSpray,
+    BlackHole,
     Seeds,
     Torrent,
     DigBeam,
 }
 
-pub const SPELL_BAR: [Card; 11] = [
+pub const SPELL_BAR: [Card; 12] = [
     Card::Spark,
     Card::Fireball,
     Card::Bomb,
@@ -36,7 +37,8 @@ pub const SPELL_BAR: [Card; 11] = [
     Card::Seeds,
     Card::Teleport,
     Card::DigBeam,
-    Card::DigBolt,
+    Card::OilSpray,
+    Card::BlackHole,
 ];
 
 impl Card {
@@ -49,7 +51,8 @@ impl Card {
             Card::Teleport => "Teleport",
             Card::AcidBall => "Acid Ball",
             Card::Lightning => "Lightning",
-            Card::DigBolt => "Digging Bolt",
+            Card::OilSpray => "Oil Spray",
+            Card::BlackHole => "Black Hole",
             Card::Seeds => "Seeds of Life",
             Card::Torrent => "Torrent",
             Card::DigBeam => "Digging Beam",
@@ -65,7 +68,8 @@ impl Card {
             Card::Teleport => "Blink to where it lands",
             Card::AcidBall => "Splashes corrosive acid",
             Card::Lightning => "Instant strike in a line",
-            Card::DigBolt => "Tunnels through rock",
+            Card::OilSpray => "Spray of flammable oil",
+            Card::BlackHole => "Swallows everything nearby",
             Card::Seeds => "Scatter seeds that grow",
             Card::Torrent => "Spray of water",
             Card::DigBeam => "Hold to bore through rock",
@@ -81,7 +85,8 @@ impl Card {
             Card::Teleport => 18.0,
             Card::AcidBall => 10.0,
             Card::Lightning => 20.0,
-            Card::DigBolt => 8.0,
+            Card::OilSpray => 0.5,
+            Card::BlackHole => 45.0,
             Card::Seeds => 8.0,
             Card::Torrent => 0.5,
             Card::DigBeam => 0.5,
@@ -97,7 +102,8 @@ impl Card {
             Card::Teleport => 0.45,
             Card::AcidBall => 0.3,
             Card::Lightning => 0.5,
-            Card::DigBolt => 0.25,
+            Card::OilSpray => 0.02,
+            Card::BlackHole => 1.2,
             Card::Seeds => 0.3,
             Card::Torrent => 0.02,
             Card::DigBeam => 0.0,
@@ -114,7 +120,8 @@ impl Card {
             Card::Teleport => (["..###..", ".#...#.", "#..+..#", "#.+++.#", "#..+..#", ".#...#.", "..###.."], [180, 120, 255], [240, 210, 255]),
             Card::AcidBall => (["..###..", ".##+##.", "##+####", "#######", "#######", ".#####.", "#.#.#.."], [110, 232, 64], [220, 255, 180]),
             Card::Lightning => (["....##.", "...##..", "..##...", ".#####.", "...##..", "..##...", ".##...."], [255, 250, 140], [255, 255, 255]),
-            Card::DigBolt => (["...#...", "..###..", ".##+##.", "...#...", "...#...", "...#...", "...#..."], [190, 160, 120], [255, 230, 180]),
+            Card::OilSpray => (["...#...", "..###..", ".##+##.", ".#+###.", ".#####.", "..###..", "......."], [70, 48, 52], [150, 110, 90]),
+            Card::BlackHole => (["..+++..", ".+###+.", "+##.##+", "+#...#+", "+##.##+", ".+###+.", "..+++.."], [20, 10, 30], [190, 110, 255]),
             Card::Seeds => (["...#...", ".##.##.", "..###..", "...#...", "...#...", "..+++..", ".+++++."], [110, 200, 80], [130, 92, 56]),
             Card::Torrent => (["...#...", "..###..", ".##+##.", ".#+###.", ".#####.", "..###..", "......."], [60, 130, 230], [180, 220, 255]),
             Card::DigBeam => ([".......", "##.....", "####...", "###++++", "####...", "##.....", "......."], [120, 220, 240], [230, 255, 255]),
@@ -169,7 +176,6 @@ impl Proj {
             Card::Bomb => 30.0,
             Card::Frost => 8.0,
             Card::AcidBall => 14.0,
-            Card::DigBolt => 10.0,
             _ => 4.0,
         };
         base * (1.0 + 0.6 * self.mods.heavy as f32)
@@ -182,16 +188,19 @@ pub struct Spells {
     pub teleport: Option<(f32, f32)>,
     beam: Option<(f32, f32, f32, f32)>,
     bolts: Vec<(Vec<(f32, f32)>, f32)>,
+    /// Active black holes: (x, y, seconds left).
+    pub holes: Vec<(f32, f32, f32)>,
     pub sounds: Vec<Sfx>,
 }
 
 impl Spells {
     pub fn new() -> Self {
-        Self { projs: Vec::new(), teleport: None, beam: None, bolts: Vec::new(), sounds: Vec::new() }
+        Self { projs: Vec::new(), teleport: None, beam: None, bolts: Vec::new(), holes: Vec::new(), sounds: Vec::new() }
     }
 
     pub fn clear(&mut self) {
         self.projs.clear();
+        self.holes.clear();
         self.beam = None;
         self.teleport = None;
     }
@@ -218,8 +227,20 @@ impl Spells {
             Card::Frost => (210.0, 1.5, 0.0, Sfx::Whoosh),
             Card::Teleport => (320.0, 1.2, 0.0, Sfx::Zap),
             Card::AcidBall => (180.0, 2.5, 25.0, Sfx::Throw),
-            Card::DigBolt => (150.0, 0.7, 0.0, Sfx::Dig),
             Card::Seeds => {
+                for k in 0..50 {
+                    let (tx, ty) = (x + ux * k as f32, y + uy * k as f32);
+                    if !world.mat(tx as i32, ty as i32).passable() {
+                        break;
+                    }
+                    if let Some(i) = mobs.hit_test(tx, ty, 1.0) {
+                        if mobs.tame(i, fx) {
+                            self.sounds.push(Sfx::Chime);
+                            return 0;
+                        }
+                        break;
+                    }
+                }
                 for _ in 0..6 {
                     let a = ang + fx.rng.rangef(-0.35, 0.35);
                     let s = fx.rng.rangef(80.0, 140.0);
@@ -239,6 +260,17 @@ impl Spells {
                 self.sounds.push(Sfx::Splash);
                 return 0;
             }
+            Card::OilSpray => {
+                for _ in 0..3 {
+                    let a = ang + fx.rng.rangef(-0.14, 0.14);
+                    let s = fx.rng.rangef(120.0, 160.0) * speed_mul;
+                    let sh = fx.rng.next_u32() as u8;
+                    fx.debris(x, y, a.cos() * s, a.sin() * s, M::Oil, sh);
+                }
+                self.sounds.push(Sfx::Splash);
+                return 0;
+            }
+            Card::BlackHole => (90.0, 0.9, 0.0, Sfx::Zap),
             Card::DigBeam => {
                 let (mut bx, mut by) = (x, y);
                 let mut hit = false;
@@ -308,6 +340,7 @@ impl Spells {
             b.1 -= dt;
         }
         self.bolts.retain(|b| b.1 > 0.0);
+        self.step_holes(world, fx, mobs, dt);
         let mut projs = std::mem::take(&mut self.projs);
         let mut spawned: Vec<(Shot, (f32, f32), f32)> = Vec::new();
         projs.retain_mut(|p| {
@@ -341,9 +374,6 @@ impl Spells {
                     return false;
                 }
                 let m = world.mat(cx, cy);
-                if p.card == Card::DigBolt {
-                    fx.dissolve(world, nx, ny, 2 + p.mods.heavy as i32, 0.9);
-                }
                 let mob_hit = mobs.hit_test(nx, ny, 0.5);
                 if let Some(i) = mob_hit {
                     mobs.hurt(i, p.damage(), (p.vx * 0.3, p.vy * 0.3 - 30.0), fx);
@@ -351,7 +381,7 @@ impl Spells {
                         mobs.freeze(i, 3.0);
                     }
                 }
-                let blocked = (!m.passable() && p.card != Card::DigBolt) || mob_hit.is_some();
+                let blocked = !m.passable() || mob_hit.is_some();
                 if blocked {
                     if p.bounces > 0 && mob_hit.is_none() {
                         p.bounces -= 1;
@@ -388,9 +418,56 @@ impl Spells {
         }
     }
 
+    /// Black holes rip loose material out of the world and suck it (and creatures) in.
+    fn step_holes(&mut self, world: &mut World, fx: &mut Fx, mobs: &mut Mobs, dt: f32) {
+        fx.attractors.clear();
+        let mut done = Vec::new();
+        for (k, h) in self.holes.iter_mut().enumerate() {
+            h.2 -= dt;
+            fx.attractors.push((h.0, h.1));
+            mobs.pull(h.0, h.1, 45.0, dt, fx);
+            for _ in 0..90 {
+                let a = fx.rng.rangef(0.0, std::f32::consts::TAU);
+                let r = fx.rng.f32().sqrt() * 24.0;
+                let (cx, cy) = ((h.0 + a.cos() * r) as i32, (h.1 + a.sin() * r) as i32);
+                let Some(c) = world.get(cx, cy) else { continue };
+                let loose = match c.mat.kind() {
+                    crate::materials::Kind::Empty => false,
+                    crate::materials::Kind::Static => !matches!(c.mat, M::Chest | M::Altar) && fx.rng.chance(0.03),
+                    _ => true,
+                };
+                if loose {
+                    world.set(cx, cy, Cell::EMPTY);
+                    if c.mat != M::Fire && c.mat.kind() != crate::materials::Kind::Gas {
+                        let (dx, dy) = (h.0 - cx as f32, h.1 - cy as f32);
+                        let d = (dx * dx + dy * dy).sqrt().max(1.0);
+                        let tang = fx.rng.rangef(30.0, 70.0);
+                        fx.debris(cx as f32, cy as f32, dx / d * 40.0 - dy / d * tang, dy / d * 40.0 + dx / d * tang, c.mat, c.shade);
+                    }
+                }
+            }
+            if fx.rng.chance(0.5) {
+                let a = fx.rng.rangef(0.0, std::f32::consts::TAU);
+                fx.spark(h.0 + a.cos() * 9.0, h.1 + a.sin() * 9.0, -a.sin() * 60.0, a.cos() * 60.0, 0.4, MAGIC);
+            }
+            if h.2 <= 0.0 {
+                done.push(k);
+            }
+        }
+        for k in done.into_iter().rev() {
+            let (x, y, _) = self.holes.remove(k);
+            fx.explode(world, x, y, 13, 0.4);
+            fx.burst(x, y, 60, 180.0, MAGIC);
+        }
+    }
+
     fn impact(&mut self, p: &Proj, world: &mut World, fx: &mut Fx, spawned: &mut Vec<(Shot, (f32, f32), f32)>) {
         let r = p.radius();
         match p.card {
+            Card::BlackHole => {
+                self.holes.push((p.x, p.y, 2.8));
+                self.sounds.push(Sfx::Thunder);
+            }
             Card::Spark => fx.explode(world, p.x, p.y, r, 0.3),
             Card::Fireball => fx.explode(world, p.x, p.y, r, 1.0),
             Card::Bomb => fx.explode(world, p.x, p.y, r, 0.5),
@@ -438,8 +515,8 @@ impl Spells {
                 }
                 Card::Frost => ([255, 255, 255], [150, 210, 255]),
                 Card::Teleport => ([250, 230, 255], [170, 110, 255]),
+                Card::BlackHole => ([10, 0, 20], [190, 110, 255]),
                 Card::AcidBall => ([220, 255, 180], [110, 232, 64]),
-                Card::DigBolt => ([255, 240, 200], [190, 150, 100]),
                 _ => ([255, 255, 255], [200, 200, 200]),
             };
             let big = p.mods.heavy > 0 || p.card == Card::Fireball;
@@ -461,6 +538,23 @@ impl Spells {
                 let (x, y) = (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
                 cv.put(x as i32, y as i32 + wob, [140, 240, 255]);
                 cv.put(x as i32, y as i32, [230, 255, 255]);
+            }
+        }
+        for &(hx, hy, left) in &self.holes {
+            let grow = (2.8 - left).min(0.5) * 2.0;
+            let r = (4.0 * grow) as i32;
+            for dy in -r - 3..=r + 3 {
+                for dx in -r - 3..=r + 3 {
+                    let d = ((dx * dx + dy * dy) as f32).sqrt();
+                    if d <= r as f32 {
+                        cv.put(hx as i32 + dx, hy as i32 + dy, [4, 0, 10]);
+                    } else if d <= r as f32 + 2.5 {
+                        let a = (dy as f32).atan2(dx as f32) + time * 6.0;
+                        if (a * 3.0).sin() > -0.2 {
+                            cv.put(hx as i32 + dx, hy as i32 + dy, if d < r as f32 + 1.2 { [255, 220, 255] } else { [170, 90, 255] });
+                        }
+                    }
+                }
             }
         }
         for (pts, _) in &self.bolts {
@@ -488,7 +582,6 @@ impl Spells {
                 Card::Frost => [1.5, 2.5, 3.5],
                 Card::Teleport => [2.5, 1.5, 4.0],
                 Card::AcidBall => [0.8, 2.5, 0.5],
-                Card::DigBolt => [1.5, 1.2, 0.8],
                 _ => [1.0, 1.0, 1.0],
             };
             add(p.x, p.y, c);
@@ -497,6 +590,12 @@ impl Spells {
             for k in 0..8 {
                 let t = k as f32 / 7.0;
                 add(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, [0.6, 1.4, 1.8]);
+            }
+        }
+        for &(hx, hy, _) in &self.holes {
+            for k in 0..6 {
+                let a = k as f32 * 1.047;
+                add(hx + a.cos() * 6.0, hy + a.sin() * 6.0, [1.6, 0.6, 3.0]);
             }
         }
         for (pts, t) in &self.bolts {

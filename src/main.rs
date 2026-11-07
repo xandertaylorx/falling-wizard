@@ -53,6 +53,7 @@ enum Screen {
     Settings,
     Controls,
     Dead,
+    Chat,
 }
 
 fn random_seed() -> u64 {
@@ -173,6 +174,8 @@ struct App {
     fps: f32,
     shake_rng: Rng,
     menu_x: f32,
+    chat_buf: String,
+    history: Vec<String>,
     /// Esc pressed this frame and not yet handled (so one press can't open and close a menu).
     esc: bool,
 }
@@ -202,6 +205,8 @@ async fn run(args: Vec<String>) {
         fps: 60.0,
         shake_rng: Rng::new(99),
         menu_x: 0.0,
+        chat_buf: String::new(),
+        history: Vec::new(),
         esc: false,
     };
 
@@ -236,8 +241,8 @@ async fn run(args: Vec<String>) {
                 (1.0, "menu"),
                 (3.6, "surface_mobs"),
                 (6.4, "spells"),
-                (7.4, "hotbar"),
-                (9.6, "caves"),
+                (7.4, "chat"),
+                (9.6, "volcano"),
                 (11.6, "deep_lava"),
                 (13.6, "sky_isles"),
                 (15.6, "space"),
@@ -307,10 +312,21 @@ fn script_controls(app: &mut App, t: f64, secs: f64) -> Controls {
     } else if at(5.0, 5.8) {
         fire(9, (px + 10.0, py + 40.0), g, &mut ctl);
     }
-    if at(6.6, 6.7) {
-        fire(3, (px + 80.0, py - 20.0), g, &mut ctl);
-    } else if at(7.0, 7.1) {
-        fire(1, (px + 60.0, py - 10.0), g, &mut ctl);
+    if at(5.9, 6.0) {
+        fire(11, (px + 50.0, py - 25.0), g, &mut ctl);
+        if !g.mobs.list.is_empty() {
+            g.mobs.tame(0, &mut g.fx);
+        }
+    }
+    if at(7.0, 7.02) {
+        app.chat_buf = "/tp volcano".into();
+        app.screen = Screen::Chat;
+    }
+    if at(7.6, 7.62) {
+        g.command("/tp volcano");
+        g.command("/time set noon");
+        g.time = 0.0;
+        app.screen = Screen::Play;
     }
     let warp = |dx: f32, y: f32, surface_rel: bool, g: &mut Game| {
         let x = g.player.x + dx;
@@ -321,9 +337,6 @@ fn script_controls(app: &mut App, t: f64, secs: f64) -> Controls {
         g.player.teleport(x, y + 6.0, &g.world);
         g.cam = g.player.center();
     };
-    if at(8.0, 8.02) {
-        warp(0.0, 110.0, true, g);
-    }
     if at(10.0, 10.02) {
         warp(0.0, 300.0, true, g);
     }
@@ -387,6 +400,43 @@ impl App {
                 if self.take_esc() {
                     self.screen = Screen::Pause;
                 }
+                let slash = is_key_pressed(KeyCode::Slash);
+                if (is_key_pressed(KeyCode::T) || slash) && self.screen == Screen::Play {
+                    while get_char_pressed().is_some() {}
+                    self.chat_buf = if slash { "/".into() } else { String::new() };
+                    self.screen = Screen::Chat;
+                }
+            }
+            Screen::Chat => {
+                let ctl = Controls { aim: self.game.aim, ..Default::default() };
+                self.game.update(dt, &ctl, false);
+                while let Some(c) = get_char_pressed() {
+                    if !c.is_control() && self.chat_buf.len() < 120 {
+                        self.chat_buf.push(c);
+                    }
+                }
+                if is_key_pressed(KeyCode::Backspace) {
+                    self.chat_buf.pop();
+                }
+                if is_key_pressed(KeyCode::Up) {
+                    if let Some(h) = self.history.last() {
+                        self.chat_buf = h.clone();
+                    }
+                }
+                if is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter) {
+                    let line = std::mem::take(&mut self.chat_buf);
+                    if !line.trim().is_empty() {
+                        self.history.push(line.clone());
+                    }
+                    self.game.command(&line);
+                    self.screen = Screen::Play;
+                } else if self.take_esc() {
+                    self.chat_buf.clear();
+                    self.screen = Screen::Play;
+                }
+                if self.game.player.dead() {
+                    self.screen = Screen::Dead;
+                }
             }
             _ => {}
         }
@@ -406,12 +456,12 @@ impl App {
         // ----- sound -----
         let sounds: Vec<Sfx> = self.game.sounds.drain(..).collect();
         if let Some(a) = &mut self.audio {
-            if matches!(self.screen, Screen::Play | Screen::Dead) {
+            if matches!(self.screen, Screen::Play | Screen::Dead | Screen::Chat) {
                 for s in sounds {
                     a.play(s);
                 }
             }
-            let live = matches!(self.screen, Screen::Play | Screen::Dead | Screen::Menu);
+            let live = matches!(self.screen, Screen::Play | Screen::Dead | Screen::Menu | Screen::Chat);
             let (f, l) = if live { (self.renderer.fire_visible, self.renderer.lava_visible) } else { (0, 0) };
             a.update(dt, f, l);
         }
@@ -420,8 +470,13 @@ impl App {
         match self.screen {
             Screen::Play => {
                 self.ui.hud(&mut self.game, &view, self.fps, self.settings.show_fps);
+                self.ui.chat(&self.game, None, self.game.time);
                 self.crosshair(&view);
                 show_mouse(false);
+            }
+            Screen::Chat => {
+                self.ui.hud(&mut self.game, &view, self.fps, self.settings.show_fps);
+                self.ui.chat(&self.game, Some(&self.chat_buf), self.game.time);
             }
             Screen::Menu => self.menu(),
             Screen::Pause => self.pause(),
@@ -463,6 +518,7 @@ impl App {
             KeyCode::Key9,
             KeyCode::Key0,
             KeyCode::Minus,
+            KeyCode::Equal,
         ];
         for (k, key) in keys.iter().enumerate() {
             if is_key_pressed(*key) {
@@ -648,8 +704,9 @@ impl App {
             ("F", "GRAPPLING VINE"),
             ("LEFT MOUSE", "CAST SPELL"),
             ("RIGHT MOUSE", "DIG"),
-            ("1 - 9, 0, - / WHEEL", "CHOOSE SPELL"),
+            ("1 - 9, 0, -, = / WHEEL", "CHOOSE SPELL"),
             ("E", "OPEN CHEST / USE ALTAR"),
+            ("T  /  /", "CHAT  /  COMMANDS  (/HELP)"),
             ("B", "SANDBOX BRUSH"),
             ("ESC  /  F11", "PAUSE  /  FULLSCREEN"),
         ];

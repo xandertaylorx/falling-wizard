@@ -37,6 +37,13 @@ impl Weather {
         self.daylight() < 0.25
     }
 
+    pub fn set(&mut self, rain: f32, storm: bool) {
+        self.target = rain;
+        self.rain = rain;
+        self.storm = storm;
+        self.change_t = 180.0;
+    }
+
     pub fn label(&self) -> &'static str {
         if self.storm {
             "STORM"

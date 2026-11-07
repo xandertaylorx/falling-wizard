@@ -29,6 +29,8 @@ pub struct Fx {
     pub flash: f32,
     /// Explosions this step as (x, y, radius), consumed by the game for sound/damage.
     pub explosions: Vec<(f32, f32, i32)>,
+    /// Black holes pulling particles in.
+    pub attractors: Vec<(f32, f32)>,
     pub rng: Rng,
 }
 
@@ -39,7 +41,7 @@ pub const RAIN: [u8; 3] = [150, 180, 230];
 
 impl Fx {
     pub fn new(seed: u64) -> Self {
-        Self { particles: Vec::with_capacity(MAX_PARTICLES), shake: 0.0, flash: 0.0, explosions: Vec::new(), rng: Rng::new(seed ^ 0xF00D) }
+        Self { particles: Vec::with_capacity(MAX_PARTICLES), shake: 0.0, flash: 0.0, explosions: Vec::new(), attractors: Vec::new(), rng: Rng::new(seed ^ 0xF00D) }
     }
 
     pub fn spark(&mut self, x: f32, y: f32, vx: f32, vy: f32, life: f32, col: [u8; 3]) {
@@ -70,9 +72,27 @@ impl Fx {
 
     pub fn step(&mut self, world: &mut World, dt: f32) {
         let mut ps = std::mem::take(&mut self.particles);
+        let attractors = std::mem::take(&mut self.attractors);
         ps.retain_mut(|p| {
             p.life -= dt;
-            p.vy += p.gravity * dt;
+            let mut pulled = false;
+            for &(ax, ay) in &attractors {
+                let (dx, dy) = (ax - p.x, ay - p.y);
+                let d = (dx * dx + dy * dy).sqrt();
+                if d < 2.5 {
+                    return false;
+                }
+                if d < 60.0 {
+                    pulled = true;
+                    let k = 900.0 / (d + 8.0);
+                    p.vx += dx / d * k * dt * 8.0;
+                    p.vy += dy / d * k * dt * 8.0;
+                    p.life = p.life.max(0.5);
+                }
+            }
+            if !pulled {
+                p.vy += p.gravity * dt;
+            }
             p.vx *= 1.0 - 0.6 * dt;
             let n = (p.vx.abs().max(p.vy.abs()) * dt).ceil().max(1.0) as i32;
             let (sx, sy) = (p.vx * dt / n as f32, p.vy * dt / n as f32);
@@ -125,6 +145,7 @@ impl Fx {
         });
         ps.append(&mut self.particles);
         self.particles = ps;
+        self.attractors = attractors;
         self.shake *= (1.0 - 7.0 * dt).max(0.0);
         self.flash = (self.flash - dt * 3.0).max(0.0);
     }

@@ -47,6 +47,8 @@ pub struct Player {
     dash_t: f32,
     dash_cd: f32,
     pub grapple: Option<(f32, f32)>,
+    pub god: bool,
+    pub infinite_flight: bool,
     /// Wall the wizard is sliding on (-1 left, 1 right, 0 none).
     wall: f32,
 }
@@ -74,6 +76,8 @@ impl Player {
             dash_t: 0.0,
             dash_cd: 0.0,
             grapple: None,
+            god: false,
+            infinite_flight: false,
             wall: 0.0,
         }
     }
@@ -102,7 +106,7 @@ impl Player {
     }
 
     pub fn hurt(&mut self, amount: f32) {
-        if amount <= 0.0 || self.dead() || self.dash_t > 0.0 {
+        if amount <= 0.0 || self.dead() || self.dash_t > 0.0 || self.god {
             return;
         }
         self.hp -= amount;
@@ -256,6 +260,9 @@ impl Player {
         self.mana = (self.mana + 22.0 * dt).min(MAX_MANA);
         if !self.dead() {
             self.hp = (self.hp + 1.5 * dt).min(MAX_HP);
+        }
+        if self.infinite_flight {
+            self.flight = MAX_FLIGHT;
         }
         self.vy = self.vy.min(190.0);
         if self.dash_t <= 0.0 && self.grapple.is_none() {
