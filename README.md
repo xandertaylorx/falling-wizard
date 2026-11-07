@@ -13,7 +13,7 @@ Or install it on a Mac with one command (builds from source, adds the app to ~/A
 curl -fsSL https://raw.githubusercontent.com/xandertaylorx/falling-wizard/main/web/install.sh | bash
 ```
 
-The `web/` folder holds the game's website (`web/index.html`).
+The `web/` folder holds the game's landing page; `vercel.json` tells Vercel to serve it.
 
 ## The world
 
@@ -108,4 +108,9 @@ The CPU writes a colour image and a light image (emission + opacity) for the scr
 
 - `cargo run --release -- --bench` runs a headless benchmark that flies across the world casting spells, plus material behaviour checks.
 - `cargo run --release -- --autotest 22 [dir]` runs a scripted, **muted** tour (surface, spells, hotbar, caves, lava, sky isles, space, night storm, another biome) that prints FPS stats and saves screenshots.
+- `cargo run --release -- --photos <dir>` tours the world with the HUD hidden and saves clean screenshots (used for the website).
 - `--mute` starts the game without audio.
+
+## Licence
+
+All rights reserved. The source is publicly visible but not open source: see [LICENSE](LICENSE). You're welcome to install and play the game.

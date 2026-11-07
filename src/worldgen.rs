@@ -297,7 +297,9 @@ impl Generator {
             return 0.0;
         }
         let c = fbm(x as f32 * 0.0011, 11.0, 3, self.s.wrapping_add(40));
-        let c = if x.abs() < 300 { c.max(0.45) } else { c }; // spawn on land
+        // Keep the area around spawn on land, fading out smoothly.
+        let k = smooth(420.0, 260.0, x.abs() as f32);
+        let c = c + (c.max(0.45) - c) * k;
         smooth(0.40, 0.31, c)
     }
 

@@ -189,6 +189,8 @@ fn material_checks() {
 }
 
 struct App {
+    /// Hide the HUD (for --photos).
+    clean: bool,
     screen: Screen,
     back: Screen,
     game: Game,
@@ -217,6 +219,9 @@ async fn run(args: Vec<String>) {
         .iter()
         .position(|a| a == "--autotest")
         .map(|i| (args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(14.0), args.get(i + 2).cloned()));
+    // --photos <dir>: a muted, HUD-free tour that saves screenshots for the website.
+    let photos: Option<String> = args.iter().position(|a| a == "--photos").and_then(|i| args.get(i + 1).cloned());
+    let autotest = if photos.is_some() { Some((29.5, None)) } else { autotest };
     let mute = autotest.is_some() || args.iter().any(|a| a == "--mute");
 
     let settings = Settings::load();
@@ -226,6 +231,7 @@ async fn run(args: Vec<String>) {
     let seed = if autotest.is_some() { 7 } else { random_seed() };
     let audio = if mute { None } else { Audio::new().await };
     let mut app = App {
+        clean: false,
         screen: Screen::Menu,
         back: Screen::Menu,
         game: Game::new(seed),
@@ -265,8 +271,16 @@ async fn run(args: Vec<String>) {
             app.settings.save();
         }
 
-        let script = autotest.as_ref().map(|(secs, _)| script_controls(&mut app, now, *secs));
+        let script = if let Some(dir) = &photos {
+            app.clean = true;
+            Some(photo_tour(&mut app, now, dir))
+        } else {
+            autotest.as_ref().map(|(secs, _)| script_controls(&mut app, now, *secs))
+        };
         app.frame(dt, script);
+        if let Some(path) = PENDING_SHOT.with(|p| p.borrow_mut().take()) {
+            get_screen_data().export_png(&path);
+        }
 
         if let Some((secs, dir)) = &autotest {
             if now > 1.5 {
@@ -309,6 +323,63 @@ async fn run(args: Vec<String>) {
         }
         next_frame().await;
     }
+}
+
+thread_local! {
+    static PENDING_SHOT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Ask for a screenshot once the current frame has been drawn.
+fn app_shot(path: &str) {
+    PENDING_SHOT.with(|p| *p.borrow_mut() = Some(path.to_string()));
+}
+
+/// A scripted photo tour across Earth for the website, saving clean screenshots.
+fn photo_tour(app: &mut App, t: f64, dir: &str) -> Controls {
+    let g = &mut app.game;
+    let ctl = Controls { aim: (g.player.center().0 + 30.0, g.player.center().1 - 5.0), ..Default::default() };
+    if app.screen == Screen::Menu {
+        app.screen = Screen::Play;
+    }
+    g.player.god = true;
+    g.player.infinite_flight = true;
+    g.toasts.clear();
+    g.chat.clear();
+    let stops: [(f64, &[&str], &str); 10] = [
+        (0.5, &["/tp lava", "/time set noon", "/weather clear"], "caves"),
+        (2.8, &["/tp ocean", "/time set evening"], "ocean"),
+        (5.1, &["/tp jungle", "/time set noon"], "jungle"),
+        (7.4, &["/tp volcano", "/time set 0.7"], "volcano"),
+        (9.7, &["/tp desert", "/time set noon", "/weather windy"], "desert"),
+        (12.0, &["/tp tundra", "/weather storm", "/time set night"], "storm"),
+        (14.3, &["/tp forest", "/weather clear", "/time set 0.27"], "forest"),
+        (16.6, &["/tp island", "/time set noon"], "sky"),
+        (18.9, &["/tp space"], "space"),
+        (21.2, &["/tp plains", "/summon lion 2", "/summon tiger", "/summon slime 3", "/summon demoneye 2"], "creatures"),
+    ];
+    for (k, (at, cmds, name)) in stops.iter().enumerate() {
+        if t >= *at && t < at + 0.02 {
+            for c in cmds.iter() {
+                g.command(c);
+            }
+        }
+        if t >= at + 1.9 && t < at + 1.92 {
+            app_shot(&format!("{dir}/{k}_{name}.png"));
+        }
+    }
+    for (k, (at, idx, name)) in [(23.5, 1usize, "toxic"), (26.2, 4usize, "ice")].iter().enumerate() {
+        if t >= *at && t < at + 0.02 {
+            let p = planets::Planet::nearest(0, 0, 8)[*idx].clone();
+            g.enter_planet(p);
+            g.command("/time set noon");
+        }
+        if t >= at + 2.0 && t < at + 2.02 {
+            app_shot(&format!("{dir}/{}_{name}.png", 10 + k));
+        }
+    }
+    g.toasts.clear();
+    g.player.vy = g.player.vy.min(0.0);
+    ctl
 }
 
 /// Scripted controls for --autotest. Drives screens too.
@@ -554,9 +625,11 @@ impl App {
         // ----- UI -----
         match self.screen {
             Screen::Play => {
-                self.ui.hud(&mut self.game, &view, self.fps, self.settings.show_fps);
-                self.ui.chat(&self.game, None, self.game.time, 0);
-                self.crosshair(&view);
+                if !self.clean {
+                    self.ui.hud(&mut self.game, &view, self.fps, self.settings.show_fps);
+                    self.ui.chat(&self.game, None, self.game.time, 0);
+                    self.crosshair(&view);
+                }
                 show_mouse(false);
             }
             Screen::Planets => {
