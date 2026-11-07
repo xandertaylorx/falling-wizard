@@ -24,9 +24,12 @@ pub enum Card {
     Seeds,
     Torrent,
     DigBeam,
+    Wind,
+    Hurricane,
+    Tornado,
 }
 
-pub const SPELL_BAR: [Card; 12] = [
+pub const SPELL_BAR: [Card; 15] = [
     Card::Spark,
     Card::Fireball,
     Card::Bomb,
@@ -39,6 +42,9 @@ pub const SPELL_BAR: [Card; 12] = [
     Card::DigBeam,
     Card::OilSpray,
     Card::BlackHole,
+    Card::Wind,
+    Card::Hurricane,
+    Card::Tornado,
 ];
 
 impl Card {
@@ -53,6 +59,9 @@ impl Card {
             Card::Lightning => "Lightning",
             Card::OilSpray => "Oil Spray",
             Card::BlackHole => "Black Hole",
+            Card::Wind => "Wind",
+            Card::Hurricane => "Hurricane",
+            Card::Tornado => "Tornado",
             Card::Seeds => "Seeds of Life",
             Card::Torrent => "Torrent",
             Card::DigBeam => "Digging Beam",
@@ -70,6 +79,9 @@ impl Card {
             Card::Lightning => "Instant strike in a line",
             Card::OilSpray => "Spray of flammable oil",
             Card::BlackHole => "Swallows everything nearby",
+            Card::Wind => "Hold to blow a gale",
+            Card::Hurricane => "Huge blast that flings everything",
+            Card::Tornado => "A twister that rips up the land",
             Card::Seeds => "Scatter seeds that grow",
             Card::Torrent => "Spray of water",
             Card::DigBeam => "Hold to bore through rock",
@@ -87,6 +99,9 @@ impl Card {
             Card::Lightning => 20.0,
             Card::OilSpray => 0.5,
             Card::BlackHole => 45.0,
+            Card::Wind => 0.15,
+            Card::Hurricane => 40.0,
+            Card::Tornado => 30.0,
             Card::Seeds => 8.0,
             Card::Torrent => 0.5,
             Card::DigBeam => 0.5,
@@ -104,6 +119,9 @@ impl Card {
             Card::Lightning => 0.5,
             Card::OilSpray => 0.02,
             Card::BlackHole => 1.2,
+            Card::Wind => 0.02,
+            Card::Hurricane => 1.0,
+            Card::Tornado => 0.8,
             Card::Seeds => 0.3,
             Card::Torrent => 0.02,
             Card::DigBeam => 0.0,
@@ -121,6 +139,9 @@ impl Card {
             Card::AcidBall => (["..###..", ".##+##.", "##+####", "#######", "#######", ".#####.", "#.#.#.."], [110, 232, 64], [220, 255, 180]),
             Card::Lightning => (["....##.", "...##..", "..##...", ".#####.", "...##..", "..##...", ".##...."], [255, 250, 140], [255, 255, 255]),
             Card::OilSpray => (["...#...", "..###..", ".##+##.", ".#+###.", ".#####.", "..###..", "......."], [70, 48, 52], [150, 110, 90]),
+            Card::Wind => (["#####..", "......#", "####..#", "....##.", "######.", "......#", "..####."], [200, 228, 240], [255, 255, 255]),
+            Card::Hurricane => (["..###..", ".#...#.", "#..+..#", "#.+.#.#", "#..#..#", ".#...#.", "..##..."], [170, 210, 255], [255, 255, 255]),
+            Card::Tornado => (["#######", ".#####.", "..###..", "..##...", "...##..", "...#...", "..+...."], [176, 176, 188], [230, 230, 240]),
             Card::BlackHole => (["..+++..", ".+###+.", "+##.##+", "+#...#+", "+##.##+", ".+###+.", "..+++.."], [20, 10, 30], [190, 110, 255]),
             Card::Seeds => (["...#...", ".##.##.", "..###..", "...#...", "...#...", "..+++..", ".+++++."], [110, 200, 80], [130, 92, 56]),
             Card::Torrent => (["...#...", "..###..", ".##+##.", ".#+###.", ".#####.", "..###..", "......."], [60, 130, 230], [180, 220, 255]),
@@ -192,6 +213,23 @@ pub struct Hole {
 }
 
 pub const HOLE_LIFE: f32 = 4.5;
+pub const TWISTER_LIFE: f32 = 7.0;
+
+/// A tornado travelling along the ground.
+pub struct Twister {
+    pub x: f32,
+    pub y: f32,
+    dir: f32,
+    pub age: f32,
+}
+
+impl Twister {
+    pub fn height(&self) -> f32 {
+        let grow = (self.age / 0.6).min(1.0);
+        let fade = ((TWISTER_LIFE - self.age) / 0.8).clamp(0.0, 1.0);
+        52.0 * grow * fade
+    }
+}
 
 impl Hole {
     /// Reach of its pull, growing as it feeds.
@@ -215,17 +253,19 @@ pub struct Spells {
     beam: Option<(f32, f32, f32, f32)>,
     bolts: Vec<(Vec<(f32, f32)>, f32)>,
     pub holes: Vec<Hole>,
+    pub tornadoes: Vec<Twister>,
     pub sounds: Vec<Sfx>,
 }
 
 impl Spells {
     pub fn new() -> Self {
-        Self { projs: Vec::new(), teleport: None, beam: None, bolts: Vec::new(), holes: Vec::new(), sounds: Vec::new() }
+        Self { projs: Vec::new(), teleport: None, beam: None, bolts: Vec::new(), holes: Vec::new(), tornadoes: Vec::new(), sounds: Vec::new() }
     }
 
     pub fn clear(&mut self) {
         self.projs.clear();
         self.holes.clear();
+        self.tornadoes.clear();
         self.beam = None;
         self.teleport = None;
     }
@@ -296,6 +336,26 @@ impl Spells {
                 return 0;
             }
             Card::BlackHole => (90.0, 0.9, 0.0, Sfx::Zap),
+            Card::Wind => {
+                self.gust((x, y), (ux, uy), false, world, fx, mobs);
+                return 0;
+            }
+            Card::Hurricane => {
+                self.gust((x, y), (ux, uy), true, world, fx, mobs);
+                self.sounds.push(Sfx::Thunder);
+                self.sounds.push(Sfx::Whoosh);
+                fx.shake = (fx.shake + 9.0).min(14.0);
+                return 0;
+            }
+            Card::Tornado => {
+                if self.tornadoes.len() >= 3 {
+                    self.tornadoes.remove(0);
+                }
+                let dir = if ux.abs() < 0.05 { 1.0 } else { ux.signum() };
+                self.tornadoes.push(Twister { x: x + dir * 6.0, y, dir, age: 0.0 });
+                self.sounds.push(Sfx::Whoosh);
+                return 0;
+            }
             Card::DigBeam => {
                 let (mut bx, mut by) = (x, y);
                 let mut hit = false;
@@ -366,6 +426,7 @@ impl Spells {
         }
         self.bolts.retain(|b| b.1 > 0.0);
         self.step_holes(world, fx, mobs, dt);
+        self.step_twisters(world, fx, mobs, dt);
         let mut projs = std::mem::take(&mut self.projs);
         let mut spawned: Vec<(Shot, (f32, f32), f32)> = Vec::new();
         projs.retain_mut(|p| {
@@ -457,6 +518,13 @@ impl Spells {
                 let d = fx.rng.f32().sqrt() * reach;
                 let (cx, cy) = ((h.x + a.cos() * d) as i32, (h.y + a.sin() * d) as i32);
                 let Some(c) = world.get(cx, cy) else { continue };
+                if c.back != M::Empty && fx.rng.chance(0.5) {
+                    world.set_back(cx, cy, M::Empty);
+                    let (dx, dy) = (h.x - cx as f32, h.y - cy as f32);
+                    let dl = (dx * dx + dy * dy).sqrt().max(1.0);
+                    let col = crate::render::shade(c.back.base_color(), fx.rng.next_u32() as u8, 0.4);
+                    fx.mote(cx as f32, cy as f32, dx / dl * 30.0 - dy / dl * 60.0, dy / dl * 30.0 + dx / dl * 60.0, 1.5, col, 0.0, 0.0, 0.0);
+                }
                 if c.mat == M::Empty {
                     continue;
                 }
@@ -516,6 +584,139 @@ impl Spells {
             self.sounds.push(Sfx::Boom);
             self.sounds.push(Sfx::Thunder);
         }
+    }
+
+    /// Wind in a cone. A hurricane rips up the ground and flings everything hard.
+    fn gust(&mut self, (x, y): (f32, f32), (ux, uy): (f32, f32), strong: bool, world: &mut World, fx: &mut Fx, mobs: &mut Mobs) {
+        use crate::materials::Kind as K;
+        let (len, half, samples) = if strong { (130.0, 0.55, 1600) } else { (70.0, 0.3, 120) };
+        for _ in 0..samples {
+            let along = fx.rng.f32().sqrt() * len;
+            let side = fx.rng.rangef(-1.0, 1.0) * along * half;
+            let (px, py) = (x + ux * along - uy * side, y + uy * along + ux * side);
+            let (cx, cy) = (px.floor() as i32, py.floor() as i32);
+            let Some(c) = world.get(cx, cy) else { continue };
+            let near = 1.0 - along / len;
+            let speed = if strong { fx.rng.rangef(220.0, 380.0) * (0.5 + near) } else { fx.rng.rangef(80.0, 140.0) };
+            let (vx, vy) = (ux * speed + fx.rng.rangef(-20.0, 20.0), uy * speed - fx.rng.rangef(10.0, 50.0));
+            if c.back != M::Empty && (if strong { fx.rng.chance(0.6 * near + 0.2) } else { c.back == M::Leaves && fx.rng.chance(0.03) }) {
+                world.set_back(cx, cy, M::Empty);
+                let col = crate::render::shade(c.back.base_color(), fx.rng.next_u32() as u8, 0.4);
+                let life = fx.rng.rangef(1.0, 2.5);
+                fx.mote(px, py, vx * 0.6, vy * 0.6, life, col, 0.0, 60.0, 40.0);
+            }
+            match c.mat.kind() {
+                K::Powder | K::Liquid => {
+                    if strong || fx.rng.chance(0.25) {
+                        world.set(cx, cy, Cell::EMPTY);
+                        fx.debris(px, py, vx, vy, c.mat, c.shade);
+                    }
+                }
+                K::Gas | K::Fire => {
+                    let (tx, ty) = ((px + ux * 3.0) as i32, (py + uy * 3.0) as i32);
+                    if world.mat(tx, ty) == M::Empty {
+                        world.set(tx, ty, c);
+                        world.set(cx, cy, Cell::EMPTY);
+                    }
+                }
+                K::Static if strong && !matches!(c.mat, M::Chest | M::Altar) => {
+                    let hardness = match c.mat {
+                        M::Basalt => 0.03,
+                        M::Stone | M::Brick | M::MoonRock => 0.12,
+                        _ => 0.4,
+                    };
+                    if fx.rng.chance(hardness * near * near) {
+                        world.set(cx, cy, Cell::EMPTY);
+                        let m = match c.mat {
+                            M::Stone | M::Basalt | M::Brick | M::Glass | M::MoonRock => M::Rubble,
+                            M::Grass => M::Dirt,
+                            M::Ice => M::Snow,
+                            M::Wood | M::Leaves | M::Plant => M::Empty,
+                            other => other,
+                        };
+                        if m != M::Empty {
+                            fx.debris(px, py, vx, vy, m, c.shade);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        // Visible gusts.
+        let streaks = if strong { 220 } else { 5 };
+        for _ in 0..streaks {
+            let along = fx.rng.f32() * len * if strong { 0.5 } else { 0.3 };
+            let side = fx.rng.rangef(-1.0, 1.0) * (along * half + 2.0);
+            let sp = fx.rng.rangef(220.0, 360.0);
+            let a = fx.rng.rangef(0.35, 0.7);
+            let life = fx.rng.rangef(0.15, 0.4) * if strong { 1.6 } else { 1.0 };
+            fx.mote(x + ux * along - uy * side, y + uy * along + ux * side, ux * sp, uy * sp, life, [(225.0 * a + 30.0) as u8, (235.0 * a + 20.0) as u8, (245.0 * a + 10.0) as u8], 0.0, 0.0, 0.0);
+        }
+        fx.push_cone(x, y, ux, uy, len, half, if strong { 280.0 } else { 16.0 });
+        mobs.push_cone(x, y, (ux, uy), len, half, if strong { 420.0 } else { 26.0 }, if strong { 35.0 } else { 0.0 }, fx);
+    }
+
+    fn step_twisters(&mut self, world: &mut World, fx: &mut Fx, mobs: &mut Mobs, dt: f32) {
+        use crate::materials::Kind as K;
+        fx.tornadoes.clear();
+        for t in self.tornadoes.iter_mut() {
+            t.age += dt;
+            t.x += t.dir * 36.0 * dt;
+            // Hug the ground: find the surface under the funnel.
+            let gx = t.x as i32;
+            let mut gy = t.y as i32 - 24;
+            while gy < t.y as i32 + 40 && !world.mat(gx, gy + 1).solid() {
+                gy += 1;
+            }
+            if (gy as f32 - t.y).abs() < 30.0 {
+                t.y += (gy as f32 - t.y) * (dt * 6.0).min(1.0);
+            }
+            if (1..14).all(|k| world.mat(gx + t.dir as i32 * 4, t.y as i32 - k).solid()) {
+                t.dir = -t.dir;
+            }
+            let h = t.height();
+            fx.tornadoes.push((t.x, t.y, h));
+            mobs.twister(t.x, t.y, h, dt, fx);
+            for _ in 0..70 {
+                let up = fx.rng.f32() * fx.rng.f32() * h;
+                let w = 4.0 + up * 0.25;
+                let (px, py) = (t.x + fx.rng.rangef(-w, w), t.y + 3.0 - up);
+                let (cx, cy) = (px as i32, py as i32);
+                let Some(c) = world.get(cx, cy) else { continue };
+                if c.back != M::Empty && fx.rng.chance(0.35) {
+                    world.set_back(cx, cy, M::Empty);
+                    let col = crate::render::shade(c.back.base_color(), fx.rng.next_u32() as u8, 0.4);
+                    let vx = fx.rng.rangef(-40.0, 40.0);
+                    fx.mote(px, py, vx, -60.0, 2.5, col, 0.0, 60.0, 30.0);
+                }
+                let loose = match c.mat.kind() {
+                    K::Powder | K::Liquid => true,
+                    K::Static => matches!(c.mat, M::Grass | M::Dirt | M::Snow | M::Leaves | M::Plant | M::Ice) && fx.rng.chance(0.12),
+                    _ => false,
+                };
+                if loose {
+                    world.set(cx, cy, Cell::EMPTY);
+                    let m = match c.mat {
+                        M::Grass => M::Dirt,
+                        M::Ice => M::Snow,
+                        M::Leaves | M::Plant => M::Empty,
+                        other => other,
+                    };
+                    if m != M::Empty {
+                        let (vx, vy) = (fx.rng.rangef(-60.0, 60.0), -fx.rng.rangef(60.0, 140.0));
+                        fx.debris(px, py, vx, vy, m, c.shade);
+                    }
+                }
+            }
+            for _ in 0..3 {
+                let up = fx.rng.f32() * h;
+                let a = fx.rng.rangef(0.0, std::f32::consts::TAU);
+                let r = 2.0 + up * 0.24;
+                let g = fx.rng.rangef(150.0, 210.0) as u8;
+                fx.mote(t.x + a.cos() * r, t.y - up, -a.sin() * 80.0, -40.0, 0.5, [g, g, (g as u16 + 8).min(255) as u8], 0.0, 0.0, 0.0);
+            }
+        }
+        self.tornadoes.retain(|t| t.age < TWISTER_LIFE);
     }
 
     fn impact(&mut self, p: &Proj, world: &mut World, fx: &mut Fx, spawned: &mut Vec<(Shot, (f32, f32), f32)>) {
@@ -595,6 +796,19 @@ impl Spells {
                 let (x, y) = (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
                 cv.put(x as i32, y as i32 + wob, [140, 240, 255]);
                 cv.put(x as i32, y as i32, [230, 255, 255]);
+            }
+        }
+        for t in &self.tornadoes {
+            let h = t.height() as i32;
+            for k in 0..h {
+                let r = 2.0 + k as f32 * 0.24;
+                for j in 0..4 {
+                    let ang = t.age * 14.0 - k as f32 * 0.32 + j as f32 * 1.571;
+                    let front = ang.sin() > 0.0;
+                    let x = t.x + ang.cos() * r;
+                    let c = if front { [214, 214, 222] } else { [150, 150, 160] };
+                    cv.blend(x as i32, t.y as i32 - k, c, if front { 0.55 } else { 0.3 });
+                }
             }
         }
         for (pts, _) in &self.bolts {

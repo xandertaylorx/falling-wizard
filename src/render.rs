@@ -166,13 +166,14 @@ void main() {
     if (abs(em.a - 0.5) < 0.03) {
         col = alb.rgb + max(L - 1.0, 0.0) * 0.15;
     } else {
-        col = alb.rgb * L * 1.35;
+        col = alb.rgb * L * 1.5;
         col += em.rgb * 3.2 * (0.6 + 0.4 * alb.rgb);
         col += max(L - 1.1, 0.0) * 0.18;
-        col = 1.0 - exp(-col * 1.25);
+        col = 1.0 - exp(-col * 1.35);
+        col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, 1.12);
     }
     vec2 q = uv * 2.0 - 1.0;
-    float vig = 1.0 - 0.28 * pow(clamp(length(q * vec2(0.85, 1.0)), 0.0, 1.5), 2.6);
+    float vig = 1.0 - 0.18 * pow(clamp(length(q * vec2(0.85, 1.0)), 0.0, 1.5), 2.6);
     gl_FragColor = vec4(col * vig, 1.0);
 }"#;
 
@@ -281,6 +282,8 @@ impl Renderer {
             self.far[vx] = -30.0 - fbm(fx * 0.006, 1.0, 3, 31) * 90.0;
             self.near[vx] = 12.0 - fbm(nx * 0.011, 2.0, 3, 37) * 70.0;
         }
+        let wind = game.weather.wind_now();
+        let sway_amp = 0.55 + (wind.abs() / 45.0).min(1.2);
         let sky_ctx = SkyCtx { view: *view, day, tod, rain, time, far: &self.far, near: &self.near };
         let sky_light = [0.92 * day + 0.04, 0.95 * day + 0.05, 1.0 * day + 0.09];
 
@@ -302,9 +305,36 @@ impl Renderer {
                 let i = wy as usize * WW + wx as usize;
                 let c = world.cells[i];
                 let wall = world.wall[i];
-                let is_sky = c.mat == M::Empty && wall == 0;
+                // Background foliage sways in the wind.
+                let mut back = c.back;
+                if matches!(back, M::Leaves | M::Plant) || (back == M::Empty && wall == 0) {
+                    let sw = ((time * 1.7 + gx as f32 * 0.05 + gy as f32 * 0.31).sin() * sway_amp).round() as i32;
+                    let sx = wx + sw;
+                    if sw != 0 && sx >= 0 && (sx as usize) < WW {
+                        let b = world.cells[wy as usize * WW + sx as usize].back;
+                        if matches!(b, M::Leaves | M::Plant | M::Empty) && matches!(back, M::Leaves | M::Plant | M::Empty) {
+                            back = b;
+                        }
+                    }
+                }
+                let tree = if back != M::Empty {
+                    let hsh = if back == M::Wood { hash3(gx, gy.div_euclid(3), 7) } else { hash3(gx, gy, 5) };
+                    let base = match back {
+                        M::Plant if hsh % 41 == 0 => [232, 84, 96],
+                        M::Plant if hsh % 37 == 0 => [250, 220, 84],
+                        M::Leaves if gy < -1000 => [60, 60, 60],
+                        m => m.base_color(),
+                    };
+                    let col = shade(base, hsh as u8, back.variation());
+                    Some([(col[0] as f32 * 0.84) as u8, (col[1] as f32 * 0.84) as u8, (col[2] as f32 * 0.84) as u8])
+                } else {
+                    None
+                };
+                let is_sky = c.mat == M::Empty && wall == 0 && tree.is_none();
                 let bg = || {
-                    if wall == 0 {
+                    if let Some(t) = tree {
+                        t
+                    } else if wall == 0 {
                         sky(&sky_ctx, vx, vy, gy)
                     } else {
                         let depth = (gy - world.surf[wx as usize]) as f32;
@@ -313,19 +343,39 @@ impl Renderer {
                         } else {
                             lerp3([64, 60, 72], [44, 38, 54], (depth - 220.0) / 80.0)
                         };
-                        shade(base, wall, 0.5)
+                        let mut col = shade(base, wall, 0.5);
+                        let solid_n = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().filter(|(dx, dy)| world.mat(gx + dx, gy + dy).solid()).count();
+                        if solid_n > 0 {
+                            let k = 1.0 - solid_n as f32 * 0.11;
+                            col = [(col[0] as f32 * k) as u8, (col[1] as f32 * k) as u8, (col[2] as f32 * k) as u8];
+                        }
+                        col
                     }
                 };
                 // Colour, emitted light (0..E) and opacity.
                 let (mut rgb, mut e, a): ([u8; 3], [f32; 3], f32) = match c.mat {
-                    M::Empty => (bg(), if is_sky { sky_light } else { [0.0; 3] }, if is_sky { 0.5 } else { 0.0 }),
+                    M::Empty => {
+                        let (e, a) = match back {
+                            M::Leaves => ([0.0; 3], 0.3),
+                            M::Wood => ([0.0; 3], 0.45),
+                            M::Plant => ([0.0; 3], 0.12),
+                            M::Mushroom => ([0.2, 0.8, 0.75], 0.15),
+                            _ if is_sky => (sky_light, 0.5),
+                            _ => ([0.0; 3], 0.0),
+                        };
+                        (bg(), e, a)
+                    }
                     M::Smoke => (lerp3(bg(), M::Smoke.base_color(), (c.life as f32 / 90.0).min(1.0) * 0.85), [0.0; 3], 0.12),
                     M::Steam => (lerp3(bg(), M::Steam.base_color(), (c.life as f32 / 60.0).min(1.0) * 0.6), [0.0; 3], 0.05),
                     M::Gas => (lerp3(bg(), M::Gas.base_color(), 0.22), [0.0; 3], 0.02),
                     M::Glass => (lerp3(bg(), shade(M::Glass.base_color(), c.shade, 0.1), 0.45), [0.0; 3], 0.05),
                     M::Water => {
                         let tw = (hash3(gx, gy, (frame / 8) as u32) & 15) as u8;
-                        (lerp3(bg(), shade(M::Water.base_color(), c.shade.saturating_add(tw), 0.14), 0.85), [0.0; 3], 0.1)
+                        let mut col = lerp3(bg(), shade(M::Water.base_color(), c.shade.saturating_add(tw), 0.14), 0.82);
+                        if world.mat(gx, gy - 1) == M::Empty {
+                            col = lerp3(col, [200, 230, 255], 0.35);
+                        }
+                        (col, [0.0; 3], 0.1)
                     }
                     M::Fire => {
                         fire += 1;
@@ -379,7 +429,7 @@ impl Renderer {
                 // Ambient sky light: full outdoors, fading with depth below the surface.
                 let depth = (gy - world.surf[wx as usize]) as f32;
                 let open = if gy < -260 { 0.9 } else { day * 0.85 + 0.15 } * (1.0 - rain * 0.25);
-                let amb = if depth <= 3.0 { 1.0 } else { (1.0 - (depth - 3.0) / 45.0).max(0.0) } * open;
+                let amb = if depth <= 3.0 { 1.0 } else { (1.0 - (depth - 3.0) / 70.0).max(0.0) } * open;
                 alb[o] = rgb[0];
                 alb[o + 1] = rgb[1];
                 alb[o + 2] = rgb[2];
@@ -465,7 +515,7 @@ impl Renderer {
         self.comp.set_uniform("u_size", vec2(wf, hf));
         self.comp.set_uniform("u_player", pu);
         self.comp.set_uniform("u_flash", game.fx.flash);
-        self.comp.set_uniform("u_ambient", 0.1f32);
+        self.comp.set_uniform("u_ambient", 0.15f32);
         self.comp.set_uniform("u_flip", self.flip);
         draw_texture_ex(&self.alb_tex, ox, oy, WHITE, DrawTextureParams { dest_size: Some(vec2(wf * s, hf * s)), ..Default::default() });
         gl_use_default_material();

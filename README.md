@@ -23,10 +23,13 @@ They burst into blood, goo, bones or rubble, and drop gold.
 
 ## Spells
 
-Every spell has its own numbered hotbar slot (1–9, 0, -, =) or use the mouse wheel:
-Spark Bolt, Fireball, Bomb, Lightning, Frost, Acid Ball, Torrent, Seeds of Life, Teleport, Digging Beam, Oil Spray and **Black Hole** (warps space around it, tears up everything nearby including solid rock, creatures and you, then collapses and spits it all back out).
+Every spell has its own hotbar slot (1–9, 0, -, =, Q, R, G) or use the mouse wheel:
+Spark Bolt, Fireball, Bomb, Lightning, Frost, Acid Ball, Torrent, Seeds of Life, Teleport, Digging Beam, Oil Spray, **Wind** (hold to blow a gale), **Hurricane** (a huge blast that rips up the ground and sends creatures flying), **Tornado** (a twister that travels along the ground, sucking things up and flinging them out of the top) and **Black Hole** (warps space around it, tears up everything nearby including solid rock, creatures and you, then collapses and spits it all back out).
 
 - **Pets:** cast Seeds of Life straight at a creature to tame it (up to three). Pets follow you, fight nearby creatures and wear a heart.
+- **Trees and plants** live on a background layer: you, water and sand pass straight through them, but they still catch fire and burn away.
+- **Oil:** a thin film just burns, but a big concentrated pool explodes when lit, and the bigger the pool, the bigger the blasts.
+- **Atmosphere:** wind gusts push smoke and rain, leaves fall from trees, dust drifts in the light, snow falls in the tundra, sand blows across deserts, fireflies come out at night and water drips in caves.
 - **Ragdolls:** creatures you kill go flying and splatter where they land.
 - **Volcanoes and geysers:** volcanoes erupt lava every so often, and geysers blast water into the air.
 - **Chests and altars:** chests in ruins and on sky islands hold gold. Altars restore you and set your respawn point.
@@ -68,7 +71,7 @@ This is a creative game: there's no fall damage and no hunger. You can only be h
 | F | Grappling vine (press again to let go) |
 | Left mouse | Cast the selected spell |
 | Right mouse | Dig |
-| 1–9, 0, -, = / mouse wheel | Choose a spell |
+| 1–9, 0, -, =, Q, R, G / mouse wheel | Choose a spell |
 | T / / | Chat / commands |
 | E | Open chest / use altar |
 | B | Sandbox brush (paint any material; wheel = size, 1–0 / Z X = material) |

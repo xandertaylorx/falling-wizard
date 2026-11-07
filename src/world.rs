@@ -54,8 +54,10 @@ pub struct World {
     pub frame: u64,
     pub fire_count: usize,
     pub active_chunks: usize,
-    /// Explosions requested by the simulation (gunpowder), consumed by the game.
+    /// Explosions requested by the simulation (gunpowder, oil), consumed by the game.
     pub explosions: Vec<(i32, i32, i32)>,
+    /// Current wind, nudges gases sideways.
+    pub wind: f32,
 }
 
 impl World {
@@ -79,6 +81,7 @@ impl World {
             fire_count: 0,
             active_chunks: 0,
             explosions: Vec::new(),
+            wind: 0.0,
         };
         for j in 0..WCY {
             for i in 0..WCX {
@@ -265,7 +268,9 @@ impl World {
             return;
         }
         c.clock = self.clock;
-        self.cells[Self::li(x, y)] = c;
+        let i = Self::li(x, y);
+        c.back = self.cells[i].back;
+        self.cells[i] = c;
         self.wake(x, y);
     }
 
@@ -274,6 +279,10 @@ impl World {
         let a = Self::li(x0, y0);
         let b = Self::li(x1, y1);
         self.cells.swap(a, b);
+        // The background stays put; only the foreground moves.
+        let (ba, bb) = (self.cells[a].back, self.cells[b].back);
+        self.cells[a].back = bb;
+        self.cells[b].back = ba;
         self.cells[a].clock = self.clock;
         self.cells[b].clock = self.clock;
         self.wake(x0, y0);
@@ -306,13 +315,62 @@ impl World {
         self.set(gx, gy, c);
     }
 
-    /// Set fire to (gx, gy) if what's there can burn.
+    pub fn back(&self, gx: i32, gy: i32) -> M {
+        let (x, y) = (gx - self.ox, gy - self.oy);
+        if Self::inb(x, y) {
+            self.cells[Self::li(x, y)].back
+        } else {
+            M::Empty
+        }
+    }
+
+    pub fn set_back(&mut self, gx: i32, gy: i32, m: M) {
+        let (x, y) = (gx - self.ox, gy - self.oy);
+        if Self::inb(x, y) {
+            self.cells[Self::li(x, y)].back = m;
+            self.wake(x, y);
+        }
+    }
+
+    /// Set fire to (gx, gy) if what's there (or behind it) can burn.
     pub fn ignite_at(&mut self, gx: i32, gy: i32) {
         let (x, y) = (gx - self.ox, gy - self.oy);
-        let m = self.lm(x, y);
-        if m.flammable() && Self::inb(x, y) {
-            self.ignite(x, y, m);
+        if !Self::inb(x, y) {
+            return;
         }
+        let m = self.lm(x, y);
+        if m.flammable() {
+            self.ignite(x, y, m);
+        } else {
+            self.burn_back(x, y);
+        }
+    }
+
+    /// Burn the background at (x, y): it's consumed and flames appear in front.
+    fn burn_back(&mut self, x: i32, y: i32) {
+        let i = Self::li(x, y);
+        let b = self.cells[i].back;
+        if !b.flammable() {
+            return;
+        }
+        self.cells[i].back = M::Empty;
+        if self.cells[i].mat == M::Empty {
+            let f = Cell::burning(b, &mut self.rng);
+            self.lset(x, y, f);
+        }
+    }
+
+    /// Oil cells within radius 5 of (x, y).
+    fn oil_density(&self, x: i32, y: i32) -> i32 {
+        let mut n = 0;
+        for dy in -5..=5 {
+            for dx in -5..=5 {
+                if self.lm(x + dx, y + dy) == M::Oil {
+                    n += 1;
+                }
+            }
+        }
+        n
     }
 
     fn ignite(&mut self, x: i32, y: i32, m: M) {
@@ -338,6 +396,17 @@ impl World {
                     let f = Cell::fire(&mut self.rng);
                     self.lset(x, y - 1, f);
                 }
+            }
+            M::Oil => {
+                // A thin film just burns; a big concentrated pool goes up with a bang.
+                if self.rng.chance(0.12) && self.explosions.len() < 200 {
+                    let n = self.oil_density(x, y);
+                    if n >= 55 {
+                        self.explosions.push((x + self.ox, y + self.oy, (n / 11).clamp(5, 11)));
+                    }
+                }
+                let f = Cell::burning(m, &mut self.rng);
+                self.lset(x, y, f);
             }
             _ => {
                 let f = Cell::burning(m, &mut self.rng);
@@ -490,22 +559,21 @@ impl World {
             // Bloom: a little crown of leaves.
             for dy in -2i32..=1 {
                 for dx in -2i32..=2 {
-                    if dx * dx + dy * dy <= 5 && self.lm(x + dx, y + dy) == M::Empty && self.rng.chance(0.8) {
-                        let l = Cell::new(M::Leaves, &mut self.rng);
-                        self.lset(x + dx, y + dy, l);
+                    let (lx, ly) = (x + dx, y + dy);
+                    if dx * dx + dy * dy <= 5 && Self::inb(lx, ly) && self.cells[Self::li(lx, ly)].back == M::Empty && self.rng.chance(0.8) {
+                        self.cells[Self::li(lx, ly)].back = M::Leaves;
                     }
                 }
             }
-            let p = Cell::new(M::Plant, &mut self.rng);
-            self.lset(x, y, p);
+            self.lset(x, y, Cell::EMPTY);
+            self.cells[Self::li(x, y)].back = M::Plant;
             return;
         }
         let r = self.rng.f32();
         let dx = if r < 0.6 { 0 } else if r < 0.8 { -1 } else { 1 };
         if self.lm(x + dx, y - 1) == M::Empty {
-            let mut stem = Cell::new(M::Plant, &mut self.rng);
-            stem.shade = c.shade;
-            self.lset(x, y, stem);
+            self.lset(x, y, Cell::EMPTY);
+            self.cells[Self::li(x, y)].back = M::Plant;
             let mut tip = c;
             tip.life = c.life - 1;
             tip.temp = 0;
@@ -522,8 +590,8 @@ impl World {
         } else {
             let t = c.temp.saturating_add(1);
             if t > 30 {
-                let p = Cell::new(M::Plant, &mut self.rng);
-                self.lset(x, y, p);
+                self.lset(x, y, Cell::EMPTY);
+                self.cells[Self::li(x, y)].back = M::Plant;
             } else {
                 self.cells[Self::li(x, y)].temp = t;
             }
@@ -601,7 +669,8 @@ impl World {
                 return;
             }
         }
-        let dir = self.rng.sign();
+        let w = self.wind;
+        let dir = if self.rng.chance((w.abs() / 60.0).min(0.85)) { w.signum() as i32 } else { self.rng.sign() };
         for dx in [dir, -dir] {
             if self.lm(x + dx, y - 1) == M::Empty {
                 self.swap(x, y, x + dx, y - 1);
@@ -635,12 +704,31 @@ impl World {
         }
 
         let (hmin, hmax) = if fuel { (10, 45) } else { (25, 70) };
+        if self.cells[Self::li(x, y)].back.flammable() && self.rng.chance(0.08) {
+            let b = self.cells[Self::li(x, y)].back;
+            self.cells[Self::li(x, y)].back = M::Empty;
+            let extra = b.burn().map(|b| b.hi as u8 / 3).unwrap_or(0);
+            let i = Self::li(x, y);
+            self.cells[i].life = self.cells[i].life.saturating_add(extra);
+            self.cells[i].temp = self.cells[i].temp.max(FIRE_FUEL);
+        }
         for (dx, dy) in N8 {
             let (nx, ny) = (x + dx, y + dy);
             if !Self::inb(nx, ny) {
                 continue;
             }
             let ni = Self::li(nx, ny);
+            let back = self.cells[ni].back;
+            if back.flammable() {
+                let p = match back {
+                    M::Leaves | M::Plant => 0.07,
+                    M::Wood => 0.02,
+                    _ => 0.04,
+                } * if fuel { 1.6 } else { 1.0 };
+                if self.rng.chance(p) {
+                    self.burn_back(nx, ny);
+                }
+            }
             let m = self.cells[ni].mat;
             match m {
                 M::Ice | M::Snow => {
@@ -744,6 +832,13 @@ impl World {
                         }
                     }
                 }
+            }
+        }
+        for (dx, dy) in N8 {
+            let (nx, ny) = (x + dx, y + dy);
+            if Self::inb(nx, ny) && self.cells[Self::li(nx, ny)].back.flammable() && self.rng.chance(0.05) {
+                self.burn_back(nx, ny);
+                busy = true;
             }
         }
         if busy {

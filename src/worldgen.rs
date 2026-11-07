@@ -160,7 +160,9 @@ impl Generator {
                 let y = y0 + ly;
                 let i = ly as usize * CU + lx as usize;
                 let (m, w, shade) = self.base(x, y, surf, biome, topsoil, &mut rng);
-                if m != M::Empty {
+                if m == M::Plant {
+                    cells[i].back = M::Plant;
+                } else if m != M::Empty {
                     let mut c = Cell::new(m, &mut rng);
                     if let Some(s) = shade {
                         c.shade = s;
@@ -395,6 +397,10 @@ impl Generator {
                 return;
             }
             let i = ((y - y0) as usize) * CU + (x - x0) as usize;
+            if matches!(m, M::Mushroom | M::Plant) {
+                cells[i].back = m;
+                return;
+            }
             if cells[i].mat == M::Empty || m != M::Empty {
                 let mut c = Cell::new(m, rng);
                 if let Some(s) = shade {
@@ -538,15 +544,14 @@ impl Generator {
     fn stamp_trees(&self, cx: i32, cy: i32, cells: &mut [Cell], rng: &mut Rng) {
         const SLOT: i32 = 11;
         let (x0, y0) = (cx * CHUNK, cy * CHUNK);
-        let mut put = |x: i32, y: i32, m: M, shade: u8, over: bool, cells: &mut [Cell]| {
+        let put = |x: i32, y: i32, m: M, shade: u8, over: bool, cells: &mut [Cell]| {
             if x < x0 || y < y0 || x >= x0 + CHUNK || y >= y0 + CHUNK {
                 return;
             }
             let i = ((y - y0) as usize) * CU + (x - x0) as usize;
-            if over || cells[i].mat == M::Empty || cells[i].mat == M::Plant {
-                let mut c = Cell::new(m, rng);
-                c.shade = shade;
-                cells[i] = c;
+            let _ = (shade, &rng);
+            if over || cells[i].back == M::Empty {
+                cells[i].back = m;
             }
         };
         for slot in (x0 - 12).div_euclid(SLOT)..=(x0 + CHUNK + 12).div_euclid(SLOT) {

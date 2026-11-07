@@ -478,6 +478,48 @@ impl Mobs {
         }
     }
 
+    /// Knock creatures in a cone (wind spells); pets are spared the damage.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_cone(&mut self, x: f32, y: f32, (ux, uy): (f32, f32), len: f32, half: f32, force: f32, dmg: f32, fx: &mut Fx) {
+        for i in 0..self.list.len() {
+            let (cx, cy) = Self::center(&self.list[i]);
+            let (dx, dy) = (cx - x, cy - y);
+            let along = dx * ux + dy * uy;
+            if along < 0.0 || along > len || (dx * -uy + dy * ux).abs() > along * half + 6.0 {
+                continue;
+            }
+            let k = 1.0 - along / len * 0.5;
+            let m = &mut self.list[i];
+            m.vx += ux * force * k;
+            m.vy += uy * force * k - force * 0.35 * k;
+            m.on_ground = false;
+            if dmg > 0.0 && !m.pet {
+                self.hurt(i, dmg * k, (0.0, 0.0), fx);
+            }
+        }
+    }
+
+    /// Creatures caught in a tornado are spun up and flung out the top.
+    pub fn twister(&mut self, x: f32, y: f32, h: f32, dt: f32, _fx: &mut Fx) {
+        for m in self.list.iter_mut() {
+            let (cx, cy) = Self::center(m);
+            let (dx, up) = (x - cx, y - cy);
+            if dx.abs() < 7.0 + up.max(0.0) * 0.25 && up > -4.0 && up < h {
+                m.vx += (dx * 8.0 + (m.t * 10.0).sin() * 240.0) * dt;
+                m.vy = (m.vy - 420.0 * dt).max(-160.0);
+                m.x += m.vx * dt * 0.5;
+                m.y += m.vy * dt * 0.5;
+                if up > h - 8.0 {
+                    m.vx += -dx.signum() * 600.0 * dt;
+                }
+                if !m.pet {
+                    m.hp -= 22.0 * dt;
+                    m.hurt = m.hurt.max(0.04);
+                }
+            }
+        }
+    }
+
     pub fn freeze(&mut self, i: usize, secs: f32) {
         self.list[i].frozen = secs;
     }

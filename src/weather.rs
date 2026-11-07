@@ -20,17 +20,67 @@ pub struct Weather {
     pub wind: f32,
     bolts: Vec<(Vec<(f32, f32)>, f32)>,
     rng: Rng,
+    clock: f32,
 }
 
 impl Weather {
     pub fn new(seed: u64) -> Self {
-        Self { time: 0.32, rain: 0.0, target: 0.0, storm: false, change_t: 90.0, bolt_t: 6.0, wind: -20.0, bolts: Vec::new(), rng: Rng::new(seed ^ 0x5A1A) }
+        Self { time: 0.32, rain: 0.0, target: 0.0, storm: false, change_t: 90.0, bolt_t: 6.0, wind: -20.0, bolts: Vec::new(), rng: Rng::new(seed ^ 0x5A1A), clock: 0.0 }
     }
 
     /// 0 at night .. 1 at midday, with a gentle dawn and dusk.
     pub fn daylight(&self) -> f32 {
         let d = 0.5 - (self.time * std::f32::consts::TAU).cos() * 0.5;
         (d * 1.7 - 0.35).clamp(0.0, 1.0)
+    }
+
+    /// Wind right now, with slow swells and quick gusts.
+    pub fn wind_now(&self) -> f32 {
+        let c = self.clock;
+        self.wind * (0.6 + 0.4 * (c * 0.23).sin()) + (c * 1.7).sin() * (c * 0.31).sin() * 14.0 * (0.4 + self.rain)
+    }
+
+    /// Subtle life in the air: falling leaves, dust, snow, fireflies, blowing sand, cave drips.
+    pub fn ambience(&mut self, world: &World, fx: &mut Fx, (px, py): (f32, f32)) {
+        use crate::materials::Material as M;
+        use crate::worldgen::Biome;
+        let wind = self.wind_now();
+        for _ in 0..8 {
+            let (x, y) = (px + self.rng.rangef(-180.0, 180.0), py + self.rng.rangef(-110.0, 110.0));
+            let (gx, gy) = (x as i32, y as i32);
+            let Some(c) = world.get(gx, gy) else { continue };
+            if c.mat != M::Empty {
+                continue;
+            }
+            let depth = gy - world.surface_at(gx);
+            let biome = world.gen.biome(gx);
+            let r = self.rng.f32();
+            if c.back == M::Leaves {
+                if r < 0.3 {
+                    let col = if self.rng.chance(0.3) { [222, 146, 56] } else if biome == Biome::Snow { [46, 96, 56] } else { [96, 156, 66] };
+                    fx.mote(x, y, wind * 0.4, 8.0, 7.0, col, 0.0, 10.0, 70.0);
+                }
+            } else if depth < -1 && gy > -240 {
+                if biome == Biome::Snow && r < 0.45 {
+                    fx.mote(x, y, wind * 0.4, 14.0, 7.0, [240, 244, 252], 0.0, 4.0, 30.0);
+                } else if biome == Biome::Desert && wind.abs() > 14.0 && r < 0.5 {
+                    let gy2 = world.surface_at(gx) as f32 - 1.0 - self.rng.rangef(0.0, 5.0);
+                    fx.mote(x, gy2, wind * 2.4, -4.0, 0.9, [214, 184, 120], 0.0, 0.0, 0.0);
+                } else if self.night() && biome == Biome::Forest && depth > -30 && r < 0.1 {
+                    let (vx, vy) = (self.rng.rangef(-8.0, 8.0), self.rng.rangef(-6.0, 6.0));
+                    fx.mote(x, y, vx, vy, 4.0, [210, 255, 120], 2.0, 0.0, 25.0);
+                } else if !self.night() && r < 0.05 {
+                    fx.mote(x, y, wind * 0.3, self.rng.rangef(-3.0, 3.0), 6.0, [232, 226, 206], 0.0, 0.0, 12.0);
+                }
+            } else if depth > 6 {
+                if r < 0.05 {
+                    fx.mote(x, y, self.rng.rangef(-3.0, 3.0), self.rng.rangef(-2.0, 2.0), 5.0, [130, 124, 120], 0.0, 0.0, 6.0);
+                } else if r < 0.09 && world.mat(gx, gy - 1).solid() {
+                    let sh = self.rng.next_u32() as u8;
+                    fx.debris(x, y, 0.0, 5.0, M::Water, sh);
+                }
+            }
+        }
     }
 
     pub fn night(&self) -> bool {
@@ -58,6 +108,7 @@ impl Weather {
 
     pub fn update(&mut self, dt: f32, world: &mut World, fx: &mut Fx, (px, py): (f32, f32), sounds: &mut Vec<Sfx>) {
         self.time = (self.time + dt / DAY_LEN).fract();
+        self.clock += dt;
         self.change_t -= dt;
         if self.change_t <= 0.0 {
             self.change_t = self.rng.rangef(50.0, 140.0);
@@ -80,7 +131,7 @@ impl Weather {
                 let x = px + self.rng.rangef(-220.0, 220.0);
                 let y = py - 120.0 + self.rng.rangef(-20.0, 10.0);
                 if y < world.surface_at(x as i32) as f32 && world.mat(x as i32, y as i32).passable() {
-                    fx.rain_drop(x, y, self.wind);
+                    fx.rain_drop(x, y, self.wind_now());
                 }
             }
         }

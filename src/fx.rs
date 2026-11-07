@@ -20,6 +20,8 @@ pub struct Particle {
     pub col: [u8; 3],
     pub glow: f32,
     pub gravity: f32,
+    /// Side-to-side drift (leaves, snow).
+    pub flutter: f32,
 }
 
 pub struct Fx {
@@ -31,6 +33,11 @@ pub struct Fx {
     pub explosions: Vec<(f32, f32, i32)>,
     /// Black holes pulling particles in.
     pub attractors: Vec<(f32, f32)>,
+    /// Tornadoes: (x, ground y, height).
+    pub tornadoes: Vec<(f32, f32, f32)>,
+    /// Ambient wind, drifts light particles.
+    pub wind: f32,
+    time: f32,
     pub rng: Rng,
 }
 
@@ -41,12 +48,12 @@ pub const RAIN: [u8; 3] = [150, 180, 230];
 
 impl Fx {
     pub fn new(seed: u64) -> Self {
-        Self { particles: Vec::with_capacity(MAX_PARTICLES), shake: 0.0, flash: 0.0, explosions: Vec::new(), attractors: Vec::new(), rng: Rng::new(seed ^ 0xF00D) }
+        Self { particles: Vec::with_capacity(MAX_PARTICLES), shake: 0.0, flash: 0.0, explosions: Vec::new(), attractors: Vec::new(), tornadoes: Vec::new(), wind: 0.0, time: 0.0, rng: Rng::new(seed ^ 0xF00D) }
     }
 
     pub fn spark(&mut self, x: f32, y: f32, vx: f32, vy: f32, life: f32, col: [u8; 3]) {
         if self.particles.len() < MAX_PARTICLES {
-            self.particles.push(Particle { x, y, vx, vy, mat: M::Empty, shade: 0, life, col, glow: 0.6, gravity: 220.0 });
+            self.particles.push(Particle { x, y, vx, vy, mat: M::Empty, shade: 0, life, col, glow: 0.6, gravity: 220.0, flutter: 0.0 });
         }
     }
 
@@ -62,7 +69,31 @@ impl Fx {
     /// A material particle that becomes a cell where it lands.
     pub fn debris(&mut self, x: f32, y: f32, vx: f32, vy: f32, mat: M, shade: u8) {
         if self.particles.len() < MAX_PARTICLES {
-            self.particles.push(Particle { x, y, vx, vy, mat, shade, life: 4.0, col: [0; 3], glow: 0.0, gravity: 220.0 });
+            self.particles.push(Particle { x, y, vx, vy, mat, shade, life: 4.0, col: [0; 3], glow: 0.0, gravity: 220.0, flutter: 0.0 });
+        }
+    }
+
+    /// A light ambient particle (dust, leaf, snowflake, firefly).
+    #[allow(clippy::too_many_arguments)]
+    pub fn mote(&mut self, x: f32, y: f32, vx: f32, vy: f32, life: f32, col: [u8; 3], glow: f32, gravity: f32, flutter: f32) {
+        if self.particles.len() < MAX_PARTICLES - 500 {
+            self.particles.push(Particle { x, y, vx, vy, mat: M::Empty, shade: 0, life, col, glow, gravity, flutter });
+        }
+    }
+
+    /// Shove particles inside a cone (wind spells).
+    pub fn push_cone(&mut self, x: f32, y: f32, ux: f32, uy: f32, len: f32, half: f32, force: f32) {
+        for p in self.particles.iter_mut() {
+            let (dx, dy) = (p.x - x, p.y - y);
+            let along = dx * ux + dy * uy;
+            if along < 0.0 || along > len {
+                continue;
+            }
+            let side = (dx * -uy + dy * ux).abs();
+            if side < along * half + 3.0 {
+                p.vx += ux * force;
+                p.vy += uy * force;
+            }
         }
     }
 
@@ -71,6 +102,7 @@ impl Fx {
     }
 
     pub fn step(&mut self, world: &mut World, dt: f32) {
+        self.time += dt;
         let mut ps = std::mem::take(&mut self.particles);
         let attractors = std::mem::take(&mut self.attractors);
         ps.retain_mut(|p| {
@@ -95,8 +127,29 @@ impl Fx {
                     p.life = p.life.max(0.5);
                 }
             }
+            for &(tx, ty, th) in &self.tornadoes {
+                let (dx, h) = (tx - p.x, ty - p.y);
+                if dx.abs() < 7.0 + h.max(0.0) * 0.25 && h > -4.0 && h < th {
+                    pulled = true;
+                    // Spin around the funnel and climb; fling out at the top.
+                    let spin = (self.time * 9.0 + p.y * 0.4).sin();
+                    p.vx += (dx * 9.0 + spin * 260.0) * dt;
+                    p.vy -= 330.0 * dt;
+                    p.vy = p.vy.max(-150.0);
+                    if h > th - 6.0 {
+                        p.vx += -dx.signum() * 500.0 * dt;
+                    }
+                    p.life = p.life.max(0.6);
+                }
+            }
             if !pulled {
                 p.vy += p.gravity * dt;
+            }
+            if p.mat == M::Empty && p.gravity < 100.0 {
+                p.vx += (self.wind * 0.8 - p.vx) * dt * 0.6;
+            }
+            if p.flutter > 0.0 {
+                p.vx += (self.time * 3.0 + p.y * 0.2).sin() * p.flutter * dt;
             }
             p.vx *= 1.0 - 0.6 * dt;
             let n = (p.vx.abs().max(p.vy.abs()) * dt).ceil().max(1.0) as i32;
@@ -159,7 +212,7 @@ impl Fx {
 
     pub fn rain_drop(&mut self, x: f32, y: f32, wind: f32) {
         if self.particles.len() < MAX_PARTICLES {
-            self.particles.push(Particle { x, y, vx: wind, vy: 260.0, mat: M::Empty, shade: 0, life: 2.0, col: RAIN, glow: 0.0, gravity: 0.0 });
+            self.particles.push(Particle { x, y, vx: wind, vy: 260.0, mat: M::Empty, shade: 0, life: 2.0, col: RAIN, glow: 0.0, gravity: 0.0, flutter: 0.0 });
         }
     }
 
@@ -179,6 +232,17 @@ impl Fx {
                 }
                 let Some(c) = world.get(px, py) else { continue };
                 let m = c.mat;
+                if c.back != M::Empty && d <= rf {
+                    world.set_back(px, py, M::Empty);
+                    if c.back.flammable() && self.rng.chance(0.3 * fire) {
+                        world.ignite_at(px, py);
+                    } else if self.rng.chance(0.4) {
+                        let col = shade(c.back.base_color(), self.rng.next_u32() as u8, 0.4);
+                        let (vx, vy) = (dx as f32 * 12.0 + self.rng.rangef(-30.0, 30.0), dy as f32 * 12.0 - self.rng.rangef(40.0, 90.0));
+                        let life = self.rng.rangef(0.8, 1.6);
+                        self.mote(px as f32, py as f32, vx, vy, life, col, 0.0, 120.0, 30.0);
+                    }
+                }
                 if d > rf {
                     if m.flammable() && m != M::Gunpowder {
                         world.ignite_at(px, py);
@@ -281,6 +345,10 @@ impl Fx {
                 }
                 let (px, py) = (cx + dx, cy + dy);
                 let m = world.mat(px, py);
+                if m == M::Empty && world.back(px, py) != M::Empty && self.rng.chance(chance) {
+                    world.set_back(px, py, M::Empty);
+                    continue;
+                }
                 if m == M::Empty || !world.in_window(px, py) || m.kind() == Kind::Gas || m == M::Fire {
                     continue;
                 }

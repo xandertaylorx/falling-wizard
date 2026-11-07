@@ -356,7 +356,7 @@ impl Ui {
         let total = n as f32 * size + (n - 1) as f32 * gap;
         let x0 = (sw - total) * 0.5;
         let y = sh - size - 18.0;
-        const KEYS: [&str; 12] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "="];
+        const KEYS: [&str; 15] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Q", "R", "G"];
         for (k, sp) in SPELL_BAR.iter().enumerate() {
             let x = x0 + k as f32 * (size + gap);
             if self.hot(x, y, size, size) && self.pressed {

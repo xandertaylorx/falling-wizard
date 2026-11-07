@@ -339,7 +339,19 @@ impl Game {
                 }
             }
         }
+        for t in &self.spells.tornadoes {
+            let (cx, cy) = self.player.center();
+            let (dx, up) = (t.x - cx, t.y - cy);
+            if !idle && dx.abs() < 7.0 + up.max(0.0) * 0.25 && up > -4.0 && up < t.height() {
+                self.player.vx += (dx * 6.0 + (self.time * 10.0).sin() * 200.0) * dt;
+                self.player.vy = (self.player.vy - 380.0 * dt).max(-140.0);
+            }
+        }
+        let wind = self.weather.wind_now();
+        self.world.wind = wind;
+        self.fx.wind = wind;
         let pc = self.player.center();
+        self.weather.ambience(&self.world, &mut self.fx, pc);
         self.weather.update(dt, &mut self.world, &mut self.fx, pc, &mut self.sounds);
 
         // Zoom out a little during big chain reactions.

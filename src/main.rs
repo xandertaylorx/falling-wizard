@@ -137,7 +137,8 @@ fn material_checks() {
         g.world.place(ox + x, oy + 49, M::Seed);
     }
     run(&mut g, 900);
-    println!("seeds -> plant cells {}, leaves {}", count(&g, M::Plant), count(&g, M::Leaves));
+    let backs = |g: &Game, m: M| (0..60).flat_map(|y| (0..60).map(move |x| (x, y))).filter(|(x, y)| g.world.back(ox + x, oy + y) == m).count();
+    println!("seeds -> background plant cells {}, leaves {}", backs(&g, M::Plant), backs(&g, M::Leaves));
 
     clear(&mut g);
     for y in 30..50 {
@@ -160,7 +161,28 @@ fn material_checks() {
         }
     }
     run(&mut g, 300);
+    let lava_line = format!("lava+water -> basalt {}, steam {}, lava left {}", count(&g, M::Basalt), count(&g, M::Steam), count(&g, M::Lava));
+    clear(&mut g);
+    for y in 30..50 {
+        for x in 5..55 {
+            g.world.place(ox + x, oy + y, M::Oil);
+        }
+    }
+    g.world.ignite_at(ox + 30, oy + 30);
+    let mut booms = 0;
+    for _ in 0..240 {
+        g.world.step();
+        g.fx.step(&mut g.world, game::STEP);
+        for (x, y, r) in g.world.explosions.drain(..).collect::<Vec<_>>() {
+            booms += 1;
+            g.fx.explode(&mut g.world, x as f32, y as f32, r, 0.6);
+        }
+    }
+    println!("big oil pool lit -> {} explosions, oil left {}", booms, count(&g, M::Oil));
+    if false {
     println!("lava+water -> basalt {}, steam {}, lava left {}", count(&g, M::Basalt), count(&g, M::Steam), count(&g, M::Lava));
+    }
+    println!("{lava_line}");
 }
 
 struct App {
@@ -308,12 +330,15 @@ fn script_controls(app: &mut App, t: f64, secs: f64) -> Controls {
     if at(3.7, 4.4) {
         fire(0, (px + 60.0, py - 6.0), g, &mut ctl);
     } else if at(4.5, 4.6) {
-        fire(2, (px + 40.0, py - 10.0), g, &mut ctl);
+        fire(13, (px + 40.0, py - 10.0), g, &mut ctl);
     } else if at(5.0, 5.8) {
         fire(9, (px + 10.0, py + 40.0), g, &mut ctl);
     }
+    if at(6.2, 6.3) {
+        fire(14, (px + 50.0, py), g, &mut ctl);
+    }
     if at(5.9, 6.0) {
-        fire(11, (px + 50.0, py - 25.0), g, &mut ctl);
+        fire(11, (px - 50.0, py - 25.0), g, &mut ctl);
         if !g.mobs.list.is_empty() {
             g.mobs.tame(0, &mut g.fx);
         }
@@ -519,6 +544,9 @@ impl App {
             KeyCode::Key0,
             KeyCode::Minus,
             KeyCode::Equal,
+            KeyCode::Q,
+            KeyCode::R,
+            KeyCode::G,
         ];
         for (k, key) in keys.iter().enumerate() {
             if is_key_pressed(*key) {
@@ -704,7 +732,7 @@ impl App {
             ("F", "GRAPPLING VINE"),
             ("LEFT MOUSE", "CAST SPELL"),
             ("RIGHT MOUSE", "DIG"),
-            ("1 - 9, 0, -, = / WHEEL", "CHOOSE SPELL"),
+            ("1-9 0 - = Q R G / WHEEL", "CHOOSE SPELL"),
             ("E", "OPEN CHEST / USE ALTAR"),
             ("T  /  /", "CHAT  /  COMMANDS  (/HELP)"),
             ("B", "SANDBOX BRUSH"),
