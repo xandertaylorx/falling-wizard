@@ -48,7 +48,8 @@ say "Building (a couple of minutes the first time)..."
 cargo build --release --quiet --manifest-path "$DIR/src/Cargo.toml"
 
 say "Installing..."
-mkdir -p "$APP/Contents/MacOS" "$BIN"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$BIN"
+cp "$DIR/src/assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns" 2>/dev/null || true
 # Copy then rename, so a running copy of the game isn't disturbed mid-update.
 cp "$DIR/src/target/release/falling-wizard" "$APP/Contents/MacOS/falling-wizard.new"
 mv -f "$APP/Contents/MacOS/falling-wizard.new" "$APP/Contents/MacOS/falling-wizard"
@@ -62,6 +63,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>com.fallingwizard.game</string>
   <key>CFBundleExecutable</key><string>falling-wizard</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>NSHighResolutionCapable</key><true/>
@@ -70,6 +72,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 ln -sf "$APP/Contents/MacOS/falling-wizard" "$BIN/falling-wizard"
 
+touch "$APP"  # refresh the Finder/Dock icon
 say "Installed! Open \"Falling Wizard\" from ~/Applications or Launchpad, or run: falling-wizard"
 case ":$PATH:" in
   *":$BIN:"*) ;;

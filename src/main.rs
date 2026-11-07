@@ -34,6 +34,11 @@ fn conf() -> Conf {
         window_height: 720,
         window_resizable: true,
         high_dpi: false,
+        icon: Some(macroquad::miniquad::conf::Icon {
+            small: *include_bytes!("../assets/icon_16.rgba"),
+            medium: *include_bytes!("../assets/icon_32.rgba"),
+            big: *include_bytes!("../assets/icon_64.rgba"),
+        }),
         ..Default::default()
     }
 }
