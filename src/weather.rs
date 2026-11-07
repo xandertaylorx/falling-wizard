@@ -69,6 +69,8 @@ pub struct Weather {
     pub sand: f32,
     rng: Rng,
     clock: f32,
+    /// Weather switched off in world options: always clear.
+    pub locked: bool,
 }
 
 impl Weather {
@@ -89,6 +91,7 @@ impl Weather {
             sand: 0.0,
             rng: Rng::new(seed ^ 0x5A1A),
             clock: 0.0,
+            locked: false,
         }
     }
 
@@ -156,7 +159,7 @@ impl Weather {
         }
         self.clock += dt;
         self.change_t -= dt;
-        if self.change_t <= 0.0 {
+        if self.change_t <= 0.0 && !self.locked {
             self.pick_next();
         }
         let (tr, tc, tf, tw) = self.kind.targets();

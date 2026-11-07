@@ -71,6 +71,7 @@ enum Screen {
     Chat,
     Planets,
     Warp,
+    NewWorld,
 }
 
 fn random_seed() -> u64 {
@@ -223,6 +224,9 @@ struct App {
     tab_base: Option<String>,
     warp_t: f32,
     warp_dest: Option<planets::Planet>,
+    nw: game::WorldOptions,
+    nw_seed: String,
+    nw_focus: Option<u8>,
     picker_list: Vec<planets::Planet>,
     /// Esc pressed this frame and not yet handled (so one press can't open and close a menu).
     esc: bool,
@@ -264,6 +268,9 @@ async fn run(args: Vec<String>) {
         tab_base: None,
         warp_t: 0.0,
         warp_dest: None,
+        nw: game::WorldOptions::new(1),
+        nw_seed: String::new(),
+        nw_focus: None,
         picker_list: Vec::new(),
         esc: false,
     };
@@ -304,14 +311,13 @@ async fn run(args: Vec<String>) {
                 cpu_times.push(frame_start.elapsed().as_secs_f32() * 1000.0);
             }
             let shots = [
-                (1.0, "menu"),
+                (1.0, "new_world"),
                 (3.6, "surface_mobs"),
-                (6.4, "spells"),
                 (9.6, "portal"),
                 (11.0, "picker"),
-                (13.4, "warp"),
                 (16.4, "planet"),
-                (21.4, "planet2"),
+                (18.25, "shatter"),
+                (23.6, "earth_return"),
                 (secs - 0.4, "settings"),
             ];
             if shot_k < shots.len() && now >= shots[shot_k].0 {
@@ -408,6 +414,15 @@ fn script_controls(app: &mut App, t: f64, secs: f64) -> Controls {
         g.cam = g.player.center();
         app.screen = Screen::Play;
     }
+    if at(0.3, 0.9) && app.screen == Screen::Menu {
+        app.nw = game::WorldOptions::new(42);
+        app.nw_seed = "42".into();
+        app.nw_focus = Some(0);
+        app.screen = Screen::NewWorld;
+    }
+    if at(1.1, 1.12) {
+        app.screen = Screen::Menu;
+    }
     if t < 1.2 {
         return ctl;
     }
@@ -473,10 +488,14 @@ fn script_controls(app: &mut App, t: f64, secs: f64) -> Controls {
         app.warp_t = 0.0;
         app.screen = Screen::Warp;
     }
-    if at(17.0, 17.02) && app.picker_list.len() > 4 {
-        app.warp_dest = Some(app.picker_list[4].clone());
-        app.warp_t = 0.0;
-        app.screen = Screen::Warp;
+    if at(18.0, 18.02) {
+        if let Some(((x0, _, x1, y1), _)) = g.portals.first().cloned() {
+            let (cx, cy) = ((x0 + x1) as f32 * 0.5, y1 as f32 - 6.0);
+            g.fx.explode(&mut g.world, cx + 6.0, cy, 6, 0.3);
+        }
+    }
+    if at(19.5, 19.52) {
+        g.command("/tp earth");
     }
     let _ = warp;
 
@@ -564,30 +583,34 @@ impl App {
                     self.tab_base = None;
                     self.sugg = 0;
                 }
-                let (_, opts) = game::suggest(&self.chat_buf);
-                let n_opts = game::suggest(self.tab_base.as_deref().unwrap_or(&self.chat_buf)).1.len();
-                if is_key_pressed(KeyCode::Tab) && n_opts > 0 {
-                    // Tab completes; pressing it again cycles through the matches.
-                    let base = self.tab_base.clone().unwrap_or_else(|| self.chat_buf.clone());
-                    let (start, base_opts) = game::suggest(&base);
-                    let pick = &base_opts[self.sugg % base_opts.len()];
+                // Minecraft-style: arrows move the highlight, Tab inserts it (and keeps cycling).
+                let base = self.tab_base.clone().unwrap_or_else(|| self.chat_buf.clone());
+                let (start, opts) = game::suggest(&base);
+                let apply = |sugg: usize, buf: &mut String| {
+                    let pick = &opts[sugg % opts.len()];
                     let space = if start == 1 && game::usage(&format!("/{}", pick)).map_or(false, |u| u.contains('<') || u.contains('[')) { " " } else { "" };
-                    self.chat_buf = format!("{}{}{}", &base[..start], pick, space);
-                    if base_opts.len() > 1 {
-                        self.tab_base = Some(base);
-                        self.sugg = (self.sugg + 1) % base_opts.len();
-                    } else {
+                    *buf = format!("{}{}{}", &base[..start], pick, space);
+                };
+                let down = is_key_pressed(KeyCode::Down);
+                let up = is_key_pressed(KeyCode::Up);
+                if !opts.is_empty() && (down || up) {
+                    let n = opts.len();
+                    self.sugg = if down { (self.sugg + 1) % n } else { (self.sugg + n - 1) % n };
+                    if self.tab_base.is_some() {
+                        apply(self.sugg, &mut self.chat_buf);
+                    }
+                } else if up {
+                    if let Some(h) = self.history.last() {
+                        self.chat_buf = h.clone();
                         self.tab_base = None;
                         self.sugg = 0;
                     }
-                } else if is_key_pressed(KeyCode::Down) && !opts.is_empty() {
-                    self.sugg = (self.sugg + 1) % opts.len();
-                } else if is_key_pressed(KeyCode::Up) {
-                    if !opts.is_empty() && self.chat_buf.starts_with('/') && self.chat_buf.len() > 1 {
-                        self.sugg = (self.sugg + opts.len() - 1) % opts.len();
-                    } else if let Some(h) = self.history.last() {
-                        self.chat_buf = h.clone();
+                } else if is_key_pressed(KeyCode::Tab) && !opts.is_empty() {
+                    if self.tab_base.is_some() {
+                        self.sugg = (self.sugg + 1) % opts.len();
                     }
+                    apply(self.sugg, &mut self.chat_buf);
+                    self.tab_base = if opts.len() > 1 { Some(base.clone()) } else { None };
                 }
                 if is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::KpEnter) {
                     let line = std::mem::take(&mut self.chat_buf);
@@ -658,10 +681,11 @@ impl App {
                 }
             }
             Screen::Warp => {}
+            Screen::NewWorld => self.new_world_screen(),
             Screen::Chat => {
                 self.ui.hud(&mut self.game, &view, self.fps, self.settings.show_fps);
-                let sel = if self.tab_base.is_some() { 0 } else { self.sugg };
-                self.ui.chat(&self.game, Some(&self.chat_buf), self.game.time, sel);
+                let src = self.tab_base.clone().unwrap_or_else(|| self.chat_buf.clone());
+                self.ui.chat(&self.game, Some((&self.chat_buf, &src)), self.game.time, self.sugg);
             }
             Screen::Menu => self.menu(),
             Screen::Pause => self.pause(),
@@ -885,8 +909,12 @@ impl App {
         }
         y += 42.0;
         if self.ui.button("NEW WORLD", cx, y, w) {
-            self.game = Game::new(random_seed());
-            self.screen = Screen::Play;
+            let seed = random_seed();
+            self.nw = game::WorldOptions::new(seed);
+            self.nw_seed = seed.to_string();
+            self.nw_focus = Some(0);
+            while get_char_pressed().is_some() {}
+            self.screen = Screen::NewWorld;
         }
         y += 42.0;
         if self.ui.button("SETTINGS", cx, y, w) {
@@ -902,7 +930,8 @@ impl App {
         if self.ui.button("QUIT", cx, y, w) {
             std::process::exit(0);
         }
-        self.ui.text(&format!("SEED {}", self.game.seed), 20.0, sh - 28.0, 1.0, MUTED);
+        let mode = if self.game.options.creative { "CREATIVE" } else { "SURVIVAL" };
+        self.ui.text(&format!("{}  -  {}  -  SEED {}", self.game.options.name.to_uppercase(), mode, self.game.seed), 20.0, sh - 28.0, 1.0, MUTED);
         self.update_badge(sw, sh);
     }
 
@@ -934,6 +963,117 @@ impl App {
                     _ => u.update(),
                 }
             }
+        }
+    }
+
+    /// Create a world: name, seed, game mode and options, with a preview of where you'll start.
+    fn new_world_screen(&mut self) {
+        let (sw, sh) = (screen_width(), screen_height());
+        let t = self.game.time;
+        draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.02, 0.01, 0.05, 0.74));
+        self.title("CREATE A WORLD", sh * 0.07, 5.0, TEXT);
+
+        // Typing into the focused field.
+        while let Some(c) = get_char_pressed() {
+            if c.is_control() {
+                continue;
+            }
+            match self.nw_focus {
+                Some(0) if self.nw.name.len() < 24 => self.nw.name.push(c),
+                Some(1) if self.nw_seed.len() < 18 => self.nw_seed.push(c),
+                _ => {}
+            }
+        }
+        if is_key_pressed(KeyCode::Backspace) {
+            match self.nw_focus {
+                Some(0) => {
+                    self.nw.name.pop();
+                }
+                Some(1) => {
+                    self.nw_seed.pop();
+                }
+                _ => {}
+            }
+        }
+        if is_key_pressed(KeyCode::Tab) {
+            self.nw_focus = Some(if self.nw_focus == Some(0) { 1 } else { 0 });
+        }
+        let seed: u64 = self.nw_seed.trim().parse().unwrap_or_else(|_| {
+            self.nw_seed.bytes().fold(1469598103934665603u64, |h, b| (h ^ b as u64).wrapping_mul(1099511628211)) % 1_000_000_000
+        });
+
+        // Left: the world you'll start on, spinning.
+        let (lx, ly) = (sw * 0.27, sh * 0.47);
+        let start = if self.nw.alien_start {
+            let list = planets::Planet::nearest(0, 0, 12);
+            list[1 + (seed as usize % (list.len() - 1))].clone()
+        } else {
+            planets::Planet::earth()
+        };
+        let r = (sh * 0.2).min(sw * 0.13);
+        for k in 0..90 {
+            let h = noise::hash3(k, 5, 2);
+            let a = (h % 1000) as f32 / 1000.0 * std::f32::consts::TAU + t * 0.05;
+            let d = r * 1.3 + ((h >> 10) % 100) as f32;
+            draw_rectangle(lx + a.cos() * d, ly + a.sin() * d * 0.8, 2.0, 2.0, Color::new(0.9, 0.9, 1.0, 0.35));
+        }
+        self.ui.planet_sphere(&start, lx, ly, r, 4.0, t * 2.0);
+        let c = start.color();
+        self.ui.text_center(if self.nw.alien_start { "A STRANGE NEW WORLD" } else { "EARTH" }, lx, ly + r + 26.0, 3.0, Color::from_rgba(c[0], c[1], c[2], 255));
+        self.ui.text_center(&format!("SEED {}", seed), lx, ly + r + 58.0, 1.0, MUTED);
+
+        // Right: options.
+        let (x, w) = (sw * 0.5, (sw * 0.42).min(560.0));
+        let mut y = sh * 0.19;
+        if self.ui.text_field("WORLD NAME", x, y, w, &self.nw.name.clone(), self.nw_focus == Some(0), t) {
+            self.nw_focus = Some(0);
+        }
+        y += 36.0;
+        if self.ui.text_field("SEED", x, y, w, &self.nw_seed.clone(), self.nw_focus == Some(1), t) {
+            self.nw_focus = Some(1);
+        }
+        y += 46.0;
+        let cw = w * 0.5 - 6.0;
+        let wand = ["..+#+..", ".#...#.", "+..#..+", "#.#+#.#", "+..#..+", ".#...#.", "..+#+.."];
+        let heart = [".##.##.", "#######", "#######", "#######", ".#####.", "..###..", "...#..."];
+        if self.ui.mode_card(x, y, cw, 140.0, "CREATIVE", &["CAN'T BE HURT", "FLY FOREVER", "COMMANDS ON"], &wand, [255, 181, 74], self.nw.creative, t) && !self.nw.creative {
+            self.nw.creative = true;
+            self.nw.commands = true;
+        }
+        if self.ui.mode_card(x + cw + 12.0, y, cw, 140.0, "SURVIVAL", &["HEALTH AND FLIGHT", "REAL DANGER", "COMMANDS OFF"], &heart, [235, 90, 90], !self.nw.creative, t) && self.nw.creative {
+            self.nw.creative = false;
+            self.nw.commands = false;
+        }
+        y += 160.0;
+        let mut v = self.nw.commands as usize;
+        if self.ui.segmented("COMMANDS", x, y, w, &["OFF", "ON"], &mut v) {
+            self.nw.commands = v == 1;
+        }
+        y += 34.0;
+        self.ui.segmented("CREATURES", x, y, w, &["PEACEFUL", "NORMAL", "HORDES"], &mut self.nw.creatures);
+        y += 34.0;
+        let mut v = self.nw.weather as usize;
+        if self.ui.segmented("WEATHER", x, y, w, &["ALWAYS CLEAR", "CHANGING"], &mut v) {
+            self.nw.weather = v == 1;
+        }
+        y += 34.0;
+        let mut v = self.nw.alien_start as usize;
+        if self.ui.segmented("START ON", x, y, w, &["EARTH", "RANDOM PLANET"], &mut v) {
+            self.nw.alien_start = v == 1;
+        }
+        y += 56.0;
+        draw_rectangle(x + w * 0.5 - 230.0, y, 220.0, 34.0, Color::new(1.0, 0.71, 0.29, 0.9));
+        if self.ui.button("CREATE WORLD", x + w * 0.5 - 120.0, y, 220.0) || is_key_pressed(KeyCode::Enter) {
+            let mut opts = self.nw.clone();
+            opts.seed = seed;
+            if opts.name.trim().is_empty() {
+                opts.name = "New World".into();
+            }
+            self.game = Game::with_options(opts);
+            self.screen = Screen::Play;
+        }
+        if self.ui.button("BACK", x + w * 0.5 + 120.0, y, 160.0) || self.take_esc() {
+            self.screen = Screen::Menu;
         }
     }
 

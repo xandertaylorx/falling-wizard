@@ -242,6 +242,62 @@ impl Ui {
         false
     }
 
+    /// A row of options, one selected. Returns true when changed.
+    pub fn segmented(&mut self, label: &str, x: f32, y: f32, w: f32, options: &[&str], value: &mut usize) -> bool {
+        self.text(label, x, y + 9.0, 1.0, MUTED);
+        let (bx, bw) = (x + w * 0.34, w * 0.66);
+        let cw = bw / options.len() as f32;
+        let mut changed = false;
+        for (k, o) in options.iter().enumerate() {
+            let cx = bx + k as f32 * cw;
+            let sel = *value == k;
+            let hot = self.over(cx, y, cw - 4.0, 26.0);
+            draw_rectangle(cx, y, cw - 4.0, 26.0, if sel { Color::new(1.0, 0.71, 0.29, 0.22) } else if hot { Color::new(1.0, 1.0, 1.0, 0.07) } else { Color::new(1.0, 1.0, 1.0, 0.03) });
+            draw_rectangle_lines(cx, y, cw - 4.0, 26.0, 1.0, if sel { ACCENT } else { LINE });
+            self.text_center(o, cx + (cw - 4.0) * 0.5, y + 9.0, 1.0, if sel { ACCENT } else { TEXT });
+            if hot && self.pressed && !sel {
+                *value = k;
+                changed = true;
+                self.clicked = true;
+            }
+        }
+        changed
+    }
+
+    /// A one-line text box. Returns true when clicked (to take focus).
+    pub fn text_field(&mut self, label: &str, x: f32, y: f32, w: f32, value: &str, focused: bool, time: f32) -> bool {
+        self.text(label, x, y + 9.0, 1.0, MUTED);
+        let (bx, bw) = (x + w * 0.34, w * 0.66 - 4.0);
+        let hot = self.over(bx, y, bw, 26.0);
+        draw_rectangle(bx, y, bw, 26.0, Color::new(0.0, 0.0, 0.0, 0.45));
+        draw_rectangle_lines(bx, y, bw, 26.0, 1.0, if focused { ACCENT } else if hot { Color::new(1.0, 1.0, 1.0, 0.3) } else { LINE });
+        let caret = if focused && (time * 2.5) as i32 % 2 == 0 { "_" } else { "" };
+        self.font.draw(&format!("{}{}", value, caret), bx + 8.0, y + 6.0, 2.0, TEXT);
+        let hit = hot && self.pressed;
+        self.clicked |= hit;
+        hit
+    }
+
+    /// A big selectable card with a pixel icon, title and blurb. Returns true when clicked.
+    #[allow(clippy::too_many_arguments)]
+    pub fn mode_card(&mut self, x: f32, y: f32, w: f32, h: f32, title: &str, blurb: &[&str], icon: &[&str; 7], col: [u8; 3], selected: bool, time: f32) -> bool {
+        let hot = self.over(x, y, w, h);
+        let lift = if selected { -4.0 + (time * 3.0).sin() * 1.5 } else if hot { -2.0 } else { 0.0 };
+        let y = y + lift;
+        draw_rectangle(x, y, w, h, if selected { Color::new(0.1, 0.08, 0.14, 0.95) } else { PANEL });
+        draw_rectangle_lines(x, y, w, h, if selected { 2.0 } else { 1.0 }, if selected { Color::from_rgba(col[0], col[1], col[2], 255) } else if hot { Color::new(1.0, 1.0, 1.0, 0.3) } else { LINE });
+        draw_rectangle(x, y, w, 3.0, Color::from_rgba(col[0], col[1], col[2], if selected { 255 } else { 90 }));
+        let accent = [255, 255, 255];
+        self.icon(icon, col, accent, x + w * 0.5 - 21.0, y + 18.0, 6.0, if selected { 1.0 } else { 0.6 });
+        self.text_center(title, x + w * 0.5, y + 72.0, 2.0, if selected { Color::from_rgba(col[0], col[1], col[2], 255) } else { TEXT });
+        for (k, line) in blurb.iter().enumerate() {
+            self.text_center(line, x + w * 0.5, y + 98.0 + k as f32 * 14.0, 1.0, MUTED);
+        }
+        let hit = hot && self.pressed;
+        self.clicked |= hit;
+        hit
+    }
+
     /// Draws a 7x7 icon at the given pixel scale.
     pub fn icon(&self, rows: &[&str; 7], main: [u8; 3], accent: [u8; 3], x: f32, y: f32, s: f32, alpha: f32) {
         for (j, row) in rows.iter().enumerate() {
@@ -269,19 +325,25 @@ impl Ui {
         let p = &game.player;
 
         // Vitals, top-left.
-        let bars = [
-            (p.hp / MAX_HP, Color::new(0.88, 0.3, 0.3, 1.0)),
-            (p.mana / MAX_MANA, if game.fizzle > 0.0 { Color::new(1.0, 1.0, 1.0, 1.0) } else { Color::new(0.38, 0.56, 1.0, 1.0) }),
-            (p.flight / MAX_FLIGHT, Color::new(0.86, 0.86, 0.78, 1.0)),
-        ];
+        // Creative shows only mana; survival adds health and flight.
+        let mana_col = if game.fizzle > 0.0 { Color::new(1.0, 1.0, 1.0, 1.0) } else { Color::new(0.38, 0.56, 1.0, 1.0) };
+        let mut bars = vec![];
+        if !game.options.creative {
+            bars.push((p.hp / MAX_HP, Color::new(0.88, 0.3, 0.3, 1.0)));
+        }
+        bars.push((p.mana / MAX_MANA, mana_col));
+        if !game.options.creative {
+            bars.push((p.flight / MAX_FLIGHT, Color::new(0.86, 0.86, 0.78, 1.0)));
+        }
         for (k, (v, col)) in bars.iter().enumerate() {
             let y = 20.0 + k as f32 * 12.0;
             draw_rectangle(20.0, y, 150.0, 5.0, Color::new(0.0, 0.0, 0.0, 0.5));
             draw_rectangle(20.0, y, 150.0 * v.clamp(0.0, 1.0), 5.0, *col);
         }
-        draw_rectangle(20.0, 60.0, 8.0, 8.0, Color::from_rgba(236, 190, 64, 255));
-        draw_rectangle(22.0, 62.0, 2.0, 2.0, Color::from_rgba(255, 248, 210, 255));
-        self.text(&format!("{}", p.gold), 34.0, 61.0, 1.0, TEXT);
+        let gy = 24.0 + bars.len() as f32 * 12.0;
+        draw_rectangle(20.0, gy, 8.0, 8.0, Color::from_rgba(236, 190, 64, 255));
+        draw_rectangle(22.0, gy + 2.0, 2.0, 2.0, Color::from_rgba(255, 248, 210, 255));
+        self.text(&format!("{}", p.gold), 34.0, gy + 1.0, 1.0, TEXT);
 
         // Place, time and weather, top-right.
         let (px, py) = p.center();
@@ -544,7 +606,8 @@ impl Ui {
     }
 
     /// Chat history (fades out when closed) and the input line when open.
-    pub fn chat(&self, game: &Game, input: Option<&str>, time: f32, sel: usize) {
+    /// `input` is (typed text, text the suggestions come from).
+    pub fn chat(&self, game: &Game, input: Option<(&str, &str)>, time: f32, sel: usize) {
         let sh = screen_height();
         let x = 20.0;
         let open = input.is_some();
@@ -557,13 +620,13 @@ impl Ui {
             draw_rectangle(x - 7.0, y - 4.0, w, 20.0, Color::new(0.0, 0.0, 0.0, 0.45 * a));
             self.font.draw(&l.text, x, y, 2.0, Color::from_rgba(l.color[0], l.color[1], l.color[2], (a * 255.0) as u8));
         }
-        if let Some(buf) = input {
+        if let Some((buf, src)) = input {
             let y = sh - 118.0;
             draw_rectangle(x - 7.0, y - 5.0, (screen_width() * 0.6).max(520.0), 22.0, Color::new(0.0, 0.0, 0.0, 0.65));
-            let (start, opts) = crate::game::suggest(buf);
+            let (start, opts) = crate::game::suggest(src);
             let sel = if opts.is_empty() { 0 } else { sel % opts.len() };
             // Ghost text: the rest of the highlighted suggestion.
-            if let Some(o) = opts.get(sel) {
+            if let Some(o) = opts.get(sel).filter(|_| src == buf) {
                 let typed = buf.len() - start;
                 if o.len() > typed {
                     self.font.draw(&o[typed..], x + self.font.width(buf, 2.0) + 2.0, y, 2.0, Color::new(1.0, 1.0, 1.0, 0.35));
@@ -572,8 +635,8 @@ impl Ui {
             let caret = if (time * 2.5) as i32 % 2 == 0 { "_" } else { "" };
             self.font.draw(&format!("{}{}", buf, caret), x, y, 2.0, TEXT);
             // Suggestion list above the input, aligned with the word being typed.
-            let sx = x + self.font.width(&buf[..start], 2.0) + if start > 0 { 12.0 } else { 0.0 };
-            if !opts.is_empty() && !(opts.len() == 1 && opts[0].len() == buf.len() - start) {
+            let sx = x + self.font.width(&src[..start], 2.0) + if start > 0 { 12.0 } else { 0.0 };
+            if !opts.is_empty() && !(opts.len() == 1 && opts[0].len() == src.len() - start) {
                 let shown = opts.len().min(8);
                 let first = if sel >= shown { sel + 1 - shown } else { 0 };
                 let w = opts.iter().map(|o| self.font.width(o, 2.0)).fold(0.0f32, f32::max) + 16.0;
@@ -584,7 +647,7 @@ impl Ui {
                     draw_rectangle(sx - 8.0, oy - 4.0, w, 20.0, Color::new(0.0, 0.0, 0.0, if hot { 0.85 } else { 0.7 }));
                     self.font.draw(o, sx, oy, 2.0, if hot { Color::new(1.0, 0.92, 0.4, 1.0) } else { Color::new(0.75, 0.75, 0.75, 1.0) });
                 }
-            } else if let Some(u) = crate::game::usage(buf) {
+            } else if let Some(u) = crate::game::usage(src) {
                 draw_rectangle(x - 7.0, y - 30.0, self.font.width(u, 2.0) + 14.0, 20.0, Color::new(0.0, 0.0, 0.0, 0.7));
                 self.font.draw(u, x, y - 26.0, 2.0, Color::new(0.75, 0.75, 0.75, 1.0));
             }

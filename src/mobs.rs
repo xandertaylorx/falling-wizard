@@ -321,6 +321,8 @@ pub struct Mobs {
     pub gold: u32,
     pub kills: u32,
     pub big_hits: u32,
+    /// Creature spawn multiplier: 0 peaceful, 1 normal, 2 hordes.
+    pub density: f32,
 }
 
 const N_SEG_WORM: usize = 14;
@@ -328,7 +330,7 @@ const N_SEG_DRAGON: usize = 20;
 
 impl Mobs {
     pub fn new(seed: u64) -> Self {
-        Self { list: Vec::new(), corpses: Vec::new(), shots: Vec::new(), timer: 3.0, rng: Rng::new(seed ^ 0xBEA57), popups: Vec::new(), sounds: Vec::new(), gold: 0, kills: 0, big_hits: 0 }
+        Self { list: Vec::new(), corpses: Vec::new(), shots: Vec::new(), timer: 3.0, rng: Rng::new(seed ^ 0xBEA57), popups: Vec::new(), sounds: Vec::new(), gold: 0, kills: 0, big_hits: 0, density: 1.0 }
     }
 
     pub fn clear(&mut self) {
@@ -581,8 +583,12 @@ impl Mobs {
         if self.timer > 0.0 {
             return;
         }
-        self.timer = self.rng.rangef(0.8, 2.2) * if night { 0.6 } else { 1.0 };
-        let cap = if night { 16 } else { 11 };
+        if self.density <= 0.0 {
+            self.timer = 1.0;
+            return;
+        }
+        self.timer = self.rng.rangef(0.8, 2.2) * if night { 0.6 } else { 1.0 } / self.density;
+        let cap = ((if night { 16.0 } else { 11.0 }) * self.density) as usize;
         if self.list.len() - self.pets() >= cap {
             return;
         }

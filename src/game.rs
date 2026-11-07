@@ -48,6 +48,35 @@ pub struct Controls {
     pub secondary_pressed: bool,
 }
 
+/// Chosen on the Create World screen.
+#[derive(Clone)]
+pub struct WorldOptions {
+    pub name: String,
+    pub seed: u64,
+    pub creative: bool,
+    pub commands: bool,
+    /// 0 peaceful, 1 normal, 2 hordes.
+    pub creatures: usize,
+    pub weather: bool,
+    /// Start on a random planet instead of Earth.
+    pub alien_start: bool,
+}
+
+impl WorldOptions {
+    pub fn new(seed: u64) -> Self {
+        Self { name: "New World".into(), seed, creative: true, commands: true, creatures: 1, weather: true, alien_start: false }
+    }
+}
+
+thread_local! {
+    /// Planet names near the current world, for /tp suggestions.
+    static PLANET_NAMES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn planet_key(name: &str) -> String {
+    name.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect()
+}
+
 pub struct ChatLine {
     pub text: String,
     pub age: f32,
@@ -98,10 +127,16 @@ pub struct Game {
     pub travel: Option<Planet>,
     /// Planet picker requested (right click with the Portal Wand).
     pub picker: bool,
+    pub options: WorldOptions,
 }
 
 impl Game {
     pub fn new(seed: u64) -> Self {
+        Self::with_options(WorldOptions::new(seed))
+    }
+
+    pub fn with_options(options: WorldOptions) -> Self {
+        let seed = options.seed;
         let gen = crate::worldgen::Generator::new(seed);
         let spawn = gen.spawn();
         let world = World::new(seed, spawn.0, spawn.1);
@@ -140,7 +175,21 @@ impl Game {
             portals: Vec::new(),
             travel: None,
             picker: false,
+            options,
         };
+        game.apply_mode();
+        game.mobs.density = [0.0, 1.0, 2.2][game.options.creatures.min(2)];
+        if !game.options.weather {
+            game.weather.set(crate::weather::Sky::Clear);
+            game.weather.locked = true;
+        }
+        game.refresh_planet_names();
+        if game.options.alien_start {
+            let list = Planet::nearest(0, 0, 12);
+            let p = list[1 + (seed as usize % (list.len() - 1))].clone();
+            game.enter_planet(p);
+        }
+        game.chat.clear();
         game.say("Press T to chat or / for commands. Try /help", [200, 200, 220]);
         game
     }
@@ -157,10 +206,56 @@ impl Game {
         self.toasts.push(Toast { text: text.into(), t: 0.0, color });
     }
 
+    /// Creative: can't be hurt and flies forever. Survival: the real thing.
+    pub fn apply_mode(&mut self) {
+        self.player.god = self.options.creative;
+        self.player.infinite_flight = self.options.creative;
+    }
+
+    fn refresh_planet_names(&mut self) {
+        let names: Vec<String> = Planet::nearest(self.planet.gx, self.planet.gy, 40).iter().map(|p| planet_key(&p.name)).collect();
+        PLANET_NAMES.with(|n| *n.borrow_mut() = names);
+    }
+
+    /// Shatter an open portal: the surface bursts into glowing shards.
+    fn shatter_portal(&mut self, i: usize, (ex, ey): (f32, f32)) {
+        let (rect, dest) = self.portals.remove(i);
+        let hue = dest.hue;
+        for y in rect.1..=rect.3 {
+            for x in rect.0..=rect.2 {
+                if self.world.mat(x, y) != M::Portal {
+                    continue;
+                }
+                self.world.set(x, y, Cell::EMPTY);
+                if self.fx.rng.chance(0.7) {
+                    let (dx, dy) = (x as f32 - ex, y as f32 - ey);
+                    let d = (dx * dx + dy * dy).sqrt().max(1.0);
+                    let sp = self.fx.rng.rangef(60.0, 240.0);
+                    let col = if self.fx.rng.chance(0.25) { [255, 255, 255] } else { crate::planets::hue_rgb(hue + self.fx.rng.rangef(-0.08, 0.08), 0.6, 1.0) };
+                    let (vx, vy) = (dx / d * sp + self.fx.rng.rangef(-40.0, 40.0), dy / d * sp - self.fx.rng.rangef(20.0, 90.0));
+                    let life = self.fx.rng.rangef(0.6, 1.8);
+                    self.fx.mote(x as f32, y as f32, vx, vy, life, col, 1.6, 170.0, 0.0);
+                }
+            }
+        }
+        let (cx, cy) = ((rect.0 + rect.2) as f32 * 0.5, rect.3 as f32 - 9.0);
+        for k in 0..40 {
+            let a = k as f32 / 40.0 * std::f32::consts::TAU;
+            self.fx.mote(cx, cy, a.cos() * 160.0, a.sin() * 160.0, 0.5, crate::planets::hue_rgb(hue, 0.3, 1.0), 2.0, 0.0, 0.0);
+        }
+        self.fx.flash = self.fx.flash.max(0.35);
+        self.fx.shake = (self.fx.shake + 7.0).min(14.0);
+        self.hitstop = self.hitstop.max(0.08);
+        self.sounds.push(Sfx::Freeze);
+        self.sounds.push(Sfx::Thunder);
+        self.toast("PORTAL SHATTERED  -  RE-OPEN IT WITH THE PORTAL WAND", dest.color());
+    }
+
     pub fn respawn(&mut self) {
         let gold = self.player.gold;
         self.player = Player::new(self.spawn.0, self.spawn.1);
         self.player.gold = gold;
+        self.apply_mode();
         self.spells.clear();
         self.mobs.clear();
         self.world.recenter(self.spawn.0, self.spawn.1);
@@ -334,6 +429,13 @@ impl Game {
                 self.player.blast(x, y, r);
             }
             self.mobs.damage_area(x, y, r as f32 * 1.8, r as f32 * 3.0, kind, &mut self.fx);
+            // A blast right next to an open portal shatters it.
+            if let Some(i) = self.portals.iter().position(|((x0, y0, x1, y1), _)| {
+                let (cx, cy) = ((x0 + x1) as f32 * 0.5, (*y0 as f32 * 0.4 + *y1 as f32 * 0.6));
+                ((cx - x).powi(2) + (cy - y).powi(2)).sqrt() < r as f32 + 9.0
+            }) {
+                self.shatter_portal(i, (x, y));
+            }
             self.sounds.push(if r <= 5 { Sfx::Pop } else { Sfx::Boom });
             self.booms += 1.0;
             if r >= 8 {
@@ -579,6 +681,7 @@ impl Game {
         if !dest.weather {
             self.weather.set(crate::weather::Sky::Clear);
         }
+        self.refresh_planet_names();
         self.toast(format!("WELCOME TO {}", dest.name), dest.color());
         self.toast(dest.kind.name().to_string(), [200, 200, 220]);
     }
@@ -612,6 +715,10 @@ impl Game {
             self.say(format!("<Wizard> {}", line), [235, 230, 220]);
             return;
         };
+        if !self.options.commands {
+            self.say("Commands are turned off in this world.", ERR);
+            return;
+        }
         self.say(format!("/{}", cmd), [150, 145, 160]);
         let args: Vec<String> = cmd.split_whitespace().map(|a| a.to_lowercase()).collect();
         let a = |i: usize| args.get(i).map(|s| s.as_str()).unwrap_or("");
@@ -625,6 +732,19 @@ impl Game {
                     "/fly  (infinite flight)     /god  (can't be hurt)     /gold <n>     /clear",
                 ] {
                     self.say(l, INFO);
+                }
+            }
+            "tp" | "planet" | "warp" if {
+                let key = planet_key(&args[1..].join(""));
+                !key.is_empty() && (key == "earth" || Planet::nearest(self.planet.gx, self.planet.gy, 60).iter().any(|p| planet_key(&p.name) == key))
+            } => {
+                let key = planet_key(&args[1..].join(""));
+                let p = if key == "earth" { Planet::earth() } else { Planet::nearest(self.planet.gx, self.planet.gy, 60).into_iter().find(|p| planet_key(&p.name) == key).unwrap() };
+                if p == self.planet {
+                    self.say(format!("You're already on {}", p.name), INFO);
+                } else {
+                    self.say(format!("Warping to {}...", p.name), OK);
+                    self.travel = Some(p);
                 }
             }
             "tp" => {
@@ -870,7 +990,12 @@ pub fn suggest(buf: &str) -> (usize, Vec<String>) {
     let mobs: Vec<String> = crate::mobs::ALL_MOBS.iter().map(|k| k.name().to_lowercase().replace(' ', "")).collect();
     let opts: Vec<String> = match (idx, parts[0]) {
         (0, _) => COMMANDS.iter().map(|s| s.to_string()).collect(),
-        (1, "tp") => PLACES.iter().filter(|p| **p != "~").map(|s| s.to_string()).collect(),
+        (1, "tp") => {
+            let mut v: Vec<String> = PLACES.iter().filter(|p| **p != "~").map(|s| s.to_string()).collect();
+            v.push("earth".into());
+            PLANET_NAMES.with(|n| v.extend(n.borrow().iter().filter(|p| p.as_str() != "earth").cloned()));
+            v
+        }
         (1, "time") => vec!["set".into()],
         (2, "time") if parts[1] == "set" => ["day", "noon", "evening", "night", "midnight"].iter().map(|s| s.to_string()).collect(),
         (1, "weather") => ["clear", "cloudy", "rain", "storm", "fog", "windy"].iter().map(|s| s.to_string()).collect(),
@@ -887,7 +1012,7 @@ pub fn suggest(buf: &str) -> (usize, Vec<String>) {
 pub fn usage(buf: &str) -> Option<&'static str> {
     let cmd = buf.strip_prefix('/')?.split(' ').next()?;
     Some(match cmd {
-        "tp" => "/tp <place>  or  /tp <x> <y>",
+        "tp" => "/tp <place>  or  /tp <planet>  or  /tp <x> <y>",
         "time" => "/time set <day|noon|evening|night|midnight|0-1>",
         "weather" => "/weather <clear|cloudy|rain|storm|fog|windy>",
         "summon" | "spawn" => "/summon <creature> [count]",

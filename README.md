@@ -46,6 +46,17 @@ Needs Rust (from [rustup.rs](https://rustup.rs)) and Apple's command line tools.
 
 <br>
 
+## Creative or survival
+
+Every new world starts on a **Create World** screen: name it, pick a seed, and choose a mode.
+
+- **Creative:** you can't be hurt and you fly forever. Commands are on.
+- **Survival:** health and a flight meter, real danger, and commands off (unless you switch them on).
+
+Then set the creature level (peaceful, normal or hordes), whether the weather changes, and whether you start on Earth or a random planet.
+
+<br>
+
 ## A world made of pixels
 
 <table>
@@ -111,6 +122,8 @@ Earth sits at the centre of an endless galaxy of generated planets: dune worlds,
 2. **Open.** Shoot a portal structure: stone arches, crystal rings, basalt monoliths and brick temples stand all over every world.
 3. **Warp.** Walk in and cross the galaxy at lightspeed. A portal home is waiting when you land.
 
+Careful with explosives: a blast right next to an open portal **shatters** it, and you'll need to open it again. With commands on, `/tp earth` or `/tp <planet name>` warps you straight there.
+
 <br>
 
 ## Controls
@@ -133,11 +146,12 @@ Earth sits at the centre of an endless galaxy of generated planets: dune worlds,
 
 ## Commands
 
-Press `T` to chat or `/` for commands. Suggestions pop up as you type and `Tab` completes them.
+Press `T` to chat or `/` for commands. Suggestions pop up as you type: `↑` `↓` pick one and `Tab` completes it. Commands work in creative worlds, and in survival worlds created with commands on.
 
 | Command | |
 |---|---|
 | `/tp volcano` | Also `portal`, `ruin`, `altar`, `island`, `space`, `caves`, `lava`, `ocean`, `beach`, `jungle`, `desert`, `tundra`, `spawn`, or `/tp <x> <y>` |
+| `/tp earth` | Warp to Earth, or to any nearby planet by name |
 | `/time set night` | `day`, `noon`, `evening`, `night`, `midnight` or `0`–`1` |
 | `/weather storm` | `clear`, `cloudy`, `rain`, `storm`, `fog`, `windy` |
 | `/summon dragon 3` | Any creature, any number |
