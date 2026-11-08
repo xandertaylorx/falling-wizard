@@ -63,7 +63,7 @@ An infinite world streamed through a fixed **window** of `WCX`×`WCY` chunks (`C
 - **Generator:** `Generator::with_planet(seed, Planet)`. Earth is `Planet::earth()` at galaxy cell (0,0), and `Generator::new(seed)` is the same as Earth.
 - **Planets:** `Planet::at(gx, gy)` gives the procedural planet in a galaxy cell (about 55% of cells have one), and `Planet::nearest` lists the closest ones.
 - **Contents:** biomes, caves, ruins, volcanoes and geysers, sky isles and space.
-- **Climate:** `Planet::climate()` gives oxygen, heat and atmosphere height; it's copied into `world.climate` and drives fire, freezing/evaporation (`weather_tick`), the atmosphere edge in `game.rs` and the sky. `Planet::sky_scene()` gives suns, bodies seen from orbit and nebula colour.
+- **Climate:** `Planet::climate()` gives oxygen, heat and atmosphere height; it's copied into `world.climate` and drives fire, freezing/evaporation (`weather_tick`), the atmosphere edge in `game.rs` and the sky. `Planet::sky_scene()` gives suns, nebula colour and `neighbours()`: the real nearest planets drawn in space in their true galaxy directions.
 - **Portal structures:** `portals_near`, `portal_interior` and `portal_fill`. `PORTAL_HOME` is where the arrival portal on each planet sits.
 
 ### Game state (`game.rs`)
@@ -116,7 +116,7 @@ Saving happens every 60 s, before warping, on Pause → Main Menu, and on Quit. 
 ### Other modules
 
 - **`spells.rs`:** the 18 spells in `SPELL_BAR` (keys 1–0, -, =, Q, R, G, P, V, C), projectiles, black holes, tornadoes and the wind `gust`. Cards with `beam_after()` become held beams via `beam_tick` (lightning stream, `inferno` fire beam, `frost_ray`, Gravity Gun); holding a beam on one spot builds `charge`. `Storm` clouds rain and strike.
-- **Spell wheel:** there's no hotbar. Hold Tab or middle mouse for the radial wheel (`ui::spell_wheel`, groups in `ui::WHEEL`, picked with `wheel_pick`); time runs at 15% while it's open. A small chip shows the current spell.
+- **Spell bar:** auto-hiding. It slides up (`Ui::bar`) for a moment after a spell change, while Tab is held, or with the mouse at the bottom edge; otherwise a small chip names the current spell.
 - **`weather.rs`:** the day clock (`daylight()`), sky states and particle spawning.
 - **`ui.rs`:** the pixel font, HUD, planet sphere, chat and the menu widgets.
 - **`audio.rs`:** synthesised sound effects (`Sfx`).

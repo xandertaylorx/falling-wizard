@@ -274,7 +274,7 @@ pub struct Body {
     pub r: f32,
     pub a: [u8; 3],
     pub b: [u8; 3],
-    /// 0 banded gas giant, 1 cratered moon, 2 ocean world with clouds, 3 molten.
+    /// 0 banded gas giant, 1 cratered moon, 2 ocean world with clouds, 3 molten, 4 land and seas.
     pub style: u8,
     pub ring: Option<[u8; 3]>,
     /// Parallax strength.
@@ -315,16 +315,47 @@ impl Planet {
         Climate { o2, heat, atmo: atmo as i32 }
     }
 
+    /// The real nearest planets (the same ones the Portal Wand lists), placed in the sky
+    /// in their true directions across the galaxy: the closer, the bigger.
+    pub fn neighbours(&self) -> Vec<Body> {
+        let list: Vec<Planet> = Planet::nearest(self.gx, self.gy, 10).into_iter().filter(|p| p != self).take(8).collect();
+        let maxd = list.iter().map(|p| (p.gx - self.gx).abs().max((p.gy - self.gy).abs())).max().unwrap_or(1).max(1) as f32;
+        list.iter()
+            .map(|p| {
+                let (dx, dy) = ((p.gx - self.gx) as f32, (p.gy - self.gy) as f32);
+                let dist = (dx * dx + dy * dy).sqrt().max(1.0);
+                // Seen from far away colours wash out a little towards grey.
+                let tint = |c: [u8; 3]| [(c[0] as f32 * p.tint[0] * 0.7 + 38.0).min(255.0) as u8, (c[1] as f32 * p.tint[1] * 0.7 + 38.0).min(255.0) as u8, (c[2] as f32 * p.tint[2] * 0.7 + 42.0).min(255.0) as u8];
+                let land = tint(p.top.base_color());
+                let dark = [land[0] / 2, land[1] / 2, land[2] / 2];
+                let (style, a, b) = match p.kind {
+                    Kind::Moon | Kind::Crystal => (1, land, dark),
+                    Kind::Ocean | Kind::Earth => (2, [50, 110, 210], [240, 245, 255]),
+                    Kind::Lava => (3, [60, 34, 36], [255, 120, 40]),
+                    _ => (4, land, p.sea.map(|m| tint(m.base_color())).unwrap_or(dark)),
+                };
+                let h = hash3(p.gx, p.gy, 0xB0D7);
+                Body {
+                    fx: 0.5 + dx / maxd * 0.44,
+                    y: 75.0 + dy / maxd * 55.0,
+                    r: (13.0 / dist).clamp(3.0, 9.0),
+                    a,
+                    b,
+                    style,
+                    ring: (h % 5 == 0 && !p.is_earth()).then(|| hue_rgb(p.hue, 0.3, 0.9)),
+                    depth: 0.03,
+                }
+            })
+            .collect()
+    }
+
     pub fn sky_scene(&self) -> SkyScene {
         if self.is_earth() {
             return SkyScene {
                 sun: [255, 244, 210],
                 sun_r: 7.0,
                 twin: None,
-                bodies: vec![
-                    Body { fx: 0.72, y: 10.0, r: 18.0, a: [196, 150, 110], b: [170, 120, 96], style: 0, ring: Some([210, 190, 160]), depth: 0.03 },
-                    Body { fx: 0.2, y: 34.0, r: 7.0, a: [200, 200, 206], b: [150, 150, 160], style: 1, ring: None, depth: 0.05 },
-                ],
+                bodies: self.neighbours(),
                 nebula: [70, 60, 140],
                 nebula_amt: 0.18,
                 rim: [[90, 220, 200], [140, 120, 255]],
@@ -341,24 +372,7 @@ impl Planet {
             _ => ([255, 240, 205], 6.0 + f(1) * 3.0),
         };
         let twin = (matches!(self.kind, Kind::Dune) || h(2) % 5 == 0).then(|| hue_rgb(f(3) * 0.15, 0.45, 1.0));
-        let mut bodies = Vec::new();
-        let n = 1 + h(4) % 3;
-        for k in 0..n {
-            let style = (h(10 + k) % 4) as u8;
-            let hue = f(20 + k);
-            let (a, b) = match style {
-                0 => (hue_rgb(hue, 0.45, 0.85), hue_rgb(hue + 0.05, 0.55, 0.65)),
-                1 => (hue_rgb(hue, 0.08, 0.8), hue_rgb(hue, 0.1, 0.55)),
-                2 => ([60, 120, 220], [240, 245, 255]),
-                _ => ([60, 30, 30], [255, 120, 40]),
-            };
-            let r = match style {
-                0 => 14.0 + f(30 + k) * 22.0,
-                _ => 4.0 + f(30 + k) * 10.0,
-            };
-            let ring = (style == 0 && h(40 + k) % 2 == 0).then(|| hue_rgb(hue + 0.1, 0.25, 0.9));
-            bodies.push(Body { fx: 0.12 + (k as f32 + f(50 + k) * 0.7) / n as f32 * 0.8, y: 6.0 + f(60 + k) * 60.0, r, a, b, style, ring, depth: 0.02 + f(70 + k) * 0.04 });
-        }
+        let bodies = self.neighbours();
         let rim_a = hue_rgb(self.hue + 0.05, 0.6, 1.0);
         SkyScene {
             sun,

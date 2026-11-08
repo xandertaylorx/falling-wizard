@@ -841,7 +841,7 @@ fn sky(c: &SkyCtx, vx: usize, vy: usize, gy: i32) -> [u8; 3] {
                         }
                     }
                     1 => {
-                        let cr = value_noise(dx * 0.35 + b.r, dy * 0.35, 8);
+                        let cr = value_noise(dx / b.r * 3.0 + b.r, dy / b.r * 3.0, 8);
                         if cr > 0.62 {
                             b.b
                         } else {
@@ -849,13 +849,20 @@ fn sky(c: &SkyCtx, vx: usize, vy: usize, gy: i32) -> [u8; 3] {
                         }
                     }
                     2 => {
-                        let cl = value_noise(dx * 0.25 + c.time * 0.05, dy * 0.5, 12);
+                        let cl = value_noise(dx / b.r * 2.4 + c.time * 0.05, dy / b.r * 4.0, 12);
                         if cl > 0.6 {
                             b.b
-                        } else if value_noise(dx * 0.15, dy * 0.15, 13) > 0.55 {
+                        } else if value_noise(dx / b.r * 1.8, dy / b.r * 1.8, 13) > 0.55 {
                             [70, 140, 70]
                         } else {
                             b.a
+                        }
+                    }
+                    4 => {
+                        if value_noise(dx / b.r * 2.6 + b.r, dy / b.r * 2.6, 15) > 0.52 {
+                            b.a
+                        } else {
+                            b.b
                         }
                     }
                     _ => {
