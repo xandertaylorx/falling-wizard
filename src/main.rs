@@ -8,6 +8,7 @@ mod noise;
 mod planets;
 mod player;
 mod render;
+mod rift;
 mod saves;
 mod settings;
 mod spells;
@@ -74,7 +75,16 @@ enum Screen {
     Warp,
     NewWorld,
     Worlds,
+    /// Falling through a rift: the inside of a black hole.
+    Rift,
 }
+
+const RIFT_TRIP: f32 = 11.0;
+/// Portal travel: zoom into the portal, hyperspace, dive into the planet.
+const WARP_IN: f32 = 1.1;
+const WARP_TRIP: f32 = 4.7;
+/// Coming down into the new world after a warp.
+const ARRIVE: f32 = 1.8;
 
 fn random_seed() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1) % 1_000_000
@@ -226,6 +236,12 @@ struct App {
     tab_base: Option<String>,
     warp_t: f32,
     warp_dest: Option<planets::Planet>,
+    rift_t: f32,
+    /// Where the portal you stepped into is, so the warp can zoom into it.
+    warp_from: (f32, f32),
+    /// Just arrived somewhere: seconds since, and the colour you're coming down through.
+    arrive: Option<(f32, [u8; 3])>,
+    rift_dest: Option<(planets::Planet, Option<f32>)>,
     nw: game::WorldOptions,
     nw_seed: String,
     nw_focus: Option<u8>,
@@ -275,6 +291,10 @@ async fn run(args: Vec<String>) {
         tab_base: None,
         warp_t: 0.0,
         warp_dest: None,
+        rift_t: 0.0,
+        warp_from: (0.0, 0.0),
+        arrive: None,
+        rift_dest: None,
         nw: game::WorldOptions::new(1),
         nw_seed: String::new(),
         nw_focus: None,
@@ -552,9 +572,23 @@ impl App {
                     self.screen = Screen::Planets;
                 }
                 if let Some(dest) = self.game.travel.take() {
+                    let (px, py) = self.game.player.center();
+                    self.warp_from = self
+                        .game
+                        .portals
+                        .iter()
+                        .map(|(r, _)| r)
+                        .find(|r| px >= r.0 as f32 - 2.0 && px <= r.2 as f32 + 3.0 && py >= r.1 as f32 - 2.0 && py <= r.3 as f32 + 3.0)
+                        .map(|r| ((r.0 + r.2) as f32 * 0.5 + 0.5, (r.1 + r.3) as f32 * 0.5 + 0.5))
+                        .unwrap_or((px, py));
                     self.warp_dest = Some(dest);
                     self.warp_t = 0.0;
                     self.screen = Screen::Warp;
+                }
+                if let Some(dest) = self.game.rift_travel.take() {
+                    self.rift_dest = Some(dest);
+                    self.rift_t = 0.0;
+                    self.screen = Screen::Rift;
                 }
                 let slash = is_key_pressed(KeyCode::Slash);
                 if (is_key_pressed(KeyCode::T) || slash) && self.screen == Screen::Play {
@@ -570,11 +604,36 @@ impl App {
                     self.screen = Screen::Play;
                 }
             }
+            Screen::Rift => {
+                let before = self.rift_t;
+                self.rift_t += dt;
+                let crossed = |at: f32| before < at && self.rift_t >= at;
+                use audio::Sfx;
+                for (at, sfx) in [(0.05, Sfx::Whoosh), (2.9, Sfx::Thunder), (5.5, Sfx::Whoosh), (8.3, Sfx::Boom), (8.45, Sfx::Thunder), (10.2, Sfx::Chime)] {
+                    if crossed(at) {
+                        self.game.sounds.push(sfx);
+                    }
+                }
+                if self.rift_t >= RIFT_TRIP || (self.rift_t > 1.0 && self.take_esc()) {
+                    if let Some((dest, x)) = self.rift_dest.take() {
+                        self.game.arrive_through_rift(dest, x);
+                        self.arrive = Some((0.0, [255, 246, 228]));
+                    }
+                    self.screen = Screen::Play;
+                }
+            }
             Screen::Warp => {
                 self.warp_t += dt;
-                if self.warp_t >= 3.6 {
+                if self.warp_t < WARP_IN {
+                    // The world keeps going while the portal drinks you in.
+                    let ctl = Controls { aim: self.game.aim, ..Default::default() };
+                    self.game.update(dt, &ctl, true);
+                }
+                if self.warp_t >= WARP_TRIP {
                     if let Some(dest) = self.warp_dest.take() {
+                        let sky = dest.sky_horizon;
                         self.game.enter_planet(dest);
+                        self.arrive = Some((0.0, sky));
                     }
                     self.screen = Screen::Play;
                 }
@@ -644,7 +703,14 @@ impl App {
         }
 
         // ----- draw world -----
-        let view = View::new(self.game.cam.0, self.game.cam.1, sw, sh, self.game.zoom);
+        if let Some(a) = &mut self.arrive {
+            a.0 += dt;
+            if a.0 > ARRIVE {
+                self.arrive = None;
+            }
+        }
+        let descend = self.arrive.map(|(t, _)| (1.0 - t / ARRIVE).max(0.0)).unwrap_or(0.0);
+        let view = View::new(self.game.cam.0, self.game.cam.1, sw, sh, self.game.zoom * (1.0 + descend.powi(3) * 4.0));
         let shake = if self.settings.shake && self.game.fx.shake > 0.05 && self.screen == Screen::Play {
             let s = self.game.fx.shake;
             (self.shake_rng.rangef(-s, s), self.shake_rng.rangef(-s, s))
@@ -653,16 +719,23 @@ impl App {
         };
         clear_background(BLACK);
         let time = self.game.time;
-        if self.screen == Screen::Warp {
+        if self.screen == Screen::Rift {
+            self.draw_rift_trip();
+        } else if self.screen == Screen::Warp && self.warp_t >= WARP_IN {
             self.draw_warp();
+        } else if self.screen == Screen::Warp {
+            self.draw_warp_in(sw, sh, time);
         } else {
             self.renderer.draw(&mut self.game, &view, shake, time);
+            if let Some((_, col)) = self.arrive {
+                self.draw_arrival(descend, col, sw, sh);
+            }
         }
 
         // ----- sound -----
         let sounds: Vec<Sfx> = self.game.sounds.drain(..).collect();
         if let Some(a) = &mut self.audio {
-            if matches!(self.screen, Screen::Play | Screen::Dead | Screen::Chat | Screen::Menu | Screen::Planets) {
+            if matches!(self.screen, Screen::Play | Screen::Dead | Screen::Chat | Screen::Menu | Screen::Planets | Screen::Rift) {
                 for s in sounds {
                     a.play(s);
                 }
@@ -691,7 +764,7 @@ impl App {
                     self.screen = Screen::Play;
                 }
             }
-            Screen::Warp => {}
+            Screen::Warp | Screen::Rift => {}
             Screen::NewWorld => self.new_world_screen(),
             Screen::Worlds => self.worlds_screen(),
             Screen::Chat => {
@@ -815,13 +888,295 @@ impl App {
         self.ui.font.draw(text, cx - w * 0.5, y, scale, col);
     }
 
+    /// Through a rift: the event horizon looms with its glowing disk, you cross it into
+    /// a twisting tunnel where the wizard stretches like spaghetti and time runs away,
+    /// everything crushes into the singularity, and a white hole spits you out.
+    fn draw_rift_trip(&mut self) {
+        use std::f32::consts::TAU;
+        let Some((dest, earth_x)) = self.rift_dest.clone() else { return };
+        let t = self.rift_t;
+        let (sw, sh) = (screen_width(), screen_height());
+        let big = sw.max(sh);
+        let px = 3.0;
+        let dot = |x: f32, y: f32, c: Color| draw_rectangle((x / px).floor() * px, (y / px).floor() * px, px, px, c);
+        let rgba = |c: [u8; 3], a: f32| Color::from_rgba(c[0], c[1], c[2], (a.clamp(0.0, 1.0) * 255.0) as u8);
+        let unit = |k: i32, salt: u32| (noise::hash3(k, salt as i32, 0xB1AC) % 10000) as f32 / 10000.0;
+        let shake = if t < 3.0 { (t / 3.0).powi(3) * 6.0 } else if t < 8.4 { 2.0 + ((t - 3.6) / 4.0).clamp(0.0, 1.0) * 6.0 } else { (1.0 - (t - 8.4)).max(0.0) * 10.0 };
+        let (cx, cy) = (sw * 0.5 + (t * 53.0).sin() * shake, sh * 0.5 + (t * 41.0).cos() * shake);
+        clear_background(Color::from_rgba(2, 1, 6, 255));
+        let caption;
+
+        if t < 3.6 {
+            // ---- The event horizon looms ----
+            let a_t = (t / 3.0).min(1.0);
+            let rs = sh * 0.07 + a_t.powf(2.4) * big * 0.8;
+            for k in 0..6 {
+                draw_circle(cx, cy, rs * (1.25 + k as f32 * 0.22), Color::new(1.0, 0.5 + k as f32 * 0.04, 0.2, 0.05));
+            }
+            // Stars, bent around the hole (and a second, squashed image near the ring).
+            for k in 0..700 {
+                let a = unit(k, 1) * TAU + t * 0.04;
+                let d0 = unit(k, 2) * big * 0.85 + 4.0;
+                let d = d0 + rs * rs * 1.1 / d0;
+                let c = if k % 5 == 0 { [170, 200, 255] } else if k % 7 == 0 { [255, 210, 170] } else { [235, 235, 255] };
+                let tw = 0.5 + 0.5 * (t * 3.0 + k as f32).sin();
+                dot(cx + a.cos() * d, cy + a.sin() * d, rgba(c, 0.35 + tw * 0.5));
+                let d2 = rs * (1.06 + 0.25 * rs / (d0 + rs));
+                dot(cx - a.cos() * d2, cy - a.sin() * d2, rgba(c, 0.3));
+            }
+            let disk = |k: i32, front: bool| -> Option<(f32, f32, Color)> {
+                let rr = 1.25 + unit(k, 3).powi(2) * 1.9;
+                let a = unit(k, 4) * TAU + t * 1.6 / rr;
+                if front != (a.sin() > 0.0) {
+                    return None;
+                }
+                let heat = 1.0 - (rr - 1.25) / 1.9;
+                let beam = 0.45 + 0.55 * (1.0 - a.cos()) * 0.5 * 2.0;
+                let c = [255, (120.0 + heat * 125.0) as u8, (40.0 + heat * 180.0) as u8];
+                let (x, y) = (cx + a.cos() * rr * rs, cy + a.sin() * rr * rs * 0.14 - a.cos() * rs * 0.05);
+                Some((x, y, rgba(c, (0.35 + beam * 0.65) * (0.5 + heat * 0.5))))
+            };
+            // The far side of the disk, lensed up over the top and under the bottom.
+            for k in 0..2000 {
+                let rr = 1.08 + unit(k, 5).powi(2) * 0.55;
+                let a = unit(k, 6) * TAU + t * 0.9;
+                let beam = 0.35 + 0.65 * (0.5 - 0.5 * a.cos());
+                let heat = 1.0 - (rr - 1.08) / 0.55;
+                let c = [255, (140.0 + heat * 110.0) as u8, (60.0 + heat * 170.0) as u8];
+                dot(cx + a.cos() * rr * rs, cy + a.sin() * rr * rs * 0.92, rgba(c, (0.3 + beam * 0.7) * (0.35 + heat * 0.65)));
+            }
+            for k in 0..3200 {
+                if let Some((x, y, c)) = disk(k, false) {
+                    dot(x, y, c);
+                }
+            }
+            draw_circle(cx, cy, rs, Color::from_rgba(0, 0, 0, 255));
+            for k in 0..240 {
+                let a = k as f32 / 240.0 * TAU;
+                let flick = 0.6 + 0.4 * (a * 3.0 + t * 6.0).sin();
+                dot(cx + a.cos() * rs * 1.02, cy + a.sin() * rs * 1.02, rgba([255, 236, 210], flick));
+            }
+            for k in 0..3200 {
+                if let Some((x, y, c)) = disk(k, true) {
+                    dot(x, y, c);
+                }
+            }
+            if t > 2.9 {
+                // Crossing over: black, a fading ring, and the signal breaking up.
+                let c = ((t - 2.9) / 0.35).min(1.0);
+                draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.0, 0.0, 0.0, c));
+                for k in 0..14 {
+                    let y = unit(k + (t * 30.0) as i32 * 31, 7) * sh;
+                    let col = if k % 2 == 0 { [180, 120, 255] } else { [120, 220, 255] };
+                    draw_rectangle(0.0, y, sw, 2.0 + unit(k, 8) * 6.0, rgba(col, 0.25 * c));
+                }
+                caption = ("EVENT HORIZON", Color::from_rgba(220, 200, 255, 255));
+            } else {
+                caption = ("FALLING TOWARDS THE EVENT HORIZON", Color::from_rgba(255, 210, 160, 255));
+            }
+        } else if t < 8.4 {
+            // ---- Inside: a twisting tunnel, the sky crushed into one blue point ahead ----
+            let p = ((t - 3.6) / 4.0).clamp(0.0, 1.0);
+            let crush = ((t - 7.6) / 0.8).clamp(0.0, 1.0);
+            let squeeze = (1.0 - crush).powi(2);
+            for k in 0..6 {
+                let r = (6.0 + p * 26.0) * (1.0 + k as f32 * 0.7) * (1.0 - crush * 0.6);
+                draw_circle(cx, cy, r, Color::new(0.6, 0.75, 1.0, 0.09 + p * 0.05));
+            }
+            draw_circle(cx, cy, 3.0 + p * 5.0, Color::new(0.9, 0.95, 1.0, 1.0));
+            let speed = 0.35 + p * 0.9;
+            for i in 0..28 {
+                let z = (i as f32 / 28.0 - (t - 3.6) * speed).rem_euclid(1.0).max(0.015);
+                let rad = 22.0 / z * squeeze;
+                if rad > big {
+                    continue;
+                }
+                let twist = i as f32 * 0.45 + t * 1.3 + 0.6 / z;
+                let near = 1.0 - z;
+                for j in 0..44 {
+                    let a = j as f32 / 44.0 * TAU + twist;
+                    let wob = 1.0 + 0.14 * (3.0 * a + t * 2.0).sin();
+                    let (x, y) = (cx + a.cos() * rad * wob, cy + a.sin() * rad * wob * 0.82);
+                    let c = planets::hue_rgb(0.98 - near * 0.3, 0.75, 1.0);
+                    dot(x + 3.0, y, rgba([255, 60, 90], near * 0.25));
+                    dot(x - 3.0, y, rgba([60, 140, 255], near * 0.25));
+                    dot(x, y, rgba(c, 0.25 + near * 0.75));
+                }
+            }
+            // Bits of the world, stretched into long strands as they fall past.
+            let mats: [[u8; 3]; 6] = [[226, 196, 110], [88, 160, 70], [130, 126, 136], [70, 130, 230], [255, 120, 40], [120, 84, 60]];
+            for k in 0..150 {
+                let a = unit(k, 9) * TAU + t * 0.2;
+                let f = (unit(k, 10) + (t - 3.6) * (0.5 + p)).fract();
+                let d = f * f * big * 0.75 * squeeze;
+                let len = d * (0.15 + p * 0.5);
+                let c = mats[k as usize % mats.len()];
+                let (ux, uy) = (a.cos(), a.sin());
+                draw_line(cx + ux * d, cy + uy * d, cx + ux * (d + len), cy + uy * (d + len), 2.0 + f * 3.0, rgba(c, 0.25 + f * 0.6));
+            }
+            // The wizard, spaghettified.
+            if crush < 1.0 {
+                const SPR: [&[u8; 5]; 10] = [b".h...", b".hh..", b".hsh.", b"hhhhh", b".ffe.", b".www.", b"rrwrr", b".rrr.", b".rrr.", b".b.b."];
+                let base = (sh / 60.0).max(4.0);
+                let sx = base * (1.0 - p * 0.8) * squeeze.max(0.05);
+                let sy = base * (1.0 + p * p * 7.0) * squeeze.max(0.05);
+                let (w0, h0) = (5.0 * sx, 10.0 * sy);
+                for (row, line) in SPR.iter().enumerate() {
+                    let bend = (row as f32 * 0.8 + t * 7.0).sin() * p * 14.0;
+                    for (col, ch) in line.iter().enumerate() {
+                        let c = match ch {
+                            b'h' => [92, 70, 196],
+                            b's' => [255, 220, 110],
+                            b'f' => [236, 196, 160],
+                            b'e' => [30, 20, 30],
+                            b'w' => [230, 230, 236],
+                            b'r' => [64, 50, 160],
+                            b'b' => [60, 44, 40],
+                            _ => continue,
+                        };
+                        let (x, y) = (cx - w0 * 0.5 + col as f32 * sx + bend, cy - h0 * 0.5 + row as f32 * sy);
+                        let ghost = 2.0 + p * 10.0;
+                        draw_rectangle(x - ghost, y, sx, sy, rgba([255, 40, 80], 0.3));
+                        draw_rectangle(x + ghost, y, sx, sy, rgba([40, 160, 255], 0.3));
+                        draw_rectangle(x, y, sx, sy, rgba(c, 1.0 - crush));
+                    }
+                }
+            }
+            // Instruments giving up.
+            let dil = p * 34.0;
+            let glitch = |s: &str, k: i32| if unit(k + (t * 12.0) as i32, 11) < p * 0.25 { s.chars().rev().collect::<String>() } else { s.to_string() };
+            self.ui.text(&glitch(&format!("TIME DILATION  x {:.1}E{}", 1.0 + dil.fract() * 9.0, dil as i32), 1), 24.0, 24.0, 2.0, Color::from_rgba(150, 220, 255, 220));
+            self.ui.text(&glitch(&format!("TO SINGULARITY  {:.0} KM", (1.0 - p).powi(3) * 41_000.0), 2), 24.0, 52.0, 2.0, Color::from_rgba(255, 170, 200, 220));
+            self.ui.text(&glitch("OUTSIDE UNIVERSE  -  BLUESHIFTED TO A POINT", 3), 24.0, 80.0, 1.0, MUTED);
+            caption = if crush > 0.0 { ("SINGULARITY", Color::from_rgba(255, 255, 255, 255)) } else { ("INSIDE THE BLACK HOLE", Color::from_rgba(190, 170, 255, 255)) };
+            if crush > 0.0 {
+                draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.0, 0.0, 0.0, crush * 0.85));
+                let r = 2.0 + crush * crush * 10.0;
+                for k in 0..5 {
+                    draw_circle(cx, cy, r * (1.0 + k as f32 * 1.4), Color::new(1.0, 1.0, 1.0, 0.18 * crush));
+                }
+                draw_circle(cx, cy, r, WHITE);
+            }
+        } else {
+            // ---- A white hole: a new sky blooms outwards and you're thrown out ----
+            let e = ((t - 8.7) / 2.3).clamp(0.0, 1.0);
+            let ease = 1.0 - (1.0 - e).powi(3);
+            for k in 0..600 {
+                let arm = (k % 3) as f32;
+                let r = (k / 3) as f32 * 2.3 * ease;
+                let a = arm * 2.094 + r * 0.011 - t * 0.3;
+                let j = unit(k, 12) * 14.0 - 7.0;
+                let c = planets::hue_rgb(0.62 + arm * 0.08 + r * 0.0004, 0.5, 0.9);
+                dot(cx + a.cos() * (r + j), cy + a.sin() * (r + j) * 0.6, rgba(c, 0.35));
+            }
+            for k in 0..500 {
+                let a = unit(k, 13) * TAU;
+                let sp = 0.3 + unit(k, 14) * 0.9;
+                let d = ease * big * 0.65 * sp;
+                let c = planets::hue_rgb(unit(k, 15), 0.35, 1.0);
+                let len = (1.0 - e) * 40.0 + 3.0;
+                draw_line(cx + a.cos() * d, cy + a.sin() * d, cx + a.cos() * (d + len), cy + a.sin() * (d + len), 3.0, rgba(c, 1.0 - e * 0.6));
+            }
+            if e > 0.25 {
+                let r = ((e - 0.25) / 0.75).powi(2) * sh * 0.3 + 4.0;
+                self.ui.planet_sphere(&dest, cx, cy, r, 6.0, t);
+            }
+            let dc = dest.color();
+            let (title, sub) = match earth_x {
+                Some(x) => ("SOMEWHERE ON EARTH".to_string(), format!("{} BLOCKS FROM SPAWN", x.abs() as i64)),
+                None => (dest.name.clone(), format!("{}   -   {:.0} LIGHT YEARS AWAY", dest.kind.name(), self.game.planet.light_years(&dest))),
+            };
+            if e > 0.2 {
+                let a = ((e - 0.2) / 0.2).min(1.0);
+                self.ui.text_center(&title, cx, sh - 96.0, 3.0, rgba(dc, a));
+                self.ui.text_center(&sub, cx, sh - 60.0, 2.0, Color::new(0.75, 0.75, 0.82, a));
+            }
+            caption = ("WHITE HOLE", Color::from_rgba(255, 245, 220, 255));
+            if t < 8.85 {
+                draw_rectangle(0.0, 0.0, sw, sh, Color::new(1.0, 1.0, 1.0, 1.0 - (t - 8.4) / 0.45 * 0.3));
+            }
+        }
+        if !caption.0.is_empty() {
+            self.ui.text_center(caption.0, sw * 0.5, 28.0, 2.0, caption.1);
+        }
+        if t < 0.4 {
+            draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.75, 0.6, 1.0, 1.0 - t / 0.4));
+        }
+        if t > RIFT_TRIP - 0.5 {
+            draw_rectangle(0.0, 0.0, sw, sh, Color::new(1.0, 1.0, 1.0, ((t - (RIFT_TRIP - 0.5)) / 0.5).min(1.0)));
+        }
+        if t > 1.0 && t < RIFT_TRIP - 1.0 {
+            self.ui.text_right("ESC TO SKIP", sw - 20.0, sh - 28.0, 1.0, Color::new(1.0, 1.0, 1.0, 0.3));
+        }
+    }
+
+    /// Stepping into a portal: the view dives into the opening while the world spirals
+    /// in after you, then the portal's colour takes over.
+    fn draw_warp_in(&mut self, sw: f32, sh: f32, time: f32) {
+        let p = (self.warp_t / WARP_IN).min(1.0);
+        let ease = p * p * (3.0 - 2.0 * p);
+        let (fx, fy) = self.warp_from;
+        let (cx0, cy0) = self.game.cam;
+        let cam = (cx0 + (fx - cx0) * ease, cy0 + (fy - cy0) * ease);
+        let view = View::new(cam.0, cam.1, sw, sh, self.game.zoom * (1.0 + p.powf(2.2) * 7.0));
+        self.renderer.draw(&mut self.game, &view, (0.0, 0.0), time);
+        let hue = self.warp_dest.as_ref().map(|d| d.hue).unwrap_or(0.6);
+        let (sx, sy) = view.to_screen(fx, fy);
+        // Everything spirals into the portal.
+        for k in 0..260 {
+            let h = noise::hash3(k, 21, 9);
+            let a0 = (h % 10000) as f32 / 10000.0 * std::f32::consts::TAU;
+            let f = (((h >> 14) % 1000) as f32 / 1000.0 + self.warp_t * 0.9).fract();
+            let d = (1.0 - f) * sw.max(sh) * 0.7;
+            let a = a0 + f * 3.0;
+            let c = planets::hue_rgb(hue + ((h >> 4) % 10) as f32 * 0.01, 0.6, 1.0);
+            let len = 6.0 + f * 30.0 * p;
+            let (ux, uy) = (a.cos(), a.sin());
+            draw_line(sx + ux * d, sy + uy * d, sx + ux * (d + len), sy + uy * (d + len), 3.0, Color::from_rgba(c[0], c[1], c[2], (p * f * 220.0) as u8));
+        }
+        let c = planets::hue_rgb(hue, 0.7, 1.0);
+        let a = ((p - 0.55) / 0.45).clamp(0.0, 1.0);
+        draw_rectangle(0.0, 0.0, sw, sh, Color::from_rgba(c[0], c[1], c[2], (a * a * 255.0) as u8));
+    }
+
+    /// Coming down into a new world: zoomed in, out of the sky's colour, wind rushing up.
+    fn draw_arrival(&self, descend: f32, col: [u8; 3], sw: f32, sh: f32) {
+        if descend <= 0.0 {
+            return;
+        }
+        let a = descend.powf(1.6);
+        draw_rectangle(0.0, 0.0, sw, sh, Color::from_rgba(col[0], col[1], col[2], (a * 255.0) as u8));
+        let t = 1.0 - descend;
+        for k in 0..36 {
+            let x = (noise::hash3(k, 8, 1) % 1000) as f32 / 1000.0 * sw;
+            let y = ((noise::hash3(k, 9, 1) % 1000) as f32 / 1000.0 - t * 2.5).rem_euclid(1.0) * sh;
+            let len = 30.0 + (noise::hash3(k, 10, 1) % 90) as f32;
+            draw_rectangle((x / 3.0).floor() * 3.0, y, 3.0, len * descend, Color::new(1.0, 1.0, 1.0, 0.35 * descend));
+        }
+    }
+
     /// Lightspeed: a turning galaxy, stars stretching into streaks, then the planet rushing up.
     fn draw_warp(&mut self) {
         let Some(dest) = self.warp_dest.clone() else { return };
-        let t = self.warp_t;
+        let t = self.warp_t - WARP_IN;
         let (sw, sh) = (screen_width(), screen_height());
         let (cx, cy) = (sw * 0.5, sh * 0.5);
         clear_background(Color::from_rgba(3, 2, 10, 255));
+        let pc = planets::hue_rgb(dest.hue, 0.7, 1.0);
+        // A tunnel of portal-coloured rings, twisting as you go.
+        for i in 0..18 {
+            let z = (i as f32 / 18.0 - t * 0.6).rem_euclid(1.0).max(0.02);
+            let rad = 30.0 / z;
+            if rad > sw.max(sh) {
+                continue;
+            }
+            let near = 1.0 - z;
+            let fade = 1.0 - ((t - 2.2) / 0.8).clamp(0.0, 1.0);
+            for j in 0..36 {
+                let a = j as f32 / 36.0 * std::f32::consts::TAU + i as f32 * 0.5 + t * 0.9;
+                draw_rectangle((cx + a.cos() * rad) / 4.0 * 4.0, (cy + a.sin() * rad * 0.8) / 4.0 * 4.0, 4.0, 4.0, Color::from_rgba(pc[0], pc[1], pc[2], (near * 120.0 * fade) as u8));
+            }
+        }
         let px = 4.0;
         let dot = |x: f32, y: f32, c: Color| draw_rectangle((x / px).floor() * px, (y / px).floor() * px, px, px, c);
         // Galaxy spiral.
@@ -850,16 +1205,31 @@ impl App {
                 dot(cx + ang.cos() * dd, cy + ang.sin() * dd, col);
             }
         }
-        // The destination rushes up.
-        if t > 2.4 {
-            let r = ((t - 2.4) / 1.1).min(1.0).powi(2) * sh * 0.42 + 6.0;
-            self.ui.planet_sphere(&dest, cx, cy, r, 6.0, t);
+        // The destination rushes up, fills the view, and you dive into its sky.
+        if t > 1.7 {
+            let k = ((t - 1.7) / 1.7).min(1.0);
+            let r = k.powi(3) * sw.max(sh) * 1.3 + 6.0;
+            // Atmosphere glow.
+            let sky = dest.sky_horizon;
+            for g in 0..4 {
+                draw_circle(cx, cy, r * (1.05 + g as f32 * 0.06), Color::from_rgba(sky[0], sky[1], sky[2], (40.0 - g as f32 * 8.0) as u8));
+            }
+            self.ui.planet_sphere(&dest, cx, cy, r, (6.0 + k * 10.0).floor(), t);
         }
-        if t < 0.4 {
-            draw_rectangle(0.0, 0.0, sw, sh, Color::new(1.0, 1.0, 1.0, 1.0 - t / 0.4));
+        if t > 3.1 {
+            let sky = dest.sky_horizon;
+            let a = ((t - 3.1) / 0.5).min(1.0);
+            draw_rectangle(0.0, 0.0, sw, sh, Color::from_rgba(sky[0], sky[1], sky[2], (a * 255.0) as u8));
+            // Clouds tearing past as you drop through the air.
+            for k in 0..40 {
+                let y = ((noise::hash3(k, 3, 5) % 1000) as f32 / 1000.0 - t * 1.6).rem_euclid(1.0) * sh;
+                let x = (noise::hash3(k, 4, 5) % 1000) as f32 / 1000.0 * sw;
+                let w = 40.0 + (noise::hash3(k, 6, 5) % 120) as f32;
+                draw_rectangle((x / 4.0).floor() * 4.0, (y / 4.0).floor() * 4.0, w, 4.0 + (k % 3) as f32 * 4.0, Color::new(1.0, 1.0, 1.0, 0.5 * a));
+            }
         }
-        if t > 3.3 {
-            draw_rectangle(0.0, 0.0, sw, sh, Color::new(1.0, 1.0, 1.0, ((t - 3.3) / 0.3).min(1.0)));
+        if t < 0.35 {
+            draw_rectangle(0.0, 0.0, sw, sh, Color::from_rgba(pc[0], pc[1], pc[2], ((1.0 - t / 0.35) * 255.0) as u8));
         }
         let ly = self.game.planet.light_years(&dest);
         self.ui.text_center(&format!("WARPING TO {}", dest.name), cx, sh - 90.0, 3.0, Color::from_rgba(dc[0], dc[1], dc[2], 255));

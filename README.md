@@ -50,7 +50,7 @@ Needs Rust (from [rustup.rs](https://rustup.rs)) and Apple's command line tools.
 
 Every new world starts on a **Create World** screen: name it, pick a seed, and choose a mode.
 
-- **Creative:** you can't be hurt and you fly forever. Commands are on.
+- **Creative:** you can't be hurt, you fly forever, creatures leave you alone, and commands are on.
 - **Survival:** health and a flight meter, real danger, and commands off (unless you switch them on).
 
 Then set the creature level (peaceful, normal or hordes), whether the weather changes, and whether you start on Earth or a random planet.
@@ -124,6 +124,10 @@ Earth sits at the centre of an endless galaxy of generated planets: dune worlds,
 2. **Open.** Shoot a portal structure: stone arches, crystal rings, basalt monoliths and brick temples stand all over every world.
 3. **Warp.** Walk in and cross the galaxy at lightspeed. A portal home is waiting when you land.
 
+### Rifts
+
+Cast two **Black Holes** close together and they get caught in each other's pull. They orbit faster and faster, the ground shakes, and they merge in a flash that **tears a rift in the world**. The rift stays open for half an hour and shows a whole galaxy inside, which shifts as you move like a window into another sky. Walk in and you fall through a black hole: past the event horizon, down a twisting tunnel where you stretch like spaghetti, into the singularity, and out of a white hole. You could land anywhere: hundreds of planets past the portal range, or somewhere far across Earth. `/rift` opens one where you're aiming.
+
 Careful with explosives: a blast right next to an open portal **shatters** it, and you'll need to open it again. With commands on, `/tp earth` or `/tp <planet name>` warps you straight there.
 
 <br>
@@ -157,6 +161,7 @@ Press `T` to chat or `/` for commands. Suggestions pop up as you type: `鈫慲 `鈫
 | `/time set night` | `day`, `noon`, `evening`, `night`, `midnight` or `0`鈥揱1` |
 | `/weather storm` | `clear`, `cloudy`, `rain`, `storm`, `fog`, `windy` |
 | `/summon dragon 3` | Any creature, any number |
+| `/rift` | Tear open a rift to anywhere |
 | `/fly` 路 `/god` | Infinite flight 路 can't be hurt |
 | `/kill` 路 `/heal` 路 `/gold 500` | Clear creatures 路 restore yourself 路 pocket money |
 | `/help` | Everything else |

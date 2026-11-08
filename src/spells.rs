@@ -260,6 +260,8 @@ pub struct Spells {
     beam: Option<(f32, f32, f32, f32)>,
     bolts: Vec<(Vec<(f32, f32)>, f32)>,
     pub holes: Vec<Hole>,
+    /// Where two black holes merged this frame; the game tears a rift there.
+    pub rifts_born: Vec<(f32, f32)>,
     pub tornadoes: Vec<Twister>,
     /// Hue of the planet the Portal Wand is tuned to.
     pub portal_hue: f32,
@@ -270,7 +272,7 @@ pub struct Spells {
 
 impl Spells {
     pub fn new() -> Self {
-        Self { projs: Vec::new(), teleport: None, beam: None, bolts: Vec::new(), holes: Vec::new(), tornadoes: Vec::new(), portal_hue: 0.58, portal_hits: Vec::new(), sounds: Vec::new() }
+        Self { projs: Vec::new(), teleport: None, beam: None, bolts: Vec::new(), holes: Vec::new(), rifts_born: Vec::new(), tornadoes: Vec::new(), portal_hue: 0.58, portal_hits: Vec::new(), sounds: Vec::new() }
     }
 
     pub fn clear(&mut self) {
@@ -559,9 +561,70 @@ impl Spells {
         }
     }
 
+    /// Two black holes caught in each other's pull orbit faster and faster, then merge
+    /// in a flash that rips a lasting hole in the world.
+    fn inspiral(&mut self, world: &mut World, fx: &mut Fx, dt: f32) {
+        let n = self.holes.len();
+        let mut merged = None;
+        'pairs: for i in 0..n {
+            for j in i + 1..n {
+                let (a, b) = (&self.holes[i], &self.holes[j]);
+                let (dx, dy) = (b.x - a.x, b.y - a.y);
+                let d = (dx * dx + dy * dy).sqrt().max(0.01);
+                if d > (a.reach() + b.reach()) * 0.6 {
+                    continue;
+                }
+                let (mx, my) = ((a.x + b.x) * 0.5, (a.y + b.y) * 0.5);
+                let half = d * 0.5;
+                let new_half = (half - dt * (5.0 + 60.0 / (half + 2.0))).max(0.0);
+                let ang = dy.atan2(dx) + dt * (1.5 + 70.0 / (half + 3.0));
+                let (c, s) = (ang.cos(), ang.sin());
+                self.holes[i].x = mx - c * new_half;
+                self.holes[i].y = my - s * new_half;
+                self.holes[j].x = mx + c * new_half;
+                self.holes[j].y = my + s * new_half;
+                for k in [i, j] {
+                    self.holes[k].age = self.holes[k].age.min(HOLE_LIFE - 0.6);
+                }
+                // The closer they get, the harder the ground shakes and the brighter the swirl.
+                let close = 1.0 - (new_half / 30.0).min(1.0);
+                fx.shake = fx.shake.max(2.0 + close * 9.0);
+                for _ in 0..(4.0 + close * 16.0) as usize {
+                    let a = fx.rng.rangef(0.0, std::f32::consts::TAU);
+                    let r = new_half + fx.rng.rangef(2.0, 10.0);
+                    let sp = 90.0 + close * 160.0;
+                    let col = if fx.rng.chance(0.5) { [255, 230, 190] } else { [170, 140, 255] };
+                    fx.spark(mx + a.cos() * r, my + a.sin() * r, -a.sin() * sp, a.cos() * sp, 0.5, col);
+                }
+                if new_half < 1.5 {
+                    merged = Some((i, j, mx, my));
+                    break 'pairs;
+                }
+            }
+        }
+        let Some((i, j, mx, my)) = merged else { return };
+        self.holes.remove(j);
+        self.holes.remove(i);
+        // Merger: a white flash, a ring of gravitational waves, and a tear left behind.
+        fx.flash = 1.0;
+        fx.shake = 18.0;
+        fx.hitstop = fx.hitstop.max(0.12);
+        fx.explode(world, mx, my, 14, 0.0);
+        for k in 0..220 {
+            let a = k as f32 / 220.0 * std::f32::consts::TAU;
+            let sp = if k % 2 == 0 { 340.0 } else { 220.0 };
+            let col = if k % 3 == 0 { [255, 255, 255] } else { [190, 150, 255] };
+            fx.spark(mx + a.cos() * 3.0, my + a.sin() * 3.0, a.cos() * sp, a.sin() * sp, 0.7, col);
+        }
+        self.sounds.push(Sfx::Thunder);
+        self.sounds.push(Sfx::Boom);
+        self.rifts_born.push((mx, my));
+    }
+
     /// Black holes tear everything loose (rock included), spiral it inwards and eat it.
     fn step_holes(&mut self, world: &mut World, fx: &mut Fx, mobs: &mut Mobs, dt: f32) {
         fx.attractors.clear();
+        self.inspiral(world, fx, dt);
         let mut done = Vec::new();
         for (k, h) in self.holes.iter_mut().enumerate() {
             h.age += dt;

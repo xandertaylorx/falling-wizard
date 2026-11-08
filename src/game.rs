@@ -10,6 +10,7 @@ use crate::spells::{Card, Mods, Shot, Spells, SPELL_BAR};
 use crate::weather::Weather;
 use crate::planets::Planet;
 use crate::world::World;
+use crate::rift::Rift;
 use crate::worldgen::{Generator, PORTAL_HOME};
 
 pub const STEP: f32 = 1.0 / 60.0;
@@ -133,6 +134,11 @@ pub struct Game {
     autosave: f32,
     /// Open portals on planets you're not on right now.
     portal_mem: std::collections::HashMap<(i32, i32), Vec<((i32, i32, i32, i32), Planet)>>,
+    /// Tears in the world left by merging black holes, on every planet.
+    pub rifts: Vec<Rift>,
+    /// Set when the wizard falls into a rift: where they'll come out (and where on Earth).
+    pub rift_travel: Option<(Planet, Option<f32>)>,
+    rift_cool: f32,
 }
 
 impl Game {
@@ -184,6 +190,9 @@ impl Game {
             save_dir: None,
             autosave: 0.0,
             portal_mem: std::collections::HashMap::new(),
+            rifts: Vec::new(),
+            rift_travel: None,
+            rift_cool: 0.0,
         };
         game.apply_mode();
         game.mobs.density = [0.0, 1.0, 2.2][game.options.creatures.min(2)];
@@ -218,6 +227,7 @@ impl Game {
     pub fn apply_mode(&mut self) {
         self.player.god = self.options.creative;
         self.player.infinite_flight = self.options.creative;
+        self.mobs.peaceful = self.options.creative;
     }
 
     fn refresh_planet_names(&mut self) {
@@ -415,6 +425,7 @@ impl Game {
             while self.acc >= STEP && steps < 3 {
                 self.world.step();
                 self.spells.step(&mut self.world, &mut self.fx, &mut self.mobs, STEP);
+                self.step_rifts(STEP, idle);
                 self.fx.step(&mut self.world, STEP);
                 let n = self.world.explosions.len().min(4);
                 for (x, y, r) in self.world.explosions.drain(..n).collect::<Vec<_>>() {
@@ -696,13 +707,162 @@ impl Game {
         self.cam = self.player.center();
         self.in_space = false;
         self.travel = None;
-        self.fx.flash = 1.0;
+        self.fx.flash = 0.15;
         if !dest.weather {
             self.weather.set(crate::weather::Sky::Clear);
         }
         self.refresh_planet_names();
         self.toast(format!("WELCOME TO {}", dest.name), dest.color());
         self.toast(dest.kind.name().to_string(), [200, 200, 220]);
+    }
+
+    fn here(&self) -> (i32, i32) {
+        (self.planet.gx, self.planet.gy)
+    }
+
+    /// Open a rift (black hole mergers, or /rift).
+    pub fn tear_rift(&mut self, x: f32, y: f32) {
+        let seed = self.fx.rng.next_u32();
+        self.rifts.push(Rift::new(x, y, self.here(), seed));
+        self.toast("THE WORLD TORE OPEN", [200, 160, 255]);
+        self.toast("WALK INTO THE RIFT IF YOU DARE", [150, 145, 170]);
+    }
+
+    /// Rifts eat whatever falls in, pull loose bits towards them, glitter, and swallow the wizard.
+    fn step_rifts(&mut self, dt: f32, idle: bool) {
+        for (x, y) in std::mem::take(&mut self.spells.rifts_born) {
+            self.tear_rift(x, y);
+        }
+        self.rift_cool = (self.rift_cool - dt).max(0.0);
+        let here = self.here();
+        let t = self.time;
+        for i in 0..self.rifts.len() {
+            if self.rifts[i].planet != here {
+                continue;
+            }
+            self.rifts[i].age += dt;
+            let r = self.rifts[i].clone();
+            let (hw, hh) = r.size();
+            if hw < 0.5 {
+                continue;
+            }
+            if !r.white {
+                self.fx.attractors.push((r.x, r.y));
+            }
+            // Carve the tear out of the world: anything inside is gone.
+            for y in (r.y - hh - 1.0) as i32..=(r.y + hh + 1.0) as i32 {
+                for x in (r.x - hw - 3.0) as i32..=(r.x + hw + 3.0) as i32 {
+                    if r.dist(x as f32 + 0.5, y as f32 + 0.5, t) >= 1.0 {
+                        continue;
+                    }
+                    let Some(c) = self.world.get(x, y) else { continue };
+                    if c.back != M::Empty {
+                        self.world.set_back(x, y, M::Empty);
+                    }
+                    if c.mat == M::Empty || c.mat.indestructible() {
+                        continue;
+                    }
+                    self.world.set(x, y, Cell::EMPTY);
+                    if self.fx.rng.chance(0.3) {
+                        let col = crate::render::shade(c.mat.base_color(), c.shade, 0.4);
+                        let (vx, vy) = ((r.x - x as f32) * 6.0, (r.y - y as f32) * 6.0);
+                        self.fx.spark(x as f32, y as f32, vx, vy, 0.35, col);
+                    }
+                }
+            }
+            // Glitter drifting out of the galaxy and spiralling back in.
+            if self.fx.rng.chance(if r.white { 1.0 } else { 0.5 }) {
+                let a = self.fx.rng.rangef(0.0, std::f32::consts::TAU);
+                let d = self.fx.rng.rangef(1.2, 2.2);
+                let (px, py) = (r.x + a.cos() * hw * d, r.y + a.sin() * hh * d * 0.8);
+                let col = if r.white { [255, 245, 220] } else { crate::planets::hue_rgb(0.68 + self.fx.rng.rangef(-0.1, 0.12), 0.45, 1.0) };
+                let sp = if r.white { 60.0 } else { -25.0 };
+                self.fx.mote(px, py, a.cos() * sp - a.sin() * 18.0, a.sin() * sp + a.cos() * 18.0, 1.4, col, 1.5, 0.0, 0.0);
+            }
+            if r.white {
+                continue;
+            }
+            self.mobs.pull(r.x, r.y, hh * 1.2, dt * 0.4, &mut self.fx);
+            // In you go.
+            let (cx, cy) = self.player.center();
+            if !idle && self.rift_cool <= 0.0 && self.rift_travel.is_none() && r.open() > 0.5 && r.dist(cx, cy, t) < 0.9 {
+                let dest = self.rift_destination();
+                self.rift_travel = Some(dest);
+                self.sounds.push(Sfx::Thunder);
+                self.sounds.push(Sfx::Whoosh);
+            }
+        }
+        self.rifts.retain(|r| r.age < r.life);
+    }
+
+    /// Anywhere at all: somewhere far off on Earth, or a planet way past the portal range.
+    fn rift_destination(&mut self) -> (Planet, Option<f32>) {
+        let rng = &mut self.fx.rng;
+        if rng.chance(0.35) {
+            let x = rng.rangef(4000.0, 60000.0) * rng.sign() as f32;
+            return (Planet::earth(), Some(x));
+        }
+        for _ in 0..400 {
+            let a = rng.rangef(0.0, std::f32::consts::TAU);
+            let d = rng.rangef(40.0, 600.0);
+            let (gx, gy) = (self.planet.gx + (a.cos() * d) as i32, self.planet.gy + (a.sin() * d) as i32);
+            if let Some(p) = Planet::at(gx, gy) {
+                if !p.is_earth() {
+                    return (p, None);
+                }
+            }
+        }
+        (Planet::earth(), Some(rng.rangef(-30000.0, 30000.0)))
+    }
+
+    /// Spat out of a white hole, somewhere random on `dest`.
+    pub fn arrive_through_rift(&mut self, dest: Planet, x: Option<f32>) {
+        self.save_chunks();
+        let left = std::mem::take(&mut self.portals);
+        self.portal_mem.insert(self.here(), left);
+        self.planet = dest.clone();
+        let gen = Generator::with_planet(self.seed, dest.clone());
+        let x = x.unwrap_or_else(|| self.fx.rng.rangef(-4000.0, 4000.0));
+        let ground = gen.surface(x as i32).min(gen.sea_level());
+        let at = (x, ground as f32 - 16.0);
+        self.world = self.build_world(gen, at);
+        self.portals = self.portal_mem.remove(&(dest.gx, dest.gy)).unwrap_or_default();
+        self.player.x = at.0;
+        self.player.y = at.1;
+        self.player.vx = 0.0;
+        self.player.vy = -40.0;
+        self.player.grapple = None;
+        self.spawn = at;
+        self.spells.clear();
+        self.mobs.clear();
+        self.fx.clear();
+        self.in_space = false;
+        self.travel = None;
+        self.rift_travel = None;
+        self.rift_cool = 6.0;
+        let (cx, cy) = self.player.center();
+        let seed = self.fx.rng.next_u32();
+        self.rifts.push(Rift::white_hole(cx, cy, self.here(), seed));
+        self.fx.burst(cx, cy, 160, 240.0, [255, 245, 220]);
+        self.fx.flash = 0.2;
+        self.fx.shake = 10.0;
+        if !dest.is_earth() {
+            self.dest = Planet::earth();
+            self.spells.portal_hue = self.dest.hue;
+        }
+        if !dest.weather {
+            self.weather.set(crate::weather::Sky::Clear);
+        }
+        self.cam = self.player.center();
+        self.refresh_planet_names();
+        if dest.is_earth() {
+            self.toast("SOMEWHERE ON EARTH", dest.color());
+            self.toast(format!("{} BLOCKS FROM SPAWN", x.abs() as i64), [200, 200, 220]);
+        } else {
+            self.toast(format!("WELCOME TO {}", dest.name), dest.color());
+            self.toast(format!("{}  -  FAR BEYOND THE PORTALS", dest.kind.name()), [200, 200, 220]);
+        }
+        self.save();
     }
 
     /// A world for the current planet, with any chunks you changed last time restored.
@@ -750,6 +910,9 @@ impl Game {
         for ((gx, gy), ((x0, y0, x1, y1), d)) in all {
             kv("portal", format!("{gx},{gy},{x0},{y0},{x1},{y1},{},{}", d.gx, d.gy));
         }
+        for r in self.rifts.iter().filter(|r| !r.white) {
+            t.push_str(&format!("rift={},{},{},{},{},{}\n", r.planet.0, r.planet.1, r.x, r.y, r.age, r.seed));
+        }
         let _ = std::fs::create_dir_all(&dir);
         let _ = std::fs::write(dir.join("world.txt"), t);
     }
@@ -783,6 +946,14 @@ impl Game {
             let n: Vec<i32> = v.split(',').filter_map(|x| x.parse().ok()).collect();
             if n.len() == 8 {
                 g.portal_mem.entry((n[0], n[1])).or_default().push(((n[2], n[3], n[4], n[5]), planet_at(n[6], n[7])));
+            }
+        }
+        for (_, v) in meta.iter().filter(|(k, _)| k == "rift") {
+            let n: Vec<f32> = v.split(',').filter_map(|x| x.parse().ok()).collect();
+            if n.len() == 6 {
+                let mut r = Rift::new(n[2], n[3], (n[0] as i32, n[1] as i32), n[5] as u32);
+                r.age = n[4];
+                g.rifts.push(r);
             }
         }
         g.portals = g.portal_mem.remove(&(g.planet.gx, g.planet.gy)).unwrap_or_default();
@@ -854,6 +1025,7 @@ impl Game {
                     "/time set day|noon|night|midnight|<0-1>     /weather clear|cloudy|rain|storm|fog|windy",
                     "/summon <creature> [count]     /kill [pets]     /heal     /pos     /seed",
                     "/fly  (infinite flight)     /god  (can't be hurt)     /gold <n>     /clear",
+                    "/rift  (tear open a rift where you're aiming, like two merging black holes)",
                 ] {
                     self.say(l, INFO);
                 }
@@ -944,6 +1116,14 @@ impl Game {
                 let pets = a(1) == "pets";
                 let n = self.mobs.kill_all(pets);
                 self.say(format!("Killed {} {}", n, if pets { "pets" } else { "creatures" }), OK);
+            }
+            "rift" => {
+                let (ax, ay) = self.aim;
+                let (x, y) = if (ax - px).abs() + (ay - py).abs() > 4.0 { (ax, ay) } else { (px + 30.0, py - 10.0) };
+                self.tear_rift(x, y);
+                self.fx.flash = 0.8;
+                self.fx.shake = 10.0;
+                self.sounds.push(Sfx::Thunder);
             }
             "heal" => {
                 self.player.hp = crate::player::MAX_HP;
@@ -1100,7 +1280,7 @@ impl Game {
     }
 }
 
-const COMMANDS: [&str; 13] = ["help", "tp", "time", "weather", "summon", "kill", "heal", "fly", "god", "gold", "pos", "seed", "clear"];
+const COMMANDS: [&str; 14] = ["help", "tp", "time", "weather", "summon", "rift", "kill", "heal", "fly", "god", "gold", "pos", "seed", "clear"];
 const PLACES: [&str; 18] = ["portal", "volcano", "geyser", "ruin", "altar", "island", "space", "caves", "lava", "ocean", "beach", "forest", "plains", "jungle", "desert", "tundra", "spawn", "~"];
 
 /// Minecraft-style suggestions for a partly typed command: where the current word

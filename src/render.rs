@@ -479,6 +479,11 @@ impl Renderer {
         for hole in &game.spells.holes {
             lens(&mut self.albedo.bytes, &mut self.lens_tmp, w, h, hole.x - x0 as f32, hole.y - y0 as f32, hole.reach() * 1.3, hole.core(), hole.age);
         }
+        // Rifts: windows onto another galaxy.
+        let (ppx, ppy) = game.player.center();
+        for r in game.rifts.iter().filter(|r| r.planet == (game.planet.gx, game.planet.gy)) {
+            draw_rift(&mut self.albedo.bytes, &mut self.emit.bytes, &mut self.lens_tmp, w, h, (x0, y0), r, time, (ppx, ppy));
+        }
         {
             let emit = &mut self.emit.bytes;
             let mut add = |x: f32, y: f32, c: [f32; 3]| {
@@ -600,6 +605,96 @@ fn lens(px: &mut [u8], tmp: &mut Vec<u8>, w: usize, h: usize, cx: f32, cy: f32, 
             px[o] = (tmp[so] as f32 * dim + 120.0 * tint) as u8;
             px[o + 1] = (tmp[so + 1] as f32 * dim + 40.0 * tint) as u8;
             px[o + 2] = (tmp[so + 2] as f32 * dim + 200.0 * tint) as u8;
+        }
+    }
+}
+
+/// A rift: the galaxy inside (shifting with parallax as you move, like a window),
+/// the surrounding world mirrored into its rim, a shimmering edge, and light bent
+/// around the outside with a hint of prism.
+#[allow(clippy::too_many_arguments)]
+fn draw_rift(alb: &mut [u8], emit: &mut [u8], tmp: &mut Vec<u8>, w: usize, h: usize, o: (i32, i32), r: &crate::rift::Rift, t: f32, eye: (f32, f32)) {
+    let (hw, hh) = r.size();
+    if hw < 0.3 {
+        return;
+    }
+    tmp.clear();
+    tmp.extend_from_slice(alb);
+    let (cx, cy) = (r.x - o.0 as f32, r.y - o.1 as f32);
+    let (par_x, par_y) = ((eye.0 - r.x) * 0.3, (eye.1 - r.y) * 0.3);
+    let ex = (hw * 2.6) as i32 + 4;
+    let ey = (hh * 1.5) as i32 + 4;
+    let sample = |x: f32, y: f32| -> Option<usize> {
+        let (sx, sy) = (x as i32, y as i32);
+        if sx < 0 || sy < 0 || sx as usize >= w || sy as usize >= h {
+            None
+        } else {
+            Some((sy as usize * w + sx as usize) * 4)
+        }
+    };
+    for dy in -ey..=ey {
+        for dx in -ex..=ex {
+            let (x, y) = (cx as i32 + dx, cy as i32 + dy);
+            if x < 0 || y < 0 || x as usize >= w || y as usize >= h {
+                continue;
+            }
+            let (wx, wy) = (x as f32 + o.0 as f32 + 0.5, y as f32 + o.1 as f32 + 0.5);
+            let d = r.dist(wx, wy, t);
+            let i = (y as usize * w + x as usize) * 4;
+            if d < 1.0 {
+                let (u, v) = (wx - r.x, wy - r.y);
+                let mut col = if r.white {
+                    let k = 1.0 - d * 0.5;
+                    [255.0 * k + 40.0, 245.0 * k + 30.0, 220.0 * k + 20.0]
+                } else {
+                    crate::rift::galaxy(u * 1.4 - par_x, v * 1.4 - par_y, t, r.seed)
+                };
+                // Mirror: the world just outside the edge, reflected and swirled inward.
+                let fres = d.powi(3) * if r.white { 0.0 } else { 0.45 };
+                if fres > 0.01 {
+                    let mx = cx + (dx as f32).signum() * (hw * 2.0 - (dx as f32).abs()) + (t * 0.8 + v * 0.2).sin() * 1.5;
+                    if let Some(si) = sample(mx, y as f32) {
+                        for k in 0..3 {
+                            col[k] = col[k] * (1.0 - fres) + tmp[si + k] as f32 * fres * 1.2;
+                        }
+                    }
+                }
+                // Shimmering rim.
+                let rim = ((d - 0.78) / 0.22).clamp(0.0, 1.0).powi(2);
+                let flick = 0.75 + 0.25 * (t * 7.0 + v * 0.7 + r.seed as f32).sin();
+                let rc = if r.white { [255.0, 255.0, 255.0] } else { [225.0, 200.0, 255.0] };
+                for k in 0..3 {
+                    col[k] = col[k] * (1.0 - rim * 0.85) + rc[k] * rim * 0.85 * flick;
+                    alb[i + k] = col[k].min(255.0) as u8;
+                }
+                alb[i + 3] = 255;
+                let glow = if r.white { 1.0 } else { 0.35 + rim * 0.6 };
+                for k in 0..3 {
+                    emit[i + k] = emit[i + k].max((col[k] * glow).min(255.0) as u8);
+                }
+            } else if d < 2.4 && !r.white {
+                // Outside: light bends around the tear, splitting slightly by colour.
+                let f = 1.0 - (d - 1.0) / 1.4;
+                let pull = f * f * 0.45;
+                let (rx, ry) = (dx as f32, dy as f32);
+                let swirl = f * f * 0.5 * (t * 0.3).sin();
+                let (sn, cs) = swirl.sin_cos();
+                for (k, spread) in [(0usize, 1.06f32), (1, 1.0), (2, 0.94)] {
+                    let s = 1.0 + pull * spread;
+                    let (qx, qy) = (rx * cs - ry * sn, rx * sn + ry * cs);
+                    if let Some(si) = sample(cx + qx * s, cy + qy * s) {
+                        alb[i + k] = tmp[si + k];
+                    }
+                }
+                let halo = f.powi(3) * 0.5;
+                alb[i] = (alb[i] as f32 * (1.0 - halo) + 160.0 * halo) as u8;
+                alb[i + 1] = (alb[i + 1] as f32 * (1.0 - halo) + 110.0 * halo) as u8;
+                alb[i + 2] = (alb[i + 2] as f32 * (1.0 - halo) + 255.0 * halo) as u8;
+                let e = (f.powi(4) * 150.0) as u8;
+                emit[i] = emit[i].max(e / 2);
+                emit[i + 1] = emit[i + 1].max(e / 3);
+                emit[i + 2] = emit[i + 2].max(e);
+            }
         }
     }
 }

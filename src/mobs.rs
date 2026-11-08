@@ -323,6 +323,8 @@ pub struct Mobs {
     pub big_hits: u32,
     /// Creature spawn multiplier: 0 peaceful, 1 normal, 2 hordes.
     pub density: f32,
+    /// Creative: creatures leave the wizard alone.
+    pub peaceful: bool,
 }
 
 const N_SEG_WORM: usize = 14;
@@ -330,7 +332,7 @@ const N_SEG_DRAGON: usize = 20;
 
 impl Mobs {
     pub fn new(seed: u64) -> Self {
-        Self { list: Vec::new(), corpses: Vec::new(), shots: Vec::new(), timer: 3.0, rng: Rng::new(seed ^ 0xBEA57), popups: Vec::new(), sounds: Vec::new(), gold: 0, kills: 0, big_hits: 0, density: 1.0 }
+        Self { list: Vec::new(), corpses: Vec::new(), shots: Vec::new(), timer: 3.0, rng: Rng::new(seed ^ 0xBEA57), popups: Vec::new(), sounds: Vec::new(), gold: 0, kills: 0, big_hits: 0, density: 1.0, peaceful: false }
     }
 
     pub fn clear(&mut self) {
@@ -691,7 +693,7 @@ impl Mobs {
 
     pub fn update(&mut self, world: &mut World, player: &mut Player, fx: &mut Fx, dt: f32) {
         let (px, py) = player.center();
-        let alive = !player.dead();
+        let alive = !player.dead() && !self.peaceful;
         let mut new_shots = Vec::new();
         let hostiles: Vec<(usize, f32, f32)> = self.list.iter().enumerate().filter(|(_, m)| !m.pet).map(|(i, m)| (i, m.x + m.w * 0.5, m.y + m.h * 0.5)).collect();
         let mut pet_hits: Vec<(usize, f32, f32)> = Vec::new();
@@ -1187,6 +1189,7 @@ impl Mobs {
 
     fn update_shots(&mut self, world: &mut World, player: &mut Player, fx: &mut Fx, dt: f32) {
         let mut shots = std::mem::take(&mut self.shots);
+        let peaceful = self.peaceful;
         shots.retain_mut(|s| {
             s.life -= dt;
             if matches!(s.kind, Ranged::Bone | Ranged::Rock | Ranged::Snow) {
@@ -1200,7 +1203,7 @@ impl Mobs {
                 if !world.in_window(gx, gy) {
                     return false;
                 }
-                let hit_player = !player.dead() && s.x >= player.x && s.x < player.x + PW && s.y >= player.y && s.y < player.y + PH;
+                let hit_player = !peaceful && !player.dead() && s.x >= player.x && s.x < player.x + PW && s.y >= player.y && s.y < player.y + PH;
                 let m = world.mat(gx, gy);
                 if hit_player || !m.passable() {
                     if hit_player {
