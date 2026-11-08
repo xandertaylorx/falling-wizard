@@ -55,7 +55,16 @@ pub enum Material {
     Rune,
     /// An active portal's surface; its `temp` holds the destination's hue.
     Portal,
+    /// Ground eaten by the void after a rift shatters.
+    VoidRock,
+    /// Glowing violet crystal that grows out of the void.
+    VoidCrystal,
+    /// Loose void ash.
+    VoidDust,
 }
+
+/// The highest material id (for loading saves).
+pub const LAST_MATERIAL: Material = Material::VoidDust;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -86,8 +95,8 @@ impl Material {
         match self {
             M::Empty => Kind::Empty,
             M::Stone | M::Basalt | M::Dirt | M::Grass | M::Ice | M::Glass | M::Wood | M::Leaves | M::Plant | M::Coal | M::Gold
-            | M::MoonRock | M::Crystal | M::AlienGrass | M::Mushroom | M::Brick | M::Chest | M::Altar | M::Cloud | M::PortalStone | M::Rune | M::Portal => Kind::Static,
-            M::Sand | M::Snow | M::Seed | M::Gunpowder | M::Rubble | M::Gravel | M::Quicksand | M::Bone => Kind::Powder,
+            | M::MoonRock | M::Crystal | M::AlienGrass | M::Mushroom | M::Brick | M::Chest | M::Altar | M::Cloud | M::PortalStone | M::Rune | M::Portal | M::VoidRock | M::VoidCrystal => Kind::Static,
+            M::Sand | M::Snow | M::Seed | M::Gunpowder | M::Rubble | M::Gravel | M::Quicksand | M::Bone | M::VoidDust => Kind::Powder,
             M::Water | M::Oil | M::Acid | M::Lava | M::Blood | M::Goo => Kind::Liquid,
             M::Smoke | M::Steam | M::Gas => Kind::Gas,
             M::Fire => Kind::Fire,
@@ -115,6 +124,7 @@ impl Material {
             M::Gunpowder => 18,
             M::Sand => 20,
             M::Rubble => 22,
+            M::VoidDust => 19,
             _ => 255,
         }
     }
@@ -171,6 +181,8 @@ impl Material {
             M::Gold => 0.5,
             M::Dirt | M::Grass | M::Sand | M::Snow | M::Ice | M::Rubble | M::Coal | M::Seed | M::Gunpowder | M::Gravel | M::Quicksand | M::Bone => 1.6,
             M::MoonRock | M::Brick => 0.6,
+            M::VoidDust => 1.0,
+            M::VoidRock => 0.2,
             M::AlienGrass | M::Mushroom => 2.0,
             M::Wood | M::Leaves | M::Plant | M::Sprout => 2.0,
             _ => 0.0,
@@ -233,6 +245,9 @@ impl Material {
             M::PortalStone => [62, 52, 80],
             M::Rune => [150, 100, 255],
             M::Portal => [180, 120, 255],
+            M::VoidRock => [46, 26, 70],
+            M::VoidCrystal => [196, 110, 255],
+            M::VoidDust => [112, 64, 160],
         }
     }
 
@@ -272,6 +287,9 @@ impl Material {
             M::Cloud => 0.06,
             M::PortalStone => 0.3,
             M::Rune => 0.2,
+            M::VoidRock => 0.55,
+            M::VoidCrystal => 0.3,
+            M::VoidDust => 0.35,
             _ => 0.0,
         }
     }
@@ -286,6 +304,8 @@ impl Material {
             M::Altar => Some([0.9, 0.7, 0.3]),
             M::Rune => Some([0.6, 0.4, 1.4]),
             M::Goo => Some([0.04, 0.16, 0.06]),
+            M::VoidCrystal => Some([0.7, 0.25, 1.3]),
+            M::VoidRock => Some([0.04, 0.0, 0.08]),
             _ => None,
         }
     }
@@ -346,6 +366,9 @@ impl Material {
             M::PortalStone => "Portal Stone",
             M::Rune => "Rune",
             M::Portal => "Portal",
+            M::VoidRock => "Void Rock",
+            M::VoidCrystal => "Void Crystal",
+            M::VoidDust => "Void Dust",
         }
     }
 }

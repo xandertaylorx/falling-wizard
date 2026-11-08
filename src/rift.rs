@@ -20,18 +20,65 @@ pub struct Rift {
     /// A white hole: the short-lived tear you come out of.
     pub white: bool,
     pub seed: u32,
+    /// Seconds since a Portal Wand bolt started sealing it (negative: not sealing).
+    pub closing: f32,
+    /// Seconds since a black hole cracked it (negative: intact).
+    pub shatter: f32,
+}
+
+/// Seconds for a rift to zip shut, and to crack apart before it blows.
+pub const CLOSE_TIME: f32 = 2.6;
+pub const SHATTER_TIME: f32 = 1.1;
+
+/// A patch of void wasteland left by a shattered rift: violet rock and crystal under
+/// a starry sky, spreading out to `r` cells.
+#[derive(Clone)]
+pub struct Blight {
+    pub x: f32,
+    pub y: f32,
+    pub r: f32,
+    /// How far it has spread so far.
+    pub grown: f32,
+    pub planet: (i32, i32),
+    pub seed: u32,
+}
+
+impl Blight {
+    /// Ragged edge: how far the void reaches in direction `a`, as a fraction of `r`.
+    pub fn reach(&self, a: f32) -> f32 {
+        0.72 + 0.4 * crate::noise::fbm(a.cos() * 1.8 + 5.0, a.sin() * 1.8 + 5.0, 3, self.seed)
+    }
+
+    /// 0 outside .. 1 deep inside (what's spread so far).
+    pub fn cover(&self, x: f32, y: f32) -> f32 {
+        let (dx, dy) = (x - self.x, y - self.y);
+        let d = (dx * dx + dy * dy).sqrt();
+        let lim = self.grown * self.reach(dy.atan2(dx));
+        ((lim - d) / 14.0).clamp(0.0, 1.0)
+    }
 }
 
 impl Rift {
     pub fn new(x: f32, y: f32, planet: (i32, i32), seed: u32) -> Rift {
-        Rift { x, y, age: 0.0, life: RIFT_LIFE, planet, white: false, seed }
+        Rift { x, y, age: 0.0, life: RIFT_LIFE, planet, white: false, seed, closing: -1.0, shatter: -1.0 }
     }
 
     pub fn white_hole(x: f32, y: f32, planet: (i32, i32), seed: u32) -> Rift {
-        Rift { x, y, age: 0.0, life: 4.5, planet, white: true, seed }
+        Rift { x, y, age: 0.0, life: 4.5, planet, white: true, seed, closing: -1.0, shatter: -1.0 }
     }
 
     /// 0 closed .. 1 fully open: tears open fast, seals slowly at the end.
+    /// Where the zipper has got to (0..1 of the half height), while sealing.
+    pub fn zip(&self) -> f32 {
+        let z = (self.closing.max(0.0) / CLOSE_TIME).min(1.0);
+        z * z * (3.0 - 2.0 * z)
+    }
+
+    /// Can you fall into it right now?
+    pub fn enterable(&self) -> bool {
+        !self.white && self.closing < 0.0 && self.shatter < 0.0 && self.open() > 0.5
+    }
+
     pub fn open(&self) -> f32 {
         let grow = if self.white { (self.age / 0.3).min(1.0) } else { (self.age / 2.2).min(1.0).powf(0.6) };
         let fade = ((self.life - self.age) / if self.white { 2.5 } else { 8.0 }).clamp(0.0, 1.0);
@@ -51,6 +98,8 @@ impl Rift {
         if hw < 0.3 || hh < 0.3 {
             return 9.0;
         }
+        // Cracking: the whole tear shudders.
+        let x = if self.shatter >= 0.0 { x + (t * 90.0 + y * 0.7).sin() * self.shatter * 2.0 } else { x };
         let v = (y - self.y) / hh;
         if v.abs() >= 1.0 {
             return 1.0 + (v.abs() - 1.0) * 4.0 + ((x - self.x) / hw).abs() * 0.5;
@@ -60,7 +109,18 @@ impl Rift {
         let ragged = 1.0 + 0.22 * (fbm(v * 5.0 + t * 0.35, self.seed as f32 * 0.01, 2, self.seed) - 0.5) * 2.0;
         let bend = (v * 2.7 + t * 0.6 + self.seed as f32).sin() * 1.6 * profile;
         let u = (x - self.x - bend) / hw;
-        u.abs() / (profile * ragged).max(0.05)
+        // Sealing: zips shut from both ends towards the middle, then pinches thin.
+        let zip = if self.closing >= 0.0 {
+            let z = (self.closing / CLOSE_TIME).min(1.0);
+            let z = z * z * (3.0 - 2.0 * z);
+            ((1.0 - v.abs() - z * 1.02) / 0.1).clamp(0.0, 1.0) * (1.0 - ((z - 0.85) / 0.15).clamp(0.0, 1.0) * 0.8)
+        } else {
+            1.0
+        };
+        if zip <= 0.0 {
+            return 9.0;
+        }
+        u.abs() / (profile * ragged * zip).max(0.05)
     }
 }
 
@@ -108,4 +168,18 @@ pub fn galaxy(u: f32, v: f32, t: f32, seed: u32) -> [f32; 3] {
         }
     }
     col
+}
+
+/// The sky over the void wasteland: violet-black space, nebula wisps and stars.
+pub fn void_sky(gx: i32, gy: i32, t: f32) -> [f32; 3] {
+    let (x, y) = (gx as f32, gy as f32);
+    let n = fbm(x * 0.012 + t * 0.01, y * 0.016, 3, 0xF0_1D);
+    let n2 = fbm(x * 0.03, y * 0.03 - t * 0.02, 2, 0x5EED);
+    let mut c = [10.0 + n * 50.0 + n2 * 20.0, 4.0 + n2 * 14.0, 22.0 + n * 70.0];
+    let h = hash3(gx, gy, 0xB1_16);
+    if h % 1000 < 7 {
+        let tw = 0.6 + 0.4 * (t * 2.0 + (h % 50) as f32).sin();
+        c = [230.0 * tw, 210.0 * tw, 255.0 * tw];
+    }
+    c
 }

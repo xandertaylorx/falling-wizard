@@ -402,6 +402,15 @@ impl World {
         }
     }
 
+    /// Change the background wall (0 = open sky behind).
+    pub fn set_wall(&mut self, gx: i32, gy: i32, v: u8) {
+        let (x, y) = (gx - self.ox, gy - self.oy);
+        if Self::inb(x, y) {
+            self.wall[Self::li(x, y)] = v;
+            self.wake(x, y);
+        }
+    }
+
     pub fn set_back(&mut self, gx: i32, gy: i32, m: M) {
         let (x, y) = (gx - self.ox, gy - self.oy);
         if Self::inb(x, y) {

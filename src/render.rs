@@ -290,6 +290,15 @@ impl Renderer {
         let tinted = !planet.is_earth();
         let sky_ctx = SkyCtx { view: *view, day, tod, rain, clouds, top: planet.sky_top, horizon: planet.sky_horizon, time, far: &self.far, near: &self.near };
         let sky_light = [0.92 * day + 0.04, 0.95 * day + 0.05, 1.0 * day + 0.09];
+        // Void wastelands on screen: their sky turns to open space.
+        let here = (game.planet.gx, game.planet.gy);
+        let (vl, vt, vr, vb) = (x0 as f32, y0 as f32, (x0 + w as i32) as f32, (y0 + h as i32) as f32);
+        let blights: Vec<&crate::rift::Blight> = game
+            .blights
+            .iter()
+            .filter(|b| b.planet == here && b.x + b.r * 1.2 > vl && b.x - b.r * 1.2 < vr && b.y + b.r * 1.2 > vt && b.y - b.r * 1.2 < vb)
+            .collect();
+        let void_at = |gx: i32, gy: i32| -> f32 { blights.iter().map(|b| b.cover(gx as f32, gy as f32)).fold(0.0f32, f32::max) };
 
         let (mut fire, mut lava) = (0, 0);
         let alb = &mut self.albedo.bytes;
@@ -339,7 +348,14 @@ impl Renderer {
                     if let Some(t) = tree {
                         t
                     } else if wall == 0 {
-                        sky(&sky_ctx, vx, vy, gy)
+                        let base = sky(&sky_ctx, vx, vy, gy);
+                        let v = if blights.is_empty() { 0.0 } else { void_at(gx, gy) };
+                        if v > 0.0 {
+                            let sp = crate::rift::void_sky(gx, gy, time);
+                            lerp3(base, [sp[0].min(255.0) as u8, sp[1].min(255.0) as u8, sp[2].min(255.0) as u8], v)
+                        } else {
+                            base
+                        }
                     } else {
                         let depth = (gy - world.surf[wx as usize]) as f32;
                         let base = if depth < 30.0 {
@@ -632,6 +648,34 @@ fn draw_rift(alb: &mut [u8], emit: &mut [u8], tmp: &mut Vec<u8>, w: usize, h: us
             Some((sy as usize * w + sx as usize) * 4)
         }
     };
+    // Shattering: jagged glowing cracks race outward through the world.
+    if r.shatter >= 0.0 {
+        let k = (r.shatter / crate::rift::SHATTER_TIME).min(1.0);
+        for c in 0..14 {
+            let mut a = (crate::noise::hash3(c, 1, r.seed) % 1000) as f32 / 1000.0 * std::f32::consts::TAU;
+            let len = k.powf(1.4) * (hh * 1.8 + (crate::noise::hash3(c, 2, r.seed) % 20) as f32);
+            let (mut x, mut y) = (cx, cy);
+            let mut s = 0.0;
+            while s < len {
+                a += ((crate::noise::hash3(c, s as i32, r.seed) % 100) as f32 / 100.0 - 0.5) * 0.7;
+                x += a.cos();
+                y += a.sin();
+                s += 1.0;
+                let (ix, iy) = (x as i32, y as i32);
+                if ix < 0 || iy < 0 || ix as usize >= w || iy as usize >= h {
+                    break;
+                }
+                let i = (iy as usize * w + ix as usize) * 4;
+                let hot = 1.0 - s / len.max(1.0) * 0.5;
+                alb[i..i + 3].copy_from_slice(&[(255.0 * hot) as u8, (190.0 * hot) as u8, 255]);
+                alb[i + 3] = 255;
+                emit[i] = emit[i].max((200.0 * hot) as u8);
+                emit[i + 1] = emit[i + 1].max((90.0 * hot) as u8);
+                emit[i + 2] = emit[i + 2].max(255);
+            }
+        }
+    }
+    let white_out = if r.shatter >= 0.0 { (r.shatter / crate::rift::SHATTER_TIME).powi(2) } else { 0.0 };
     for dy in -ey..=ey {
         for dx in -ex..=ex {
             let (x, y) = (cx as i32 + dx, cy as i32 + dy);
@@ -663,6 +707,9 @@ fn draw_rift(alb: &mut [u8], emit: &mut [u8], tmp: &mut Vec<u8>, w: usize, h: us
                 let rim = ((d - 0.78) / 0.22).clamp(0.0, 1.0).powi(2);
                 let flick = 0.75 + 0.25 * (t * 7.0 + v * 0.7 + r.seed as f32).sin();
                 let rc = if r.white { [255.0, 255.0, 255.0] } else { [225.0, 200.0, 255.0] };
+                for k in 0..3 {
+                    col[k] = col[k] * (1.0 - white_out) + 255.0 * white_out;
+                }
                 for k in 0..3 {
                     col[k] = col[k] * (1.0 - rim * 0.85) + rc[k] * rim * 0.85 * flick;
                     alb[i + k] = col[k].min(255.0) as u8;

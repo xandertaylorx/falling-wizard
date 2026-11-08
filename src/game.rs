@@ -10,7 +10,7 @@ use crate::spells::{Card, Mods, Shot, Spells, SPELL_BAR};
 use crate::weather::Weather;
 use crate::planets::Planet;
 use crate::world::World;
-use crate::rift::Rift;
+use crate::rift::{Blight, Rift, CLOSE_TIME, SHATTER_TIME};
 use crate::worldgen::{Generator, PORTAL_HOME};
 
 pub const STEP: f32 = 1.0 / 60.0;
@@ -136,6 +136,10 @@ pub struct Game {
     portal_mem: std::collections::HashMap<(i32, i32), Vec<((i32, i32, i32, i32), Planet)>>,
     /// Tears in the world left by merging black holes, on every planet.
     pub rifts: Vec<Rift>,
+    /// Void wastelands left where rifts shattered.
+    pub blights: Vec<Blight>,
+    /// Which rift each of `spells.rift_zones` belongs to.
+    rift_zone_ids: Vec<usize>,
     /// Set when the wizard falls into a rift: where they'll come out (and where on Earth).
     pub rift_travel: Option<(Planet, Option<f32>)>,
     rift_cool: f32,
@@ -191,6 +195,8 @@ impl Game {
             autosave: 0.0,
             portal_mem: std::collections::HashMap::new(),
             rifts: Vec::new(),
+            blights: Vec::new(),
+            rift_zone_ids: Vec::new(),
             rift_travel: None,
             rift_cool: 0.0,
         };
@@ -525,7 +531,10 @@ impl Game {
         // Breaking the atmosphere: low gravity above it, fire on the way through.
         let (_, py) = self.player.center();
         let thin = ((-py - 420.0) / 100.0).clamp(0.0, 1.0);
-        self.player.grav = self.planet.gravity * (1.0 - thin * 0.72);
+        let (vx_, vy_) = self.player.center();
+        let here = self.here();
+        let void = self.blights.iter().filter(|b| b.planet == here).map(|b| b.cover(vx_, vy_)).fold(0.0f32, f32::max);
+        self.player.grav = self.planet.gravity * (1.0 - thin * 0.72) * (1.0 - void * 0.55);
         if !self.planet.weather && self.weather.kind != crate::weather::Sky::Clear {
             self.weather.set(crate::weather::Sky::Clear);
         }
@@ -736,12 +745,60 @@ impl Game {
         self.rift_cool = (self.rift_cool - dt).max(0.0);
         let here = self.here();
         let t = self.time;
+        // Portal Wand bolts that struck a rift start sealing it.
+        for z in std::mem::take(&mut self.spells.rift_hits) {
+            if let Some(&i) = self.rift_zone_ids.get(z) {
+                if self.rifts[i].closing < 0.0 && self.rifts[i].shatter < 0.0 {
+                    self.rifts[i].closing = 0.0;
+                    self.sounds.push(Sfx::Zap);
+                    self.sounds.push(Sfx::Chime);
+                    self.toast("SEALING THE RIFT", crate::planets::hue_rgb(self.spells.portal_hue, 0.6, 1.0));
+                }
+            }
+        }
+        // A black hole that wanders into a rift cracks it apart.
+        for i in 0..self.rifts.len() {
+            let r = &self.rifts[i];
+            if r.planet != here || r.white || r.shatter >= 0.0 {
+                continue;
+            }
+            let (hw, hh) = r.size();
+            let (rx, ry) = (r.x, r.y);
+            let before = self.spells.holes.len();
+            self.spells.holes.retain(|h| {
+                let (dx, dy) = ((h.x - rx) / (hw + h.reach() * 0.5), (h.y - ry) / (hh + h.reach() * 0.5));
+                dx * dx + dy * dy > 1.0
+            });
+            if self.spells.holes.len() < before {
+                self.rifts[i].shatter = 0.0;
+                self.rifts[i].closing = -1.0;
+                self.fx.flash = self.fx.flash.max(0.5);
+                self.sounds.push(Sfx::Thunder);
+                self.toast("THE RIFT IS CRACKING", [255, 120, 200]);
+            }
+        }
         for i in 0..self.rifts.len() {
             if self.rifts[i].planet != here {
                 continue;
             }
             self.rifts[i].age += dt;
+            if self.rifts[i].closing >= 0.0 {
+                self.rifts[i].closing += dt;
+            }
+            if self.rifts[i].shatter >= 0.0 {
+                self.rifts[i].shatter += dt;
+            }
             let r = self.rifts[i].clone();
+            if r.closing >= 0.0 {
+                self.seal_fx(i, &r, dt);
+            }
+            if r.shatter >= 0.0 {
+                self.shatter_fx(i, &r, dt);
+            }
+            let r = self.rifts[i].clone();
+            if r.age >= r.life {
+                continue;
+            }
             let (hw, hh) = r.size();
             if hw < 0.5 {
                 continue;
@@ -785,7 +842,7 @@ impl Game {
             self.mobs.pull(r.x, r.y, hh * 1.2, dt * 0.4, &mut self.fx);
             // In you go.
             let (cx, cy) = self.player.center();
-            if !idle && self.rift_cool <= 0.0 && self.rift_travel.is_none() && r.open() > 0.5 && r.dist(cx, cy, t) < 0.9 {
+            if !idle && self.rift_cool <= 0.0 && self.rift_travel.is_none() && r.enterable() && r.dist(cx, cy, t) < 0.9 {
                 let dest = self.rift_destination();
                 self.rift_travel = Some(dest);
                 self.sounds.push(Sfx::Thunder);
@@ -793,6 +850,207 @@ impl Game {
             }
         }
         self.rifts.retain(|r| r.age < r.life);
+        // Tell the spells where rifts are, so Portal Wand bolts can strike them.
+        self.rift_zone_ids.clear();
+        self.spells.rift_zones.clear();
+        for (i, r) in self.rifts.iter().enumerate() {
+            if r.planet == here && !r.white && r.closing < 0.0 && r.shatter < 0.0 && r.open() > 0.2 {
+                let (hw, hh) = r.size();
+                self.rift_zone_ids.push(i);
+                self.spells.rift_zones.push((r.x, r.y, hw + 1.5, hh));
+            }
+        }
+        self.step_blights(dt);
+    }
+
+    /// Sealing: bright stitches race in from both ends, the seam glows, the last of the
+    /// galaxy light squeezes out, and it snaps shut with an implosion.
+    fn seal_fx(&mut self, i: usize, r: &Rift, dt: f32) {
+        let (_, hh) = r.size();
+        let z = r.zip();
+        let hue = self.spells.portal_hue;
+        for end in [-1.0f32, 1.0] {
+            let y = r.y + end * hh * (1.0 - z);
+            for _ in 0..4 {
+                let a = self.fx.rng.rangef(0.0, std::f32::consts::TAU);
+                let sp = self.fx.rng.rangef(40.0, 140.0);
+                let col = if self.fx.rng.chance(0.4) { [255, 255, 255] } else { crate::planets::hue_rgb(hue + self.fx.rng.rangef(-0.05, 0.05), 0.6, 1.0) };
+                self.fx.spark(r.x, y, a.cos() * sp, a.sin() * sp - 20.0, 0.45, col);
+            }
+        }
+        // The stitched seam.
+        if hh > 1.0 && self.fx.rng.chance(0.9) {
+            let v = self.fx.rng.rangef(1.0 - z, 1.0) * if self.fx.rng.chance(0.5) { 1.0 } else { -1.0 };
+            let col = crate::planets::hue_rgb(hue, 0.35, 1.0);
+            let jx = self.fx.rng.rangef(-0.6, 0.6);
+            self.fx.mote(r.x + jx, r.y + v * hh, 0.0, 0.0, 0.5, col, 2.0, 0.0, 0.0);
+        }
+        self.fx.shake = self.fx.shake.max(1.5 + z * 4.0);
+        if r.closing >= CLOSE_TIME {
+            self.rifts[i].age = self.rifts[i].life;
+            for k in 0..180 {
+                let a = k as f32 / 180.0 * std::f32::consts::TAU;
+                let sp = if k % 2 == 0 { 260.0 } else { 140.0 };
+                let col = if k % 3 == 0 { [255, 255, 255] } else { crate::planets::hue_rgb(hue + (k % 7) as f32 * 0.02, 0.6, 1.0) };
+                self.fx.spark(r.x, r.y, a.cos() * sp, a.sin() * sp * 0.6, 0.6, col);
+            }
+            for k in 0..60 {
+                let col = crate::rift::galaxy(k as f32 * 3.0, (k % 7) as f32, self.time, r.seed);
+                let col = [col[0].min(255.0) as u8, col[1].min(255.0) as u8, col[2].min(255.0) as u8];
+                let a = self.fx.rng.rangef(0.0, std::f32::consts::TAU);
+                let d = self.fx.rng.rangef(14.0, 30.0);
+                self.fx.mote(r.x + a.cos() * d, r.y + a.sin() * d, -a.cos() * d * 3.0, -a.sin() * d * 3.0, 0.3, col, 1.5, 0.0, 0.0);
+            }
+            self.fx.flash = self.fx.flash.max(0.55);
+            self.fx.shake = 9.0;
+            self.fx.hitstop = self.fx.hitstop.max(0.08);
+            self.sounds.push(Sfx::Thunder);
+            self.sounds.push(Sfx::Chime);
+            self.toast("RIFT SEALED", crate::planets::hue_rgb(hue, 0.5, 1.0));
+        }
+        let _ = dt;
+    }
+
+    /// Cracking: the tear shudders and spits shards, then blows apart and the void
+    /// spreads into the world around it.
+    fn shatter_fx(&mut self, i: usize, r: &Rift, dt: f32) {
+        let k = (r.shatter / SHATTER_TIME).min(1.0);
+        let (hw, hh) = r.size();
+        self.fx.shake = self.fx.shake.max(3.0 + k * 12.0);
+        self.fx.attractors.push((r.x, r.y));
+        for _ in 0..(3.0 + k * 14.0) as usize {
+            let a = self.fx.rng.rangef(0.0, std::f32::consts::TAU);
+            let sp = self.fx.rng.rangef(60.0, 200.0) * (0.5 + k);
+            let col = if self.fx.rng.chance(0.5) { [255, 220, 255] } else { [180, 90, 255] };
+            self.fx.spark(r.x + a.cos() * hw, r.y + a.sin() * hh * 0.8, a.cos() * sp, a.sin() * sp, 0.4, col);
+        }
+        if r.shatter < SHATTER_TIME {
+            return;
+        }
+        let (x, y) = (r.x, r.y);
+        self.rifts[i].age = self.rifts[i].life;
+        self.fx.explode(&mut self.world, x, y, 24, 0.0);
+        for k in 0..360 {
+            let a = k as f32 / 360.0 * std::f32::consts::TAU + self.fx.rng.rangef(-0.02, 0.02);
+            let sp = self.fx.rng.rangef(120.0, 420.0);
+            let c = crate::rift::galaxy(k as f32 * 1.7, (k % 11) as f32 - 5.0, self.time, r.seed);
+            let col = if k % 4 == 0 { [255, 255, 255] } else if k % 4 == 1 { [200, 110, 255] } else { [c[0].min(255.0) as u8, c[1].min(255.0) as u8, c[2].min(255.0) as u8] };
+            self.fx.spark(x, y, a.cos() * sp, a.sin() * sp, 0.9, col);
+        }
+        self.fx.flash = 1.0;
+        self.fx.shake = 24.0;
+        self.fx.hitstop = self.fx.hitstop.max(0.18);
+        self.sounds.push(Sfx::Boom);
+        self.sounds.push(Sfx::Thunder);
+        self.sounds.push(Sfx::Boom);
+        let seed = self.fx.rng.next_u32();
+        self.blights.push(Blight { x, y, r: 95.0, grown: 0.0, planet: self.here(), seed });
+        self.toast("THE RIFT SHATTERED", [255, 120, 220]);
+        self.toast("THE VOID SPREADS", [170, 110, 255]);
+        let _ = dt;
+    }
+
+    /// Void wastelands creep outwards, turning ground to violet rock, crystal and ash
+    /// under an open starry sky, and breathe glowing spores.
+    fn step_blights(&mut self, dt: f32) {
+        let here = self.here();
+        let (px, py) = self.player.center();
+        for bi in 0..self.blights.len() {
+            if self.blights[bi].planet != here {
+                continue;
+            }
+            let b = self.blights[bi].clone();
+            if b.grown < b.r {
+                let prev = b.grown;
+                let cur = (b.grown + dt * 42.0).min(b.r);
+                self.blights[bi].grown = cur;
+                let ext = (cur * 1.15) as i32 + 2;
+                for dy in -ext..=ext {
+                    for dx in -ext..=ext {
+                        let d = ((dx * dx + dy * dy) as f32).sqrt();
+                        if d < prev * 0.7 || d > cur * 1.15 {
+                            continue;
+                        }
+                        let de = d / b.reach((dy as f32).atan2(dx as f32));
+                        if de < prev || de >= cur {
+                            continue;
+                        }
+                        self.voidify(b.x as i32 + dx, b.y as i32 + dy, de / b.r, &b);
+                    }
+                }
+                // The spreading edge crackles.
+                for _ in 0..10 {
+                    let a = self.fx.rng.rangef(0.0, std::f32::consts::TAU);
+                    let d = cur * b.reach(a);
+                    let col = if self.fx.rng.chance(0.3) { [255, 220, 255] } else { [170, 80, 255] };
+                    self.fx.spark(b.x + a.cos() * d, b.y + a.sin() * d, a.cos() * 40.0, a.sin() * 40.0 - 20.0, 0.5, col);
+                }
+            }
+            // Spores drifting up through the low gravity.
+            let (dx, dy) = (px - b.x, py - b.y);
+            if dx * dx + dy * dy < (b.r * 2.0).powi(2) && self.fx.rng.chance(0.7) {
+                let a = self.fx.rng.rangef(0.0, std::f32::consts::TAU);
+                let d = self.fx.rng.f32().sqrt() * b.grown;
+                let (sx, sy) = (b.x + a.cos() * d, b.y + a.sin() * d);
+                if self.world.mat(sx as i32, sy as i32) == M::Empty && b.cover(sx, sy) > 0.3 {
+                    let col = crate::planets::hue_rgb(0.76 + self.fx.rng.rangef(-0.05, 0.05), 0.55, 1.0);
+                    let vx = self.fx.rng.rangef(-4.0, 4.0);
+                    let vy = -self.fx.rng.rangef(4.0, 12.0);
+                    self.fx.mote(sx, sy, vx, vy, 3.0, col, 1.2, -2.0, 0.6);
+                }
+            }
+        }
+    }
+
+    /// Turn one cell into void wasteland. `deep` is 0 at the blast centre, 1 at the edge.
+    fn voidify(&mut self, x: i32, y: i32, deep: f32, b: &Blight) {
+        let Some(c) = self.world.get(x, y) else { return };
+        if c.mat.indestructible() {
+            return;
+        }
+        if c.back != M::Empty {
+            self.world.set_back(x, y, M::Empty);
+        }
+        if deep < 0.88 {
+            self.world.set_wall(x, y, 0);
+        }
+        let n = crate::noise::fbm(x as f32 * 0.07, y as f32 * 0.07, 3, b.seed);
+        let new = if deep < 0.3 {
+            // The crater: open space with chunks of void rock left floating in it.
+            if c.mat != M::Empty && n > 0.6 { M::VoidRock } else { M::Empty }
+        } else {
+            match c.mat.kind() {
+                crate::materials::Kind::Static => {
+                    if crate::noise::fbm(x as f32 * 0.16, y as f32 * 0.16, 2, b.seed ^ 3) > 0.7 {
+                        M::VoidCrystal
+                    } else {
+                        M::VoidRock
+                    }
+                }
+                crate::materials::Kind::Powder => M::VoidDust,
+                crate::materials::Kind::Liquid if c.mat != M::Lava => M::Empty,
+                crate::materials::Kind::Life => M::Empty,
+                _ => return,
+            }
+        };
+        if new == c.mat {
+            return;
+        }
+        if new == M::Empty {
+            self.world.set(x, y, Cell::EMPTY);
+        } else {
+            self.world.place(x, y, new);
+        }
+        // Crystal spires grow up from the new ground.
+        if new == M::VoidRock && deep > 0.3 && self.world.mat(x, y - 1) == M::Empty && crate::noise::hash3(x, y, b.seed) % 11 == 0 {
+            let h = 2 + (crate::noise::hash3(x, y, b.seed ^ 9) % 6) as i32;
+            for k in 1..=h {
+                if self.world.mat(x, y - k) != M::Empty {
+                    break;
+                }
+                self.world.place(x, y - k, M::VoidCrystal);
+            }
+        }
     }
 
     /// Anywhere at all: somewhere far off on Earth, or a planet way past the portal range.
@@ -910,7 +1168,10 @@ impl Game {
         for ((gx, gy), ((x0, y0, x1, y1), d)) in all {
             kv("portal", format!("{gx},{gy},{x0},{y0},{x1},{y1},{},{}", d.gx, d.gy));
         }
-        for r in self.rifts.iter().filter(|r| !r.white) {
+        for b in &self.blights {
+            t.push_str(&format!("blight={},{},{},{},{},{}\n", b.planet.0, b.planet.1, b.x, b.y, b.r, b.seed));
+        }
+        for r in self.rifts.iter().filter(|r| !r.white && r.shatter < 0.0 && r.closing < 0.0) {
             t.push_str(&format!("rift={},{},{},{},{},{}\n", r.planet.0, r.planet.1, r.x, r.y, r.age, r.seed));
         }
         let _ = std::fs::create_dir_all(&dir);
@@ -946,6 +1207,12 @@ impl Game {
             let n: Vec<i32> = v.split(',').filter_map(|x| x.parse().ok()).collect();
             if n.len() == 8 {
                 g.portal_mem.entry((n[0], n[1])).or_default().push(((n[2], n[3], n[4], n[5]), planet_at(n[6], n[7])));
+            }
+        }
+        for (_, v) in meta.iter().filter(|(k, _)| k == "blight") {
+            let n: Vec<f32> = v.split(',').filter_map(|x| x.parse().ok()).collect();
+            if n.len() == 6 {
+                g.blights.push(Blight { x: n[2], y: n[3], r: n[4], grown: n[4], planet: (n[0] as i32, n[1] as i32), seed: n[5] as u32 });
             }
         }
         for (_, v) in meta.iter().filter(|(k, _)| k == "rift") {

@@ -107,8 +107,8 @@ pub fn write_chunks(dir: &Path, gx: i32, gy: i32, chunks: &[SavedChunk]) -> std:
 }
 
 fn mat(v: u8) -> Material {
-    if v <= Material::Portal as u8 {
-        // SAFETY: Material is repr(u8) with contiguous discriminants up to Portal.
+    if v <= crate::materials::LAST_MATERIAL as u8 {
+        // SAFETY: Material is repr(u8) with contiguous discriminants up to LAST_MATERIAL.
         unsafe { std::mem::transmute::<u8, Material>(v) }
     } else {
         Material::Empty

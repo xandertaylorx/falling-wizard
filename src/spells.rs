@@ -262,6 +262,10 @@ pub struct Spells {
     pub holes: Vec<Hole>,
     /// Where two black holes merged this frame; the game tears a rift there.
     pub rifts_born: Vec<(f32, f32)>,
+    /// Open rifts this frame (x, y, half width, half height), set by the game, and
+    /// which of them a Portal Wand bolt struck.
+    pub rift_zones: Vec<(f32, f32, f32, f32)>,
+    pub rift_hits: Vec<usize>,
     pub tornadoes: Vec<Twister>,
     /// Hue of the planet the Portal Wand is tuned to.
     pub portal_hue: f32,
@@ -272,7 +276,7 @@ pub struct Spells {
 
 impl Spells {
     pub fn new() -> Self {
-        Self { projs: Vec::new(), teleport: None, beam: None, bolts: Vec::new(), holes: Vec::new(), rifts_born: Vec::new(), tornadoes: Vec::new(), portal_hue: 0.58, portal_hits: Vec::new(), sounds: Vec::new() }
+        Self { projs: Vec::new(), teleport: None, beam: None, bolts: Vec::new(), holes: Vec::new(), rifts_born: Vec::new(), rift_zones: Vec::new(), rift_hits: Vec::new(), tornadoes: Vec::new(), portal_hue: 0.58, portal_hits: Vec::new(), sounds: Vec::new() }
     }
 
     pub fn clear(&mut self) {
@@ -473,6 +477,8 @@ impl Spells {
         self.step_holes(world, fx, mobs, dt);
         self.step_twisters(world, fx, mobs, dt);
         let mut projs = std::mem::take(&mut self.projs);
+        let zones = std::mem::take(&mut self.rift_zones);
+        let mut rift_hits = Vec::new();
         let mut spawned: Vec<(Shot, (f32, f32), f32)> = Vec::new();
         projs.retain_mut(|p| {
             let gravity = match p.card {
@@ -505,6 +511,12 @@ impl Spells {
                     return false;
                 }
                 let m = world.mat(cx, cy);
+                if p.card == Card::PortalWand {
+                    if let Some(z) = zones.iter().position(|&(zx, zy, hw, hh)| ((nx - zx) / hw.max(1.0)).powi(2) + ((ny - zy) / hh.max(1.0)).powi(2) < 1.0) {
+                        rift_hits.push(z);
+                        return false;
+                    }
+                }
                 let mob_hit = if p.card == Card::PortalWand { None } else { mobs.hit_test(nx, ny, 0.5) };
                 if let Some(i) = mob_hit {
                     use crate::mobs::Dmg;
@@ -556,6 +568,7 @@ impl Spells {
         });
         projs.append(&mut self.projs);
         self.projs = projs;
+        self.rift_hits = rift_hits;
         for (shot, pos, ang) in spawned {
             self.fire(&shot, pos, ang, world, fx, mobs);
         }
