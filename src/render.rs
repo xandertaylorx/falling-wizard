@@ -560,15 +560,18 @@ impl Renderer {
         self.comp.set_uniform("u_flip", self.flip);
         draw_texture_ex(&self.alb_tex, ox, oy, WHITE, DrawTextureParams { dest_size: Some(vec2(wf * s, hf * s)), ..Default::default() });
         gl_use_default_material();
+        game.fx.draw_fine(view.left - shake.0 / s, view.top - shake.1 / s, s);
         // Fog and sandstorm haze near the surface.
         let (_, ppy) = game.player.center();
         let near_surface = 1.0 - ((ppy - game.world.surface_at(ppx as i32) as f32) / 60.0).clamp(0.0, 1.0);
         let fog = game.weather.fog * near_surface;
         if fog > 0.02 {
             let (sw, sh) = (screen_width(), screen_height());
-            for k in 0..8 {
-                let a = fog * 0.32 * (0.55 + k as f32 * 0.06);
-                draw_rectangle(0.0, sh * k as f32 / 8.0, sw, sh / 8.0 + 1.0, Color::new(0.78, 0.8, 0.84, a));
+            let n = 64;
+            for k in 0..n {
+                let a = fog * 0.32 * (0.55 + k as f32 / n as f32 * 0.48);
+                let (y0, y1) = ((sh * k as f32 / n as f32).floor(), (sh * (k + 1) as f32 / n as f32).floor());
+                draw_rectangle(0.0, y0, sw, y1 - y0, Color::new(0.78, 0.8, 0.84, a));
             }
         }
         if game.weather.sand > 0.02 {

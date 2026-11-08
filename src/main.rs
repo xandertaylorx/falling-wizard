@@ -8,6 +8,7 @@ mod noise;
 mod planets;
 mod player;
 mod render;
+mod creatures;
 mod rift;
 mod saves;
 mod settings;
@@ -1318,8 +1319,8 @@ impl App {
         let status = self.updater.as_ref().map(|u| u.status()).unwrap_or(Status::Unknown);
         let (label, color, clickable) = match status {
             Status::Checking => ("CHECKING FOR UPDATES", MUTED, false),
-            Status::UpToDate => ("UP TO DATE", MUTED, false),
-            Status::Unknown => ("V0.4", MUTED, false),
+            Status::UpToDate => ("UP TO DATE  -  CHECK FOR UPDATES", MUTED, true),
+            Status::Unknown => ("CHECK FOR UPDATES", MUTED, true),
             Status::Available => ("UPDATE AVAILABLE  -  CLICK TO INSTALL", ACCENT, true),
             Status::Updating => ("UPDATING IN THE BACKGROUND...", ACCENT, false),
             Status::Ready => ("UPDATE READY  -  CLICK TO RESTART", Color::from_rgba(140, 230, 150, 255), true),
@@ -1337,18 +1338,20 @@ impl App {
             draw_rectangle(x, y + 16.0, bw * p.clamp(0.0, 1.0), 6.0, ACCENT);
             return;
         }
-        let w = self.ui.font.width(label, 2.0);
+        let big = clickable && !matches!(status, Status::UpToDate | Status::Unknown);
+        let w = self.ui.font.width(label, if big { 2.0 } else { 1.0 });
         let (x, y) = (sw - 20.0 - w, sh - 34.0);
         let (mx, my) = mouse_position();
         let hot = clickable && mx > x - 10.0 && mx < sw - 10.0 && my > y - 8.0 && my < y + 22.0;
         if clickable {
             draw_rectangle(x - 10.0, y - 8.0, w + 20.0, 30.0, Color::new(0.0, 0.0, 0.0, if hot { 0.7 } else { 0.45 }));
         }
-        self.ui.text(label, x, y, if clickable { 2.0 } else { 1.0 }, color);
+        self.ui.text(label, x, y, if big { 2.0 } else { 1.0 }, color);
         if hot && is_mouse_button_pressed(MouseButton::Left) {
             if let Some(u) = &self.updater {
                 match status {
                     Status::Ready => updater::Updater::relaunch(),
+                    Status::UpToDate | Status::Unknown => u.check(),
                     _ => u.update(),
                 }
             }

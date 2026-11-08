@@ -78,6 +78,7 @@ Every grain of sand, drop of water and lick of flame is simulated:
 - **Acid** eats through almost anything (except glass), **lava** boils water into steam and cools into basalt, lightning fuses sand into glass.
 - **Gunpowder** chain-reacts, cave **gas** flashes into fire, gravel ceilings collapse, quicksand swallows you.
 - **Trees and plants** stand in a background layer: you, water and sand pass through them, but they still catch fire.
+- **Electricity:** lightning that hits water, acid, blood, goo, gold or lava runs through everything connected, shocking whatever's in it and setting off any gunpowder or oil it touches.
 - **Weather** drifts between clear, cloudy, rain, thunderstorms, fog and wind, through a full day and night. Snow settles in the tundra, sandstorms sweep the desert, and lightning hunts for trees.
 - **Up:** cloud platforms, sky isles, then the edge of the atmosphere (with aurora at night), low gravity, and floating astral islands among the stars.
 - **Down:** caves that widen with depth, ruins with chests and altars, volcanoes and geysers, and basalt caverns over lakes of lava.
@@ -104,6 +105,8 @@ Every spell has its own key, or use the mouse wheel.
 ## Creatures
 
 Zombies, skeletons, slimes, demon eyes, bats, fire imps, lions, tigers, scorpions, snow wolves, yetis, golems, salamanders, the Devourer, dragons, ghosts, mushlings, fish and sharks on Earth, plus star jellies, moon hoppers, void eyes, wisps and cloud sprites up in the sky and out in space. They spawn by biome, depth, altitude, time of day and planet.
+
+Every creature is drawn and animated piece by piece: legs that walk, tails that sway, wings that flap, and eyes that follow you. Each one behaves like what it is. Lions creep up low and pounce, and nap in the midday sun. Tigers lie in wait, then charge. Wolves circle and dart in one at a time, and howl at night. Skeletons keep their distance and shoot. Bats roost on cave ceilings. Fish school and scatter. Sharks circle, then lunge. Zombies and skeletons burn in daylight. Wounded animals run, and nothing walks into fire, off a cliff or into water on purpose. In creative they all leave you alone.
 
 They die the way they're killed. Fire turns them to ash, lightning X-rays their skeleton, frost shatters them, acid melts them into goo, explosions and wind send them tumbling, and black holes spaghettify them. Cast **Seeds of Life** straight at one to make it your pet (up to three).
 

@@ -2,6 +2,7 @@
 
 use crate::audio::Sfx;
 use crate::cell::Cell;
+use crate::creatures::{self, Anim, Pose};
 use crate::fx::Fx;
 use crate::materials::{Kind as MK, Material as M};
 use crate::noise::Rng;
@@ -75,7 +76,10 @@ enum Ranged {
 }
 
 struct Spec {
+    /// Old single-frame sprites, kept as a reference for each creature's palette.
+    #[allow(dead_code)]
     sprite: &'static [&'static str],
+    #[allow(dead_code)]
     pal: &'static [(u8, [u8; 3])],
     hp: f32,
     speed: f32,
@@ -215,6 +219,35 @@ const fn spec(kind: MobKind) -> Spec {
     }
 }
 
+/// Hitbox size in cells; the art is drawn to fit it.
+pub fn size(kind: MobKind) -> (f32, f32) {
+    use MobKind::*;
+    match kind {
+        Zombie | Skeleton => (6.0, 11.0),
+        Slime => (8.0, 6.0),
+        DemonEye => (9.0, 7.0),
+        Bat => (9.0, 6.0),
+        FireImp => (7.0, 8.0),
+        Lion => (17.0, 10.0),
+        Tiger => (18.0, 9.0),
+        Scorpion => (13.0, 6.0),
+        SnowWolf => (15.0, 9.0),
+        Yeti => (11.0, 15.0),
+        Golem => (12.0, 15.0),
+        Salamander => (15.0, 5.0),
+        Worm | Dragon => (6.0, 6.0),
+        Ghost => (8.0, 11.0),
+        StarJelly => (9.0, 11.0),
+        MoonHopper => (9.0, 8.0),
+        VoidEye => (10.0, 10.0),
+        Wisp => (4.0, 4.0),
+        CloudSprite => (12.0, 7.0),
+        Mushling => (7.0, 8.0),
+        Fish => (8.0, 5.0),
+        Shark => (22.0, 8.0),
+    }
+}
+
 pub const ALL_MOBS: [MobKind; 24] = {
     use MobKind::*;
     [
@@ -277,7 +310,22 @@ pub struct Mob {
     segs: Vec<(f32, f32)>,
     pub pet: bool,
     last_hit: Dmg,
+    /// Per-creature variety (colours, manes).
+    seed: u32,
+    /// Walk cycle phase.
+    walk: f32,
+    pose: Pose,
+    /// Behaviour timer: idling, lunging, dashing.
+    st: f32,
+    /// Counts down through an attack animation.
+    attack_t: f32,
+    /// Provoked: neutral creatures fight back for a while.
+    angry: f32,
+    look: (f32, f32),
 }
+
+const ATTACK_ANIM: f32 = 0.35;
+const PI_F: f32 = std::f32::consts::PI;
 
 /// A body flung by its death; it tumbles and splatters where it lands.
 struct Corpse {
@@ -291,6 +339,7 @@ struct Corpse {
     t: f32,
     facing: f32,
     style: Dmg,
+    seed: u32,
 }
 
 struct MobShot {
@@ -343,10 +392,7 @@ impl Mobs {
 
     pub fn spawn(&mut self, kind: MobKind, x: f32, y: f32) {
         let s = spec(kind);
-        let (w, h) = match s.ai {
-            Ai::Burrower | Ai::Dragon => (6.0, 6.0),
-            _ => (s.sprite[0].len() as f32, s.sprite.len() as f32),
-        };
+        let (w, h) = size(kind);
         let segs = match s.ai {
             Ai::Burrower => vec![(x, y); N_SEG_WORM],
             Ai::Dragon => vec![(x, y); N_SEG_DRAGON],
@@ -374,6 +420,13 @@ impl Mobs {
             segs,
             pet: false,
             last_hit: Dmg::Physical,
+            seed: self.rng.next_u32(),
+            walk: 0.0,
+            pose: Pose::Normal,
+            st: 0.0,
+            attack_t: 0.0,
+            angry: 0.0,
+            look: (1.0, 0.0),
         });
     }
 
@@ -575,6 +628,12 @@ impl Mobs {
         v.into_iter().take(n).map(|t| (t.0, t.1, t.2)).collect()
     }
 
+    /// Hitbox of creature `i`: (x, y, w, h).
+    pub fn bounds(&self, i: usize) -> (f32, f32, f32, f32) {
+        let m = &self.list[i];
+        (m.x, m.y, m.w, m.h)
+    }
+
     pub fn freeze(&mut self, i: usize, secs: f32) {
         self.list[i].frozen = secs;
     }
@@ -647,7 +706,8 @@ impl Mobs {
             r -= w;
         }
         let s = spec(kind);
-        let (w, h) = (s.sprite[0].len() as i32, s.sprite.len() as i32);
+        let (w, h) = size(kind);
+        let (w, h) = (w as i32, h as i32);
         let free = |x0: i32, y0: i32| (0..h).all(|dy| (0..w).all(|dx| world.mat(x0 + dx, y0 + dy).passable()) && world.in_window(x0, y0 + dy));
         let (xi, yi) = (x as i32, y as i32);
         match s.ai {
@@ -691,10 +751,13 @@ impl Mobs {
         false
     }
 
-    pub fn update(&mut self, world: &mut World, player: &mut Player, fx: &mut Fx, dt: f32) {
+    pub fn update(&mut self, world: &mut World, player: &mut Player, fx: &mut Fx, day: f32, dt: f32) {
+        use MobKind::*;
         let (px, py) = player.center();
         let alive = !player.dead() && !self.peaceful;
         let mut new_shots = Vec::new();
+        let mut new_popups: Vec<Popup> = Vec::new();
+        let fishes: Vec<(f32, f32, f32, f32)> = self.list.iter().filter(|m| m.kind == Fish).map(|m| (m.x + m.w * 0.5, m.y + m.h * 0.5, m.vx, m.vy)).collect();
         let hostiles: Vec<(usize, f32, f32)> = self.list.iter().enumerate().filter(|(_, m)| !m.pet).map(|(i, m)| (i, m.x + m.w * 0.5, m.y + m.h * 0.5)).collect();
         let mut pet_hits: Vec<(usize, f32, f32)> = Vec::new();
         for m in self.list.iter_mut() {
@@ -704,7 +767,22 @@ impl Mobs {
             m.frozen = (m.frozen - dt).max(0.0);
             m.cd -= dt;
             m.attack_cd -= dt;
+            m.attack_t = (m.attack_t - dt).max(0.0);
+            m.angry = (m.angry - dt).max(0.0);
+            if m.hurt > 0.1 {
+                m.angry = 20.0;
+            }
             let (cx, cy) = Self::center(m);
+            // The undead burn in sunlight.
+            if matches!(m.kind, Zombie | Skeleton) && !m.pet && day > 0.55 && cy < world.surface_at(cx as i32) as f32 + 3.0 && world.mat(cx as i32, cy as i32) != M::Water {
+                m.hp -= 5.0 * dt;
+                m.last_hit = Dmg::Fire;
+                if fx.rng.chance(0.5) {
+                    let x = m.x + fx.rng.rangef(0.0, m.w);
+                    let y = m.y + fx.rng.rangef(0.0, m.h);
+                    fx.spark(x, y, 0.0, -30.0, 0.4, [255, 150, 40]);
+                }
+            }
 
             // Environment.
             let here = world.mat(cx as i32, cy as i32);
@@ -742,22 +820,141 @@ impl Mobs {
             };
             let (dx, dy) = (gx - cx, gy - cy);
             let dist = (dx * dx + dy * dy).sqrt();
-            let aggro = if m.pet { true } else { alive && dist < 170.0 };
-            let dir = if m.pet && target.is_none() && dx.abs() < 10.0 {
-                0.0
+            if dist > 0.5 {
+                m.look = (dx / dist * m.facing, dy / dist);
+            }
+            let animal = matches!(m.kind, Lion | Tiger | SnowWolf | MoonHopper | Mushling | Fish | Scorpion);
+            let neutral = matches!(m.kind, Mushling | MoonHopper | Fish | StarJelly | Wisp);
+            let night_k = if animal && day < 0.3 && m.kind != SnowWolf { 0.7 } else { 1.0 };
+            let sight = match m.kind {
+                Tiger if m.pose == Pose::Crouch => 75.0,
+                Lion => 120.0,
+                Scorpion if m.pose == Pose::Hidden => 40.0,
+                Bat if m.pose == Pose::Roost => 55.0,
+                _ => 170.0,
+            } * night_k;
+            let mut aggro = if m.pet { true } else { alive && dist < sight && (!neutral || m.angry > 0.0) };
+            if !m.pet && alive && m.angry > 15.0 && !neutral {
+                aggro = true;
+            }
+            // Wounded animals run; shy ones keep their distance.
+            let fleeing = !m.pet
+                && alive
+                && ((animal && m.hp < m.max_hp * 0.3) || (matches!(m.kind, Mushling | MoonHopper) && dist < 36.0 && m.angry <= 0.0) || (m.kind == Fish && dist < 28.0));
+            // Nobody walks into fire on purpose.
+            let ahead_x = (cx + m.facing * (m.w * 0.5 + 4.0)) as i32;
+            let fire_ahead = !s.fire_immune && !m.pet && (matches!(world.mat(ahead_x, cy as i32), M::Fire | M::Lava) || matches!(world.mat(ahead_x, (m.y + m.h) as i32), M::Fire | M::Lava));
+            m.st -= dt;
+            let mut pose = Pose::Normal;
+            let mut speed_k = if aggro { 1.0 } else { 0.4 };
+            let mut dir;
+            if fleeing {
+                dir = -dx.signum();
+                speed_k = 1.35;
+                aggro = false;
+            } else if m.pet && target.is_none() && dx.abs() < 10.0 {
+                dir = 0.0;
             } else if aggro {
-                dx.signum()
+                dir = dx.signum();
+                match m.kind {
+                    // Lions creep up low, then pounce.
+                    Lion if dist > 42.0 && m.on_ground && !m.pet => {
+                        pose = Pose::Crouch;
+                        speed_k = 0.45;
+                    }
+                    // Tigers lie in wait, then charge out of nowhere.
+                    Tiger if !m.pet => {
+                        if dist > 80.0 {
+                            pose = Pose::Crouch;
+                            speed_k = 0.3;
+                        } else {
+                            speed_k = 1.5;
+                        }
+                    }
+                    // Wolves circle and dart in one at a time.
+                    SnowWolf if !m.pet => {
+                        if m.st > 0.0 {
+                            speed_k = 1.8;
+                        } else if m.attack_cd <= 0.0 && dist < 55.0 && (m.t * 1.9 + (m.seed % 100) as f32).sin() > 0.75 {
+                            m.st = 0.7;
+                            speed_k = 1.8;
+                            m.attack_t = ATTACK_ANIM;
+                        } else if dist < 24.0 {
+                            dir = -dir;
+                            speed_k = 0.8;
+                        } else if dist < 36.0 {
+                            dir = 0.0;
+                        }
+                    }
+                    // Skeletons keep their range and shoot.
+                    Skeleton if !m.pet => {
+                        if dist < 45.0 {
+                            dir = -dir;
+                            speed_k = 0.8;
+                        } else if dist < 90.0 {
+                            dir = 0.0;
+                        }
+                    }
+                    Zombie => speed_k = 0.75,
+                    _ => {}
+                }
             } else {
+                // Wander about, with pauses to rest, sniff and look around.
                 m.wander -= dt;
                 if m.wander <= 0.0 {
-                    m.wander = 2.0 + (m.t * 13.7).sin().abs() * 3.0;
-                    m.facing = -m.facing;
+                    let r = crate::noise::hash3(m.seed as i32, (m.t * 10.0) as i32, 3) % 100;
+                    m.wander = 1.5 + (r % 40) as f32 / 10.0;
+                    if r < 45 {
+                        m.st = m.wander;
+                    } else if r < 80 {
+                        m.facing = -m.facing;
+                    }
                 }
-                m.facing
-            };
+                let idle = m.st > 0.0;
+                dir = if idle { 0.0 } else { m.facing };
+                if idle {
+                    match m.kind {
+                        Lion if day > 0.55 => {
+                            pose = Pose::Sleep;
+                            m.st = m.st.max(0.5);
+                            if fx.rng.chance(dt * 0.6) {
+                                new_popups.push(Popup { x: cx + m.facing * 6.0, y: m.y - 2.0, text: "z".into(), color: [210, 220, 255], t: 0.0 });
+                            }
+                        }
+                        Tiger => pose = Pose::Crouch,
+                        SnowWolf if day < 0.3 && ((m.t * 0.25 + (m.seed % 13) as f32) % 6.0) < 1.6 => {
+                            pose = Pose::Howl;
+                            if fx.rng.chance(dt * 0.7) {
+                                new_popups.push(Popup { x: cx + m.facing * 5.0, y: m.y - 4.0, text: "AWOO".into(), color: [190, 210, 255], t: 0.0 });
+                            }
+                        }
+                        Scorpion if world.mat(cx as i32, (m.y + m.h + 0.5) as i32) == M::Sand => pose = Pose::Hidden,
+                        _ => {}
+                    }
+                }
+                // Don't wander off cliffs or into water.
+                if dir != 0.0 && m.on_ground && matches!(s.ai, Ai::Walker | Ai::Pouncer | Ai::Hopper) {
+                    let ax = (cx + dir * (m.w * 0.5 + 2.0)) as i32;
+                    let foot = (m.y + m.h) as i32;
+                    let drop = (0..7).all(|k| !world.mat(ax, foot + k).solid());
+                    let wet = world.mat(ax, foot).kind() == MK::Liquid || world.mat(ax, foot - 1).kind() == MK::Liquid;
+                    if drop || wet {
+                        m.facing = -m.facing;
+                        dir = 0.0;
+                    }
+                }
+            }
+            if fire_ahead && !aggro && dir != 0.0 {
+                dir = -dir;
+                m.facing = dir;
+            }
             if dir != 0.0 {
                 m.facing = dir;
             }
+            if aggro && !fleeing && matches!(m.kind, Skeleton | SnowWolf) && dx.abs() > 1.0 {
+                m.facing = dx.signum();
+            }
+            m.pose = pose;
             let slow = if m.frozen > 0.0 { 0.15 } else { 1.0 };
 
             match s.ai {
@@ -775,13 +972,20 @@ impl Mobs {
                             }
                         }
                         _ => {
-                            let target = dir * s.speed * if aggro { 1.0 } else { 0.4 } * slow;
+                            let target = dir * s.speed * speed_k * slow;
                             let acc = if ground { 300.0 } else { 120.0 };
                             m.vx += (target - m.vx).clamp(-acc * dt, acc * dt);
-                            if s.ai == Ai::Pouncer && ground && aggro && dist < 40.0 && m.cd <= 0.0 {
+                            if s.ai == Ai::Pouncer && ground && aggro && !fleeing && dist < if m.kind == Tiger { 34.0 } else { 42.0 } && m.cd <= 0.0 && m.kind != SnowWolf {
                                 m.vy = -95.0;
                                 m.vx = dir * 140.0;
                                 m.cd = 2.0;
+                                m.attack_t = ATTACK_ANIM;
+                            }
+                            if !ground && s.ai == Ai::Pouncer && m.vy.abs() > 20.0 {
+                                m.pose = Pose::Leap;
+                            }
+                            if m.pose == Pose::Sleep || m.pose == Pose::Hidden {
+                                m.vx = 0.0;
                             }
                         }
                     }
@@ -815,11 +1019,53 @@ impl Mobs {
                     m.on_ground = Self::solid_at(world, m.x, m.y + 1.0, m.w, m.h);
                 }
                 Ai::Flyer | Ai::Ghost => {
-                    let (tx, ty) = if aggro {
-                        (px + (m.t * 1.3).sin() * 18.0, py - 10.0 + (m.t * 0.9).cos() * 12.0)
+                    // Bats hang from cave ceilings until something comes close.
+                    if m.kind == Bat && !aggro && !m.pet {
+                        let ceiling = (1..10).find(|k| world.mat(cx as i32, (m.y as i32) - k).solid());
+                        if let Some(k) = ceiling {
+                            if k <= 1 {
+                                m.pose = Pose::Roost;
+                                m.vx = 0.0;
+                                m.vy = 0.0;
+                            } else {
+                                m.vy -= 60.0 * dt;
+                            }
+                        }
+                    }
+                    if m.pose == Pose::Roost {
+                        // (stays put)
+                    } else {
+                    let mut cap = s.speed;
+                    let (tx, ty) = if fleeing || (m.kind == Wisp && !aggro && dist < 70.0 && alive) {
+                        // Wisps orbit you, curious.
+                        let a = m.t * 1.4 + (m.seed % 10) as f32;
+                        (px + a.cos() * 16.0, py - 8.0 + a.sin() * 10.0)
+                    } else if aggro {
+                        match m.kind {
+                            DemonEye if !m.pet => {
+                                // Hover, then swoop straight at you.
+                                if m.st > 0.0 {
+                                    cap *= 2.4;
+                                    (px, py)
+                                } else {
+                                    if m.cd <= 0.0 && dist < 80.0 {
+                                        m.st = 0.6;
+                                        m.cd = 3.0;
+                                        m.attack_t = ATTACK_ANIM;
+                                    }
+                                    (px + (m.t * 1.3).sin() * 30.0, py - 26.0)
+                                }
+                            }
+                            FireImp | CloudSprite | VoidEye if !m.pet => (px - dx.signum() * 38.0, py - 24.0 + (m.t * 1.1).sin() * 6.0),
+                            Bat => (px + (m.t * 7.0).sin() * 10.0, py - 4.0 + (m.t * 9.0).cos() * 8.0),
+                            _ => (px + (m.t * 1.3).sin() * 18.0, py - 10.0 + (m.t * 0.9).cos() * 12.0),
+                        }
+                    } else if m.kind == CloudSprite {
+                        (cx + fx.wind * 0.5 + m.facing * 10.0, cy + (m.t * 0.5).sin() * 4.0)
                     } else {
                         (cx + m.facing * 30.0, cy + (m.t * 0.7).sin() * 10.0)
                     };
+                    let s = Spec { speed: cap, ..s };
                     let (ax, ay) = (tx - cx, ty - cy);
                     let l = (ax * ax + ay * ay).sqrt().max(1.0);
                     m.vx += ax / l * s.speed * 2.0 * dt * slow;
@@ -840,6 +1086,17 @@ impl Mobs {
                         m.vx = -m.vx * 0.6;
                         m.vy = -m.vy * 0.6;
                     }
+                    if m.vx.abs() > 4.0 && !(aggro && matches!(m.kind, FireImp | CloudSprite | VoidEye | DemonEye)) {
+                        m.facing = m.vx.signum();
+                    } else if aggro && dx.abs() > 1.0 {
+                        m.facing = dx.signum();
+                    }
+                    // Storm clouds drizzle as they drift.
+                    if m.kind == CloudSprite && fx.rng.chance(0.25) {
+                        let x = m.x + fx.rng.rangef(1.0, m.w - 1.0);
+                        fx.rain_drop(x, m.y + m.h, fx.wind);
+                    }
+                    }
                 }
                 Ai::Swimmer => {
                     if out_of_water {
@@ -852,7 +1109,41 @@ impl Mobs {
                         }
                     } else {
                         let player_in_water = world.mat(gx as i32, gy as i32).kind() == MK::Liquid;
-                        let (tx, ty) = if aggro && player_in_water && s.dmg > 0.0 { (gx, gy) } else { (cx + m.facing * 30.0, cy + (m.t * 0.8).sin() * 6.0) };
+                        let (tx, ty) = if m.kind == Fish {
+                            // School: drift with nearby fish, scatter from you.
+                            let (mut sx, mut sy, mut n) = (0.0, 0.0, 0.0);
+                            for &(fx_, fy_, fvx, fvy) in &fishes {
+                                let d2 = (fx_ - cx).powi(2) + (fy_ - cy).powi(2);
+                                if d2 < 400.0 && d2 > 0.5 {
+                                    sx += fx_ + fvx * 0.3;
+                                    sy += fy_ + fvy * 0.3;
+                                    n += 1.0;
+                                }
+                            }
+                            if fleeing && player_in_water {
+                                (cx - dx / dist.max(1.0) * 30.0, cy - dy / dist.max(1.0) * 30.0)
+                            } else if n > 0.0 {
+                                ((sx / n) * 0.6 + (cx + m.facing * 20.0) * 0.4, (sy / n) * 0.6 + (cy + (m.t * 0.8).sin() * 4.0) * 0.4)
+                            } else {
+                                (cx + m.facing * 30.0, cy + (m.t * 0.8).sin() * 6.0)
+                            }
+                        } else if aggro && player_in_water && s.dmg > 0.0 {
+                            if m.kind == Shark && !m.pet && (m.attack_cd > 0.0 || dist > 70.0) && m.st <= 0.0 {
+                                // Circle, then lunge.
+                                if m.attack_cd <= 0.0 && fx.rng.chance(dt * 0.8) {
+                                    m.st = 1.0;
+                                }
+                                let a = m.t * 0.9 + (m.seed % 10) as f32;
+                                (gx + a.cos() * 30.0, gy + a.sin() * 10.0)
+                            } else {
+                                if m.kind == Shark && dist < 18.0 {
+                                    m.attack_t = m.attack_t.max(0.2);
+                                }
+                                (gx, gy)
+                            }
+                        } else {
+                            (cx + m.facing * 30.0, cy + (m.t * 0.8).sin() * 6.0)
+                        };
                         let (ax, ay) = (tx - cx, ty - cy);
                         let l = (ax * ax + ay * ay).sqrt().max(1.0);
                         m.vx += ax / l * s.speed * 2.0 * dt;
@@ -932,6 +1223,21 @@ impl Mobs {
                     }
                 }
             }
+            // Walk cycle, footsteps and trails.
+            let prev_walk = m.walk;
+            let sp = if matches!(s.ai, Ai::Walker | Ai::Pouncer | Ai::Hopper) { m.vx.abs() } else { (m.vx * m.vx + m.vy * m.vy).sqrt() };
+            m.walk += sp * dt * if m.kind == Golem { 0.22 } else { 0.38 };
+            if m.kind == Golem && m.on_ground && (prev_walk / PI_F).floor() != (m.walk / PI_F).floor() && dist < 100.0 {
+                fx.shake = fx.shake.max(1.6 * (1.0 - dist / 100.0) + 0.3);
+                for _ in 0..4 {
+                    let x = cx + fx.rng.rangef(-4.0, 4.0);
+                    let vx = fx.rng.rangef(-20.0, 20.0);
+                    fx.spark(x, m.y + m.h, vx, -20.0, 0.3, [150, 140, 130]);
+                }
+            }
+            if m.kind == Salamander && fx.rng.chance(0.06) && sp > 5.0 {
+                world.ignite_at((cx - m.facing * m.w * 0.5) as i32, (m.y + m.h) as i32);
+            }
             // Segments follow the head.
             if !m.segs.is_empty() {
                 let mut prev = Self::center(m);
@@ -947,8 +1253,9 @@ impl Mobs {
             }
 
             // Ranged attacks.
-            if !m.pet && aggro && s.ranged != Ranged::None && s.ai != Ai::Dragon && m.cd <= 0.0 && dist < 110.0 && m.frozen <= 0.0 {
+            if !m.pet && aggro && !fleeing && s.ranged != Ranged::None && s.ai != Ai::Dragon && m.cd <= 0.0 && dist < 110.0 && m.frozen <= 0.0 && m.pose != Pose::Roost {
                 m.cd = 2.2 + (m.t * 5.1).sin().abs();
+                m.attack_t = ATTACK_ANIM;
                 let (cx, cy) = Self::center(m);
                 let speed = match s.ranged {
                     Ranged::Void | Ranged::Zap => 110.0,
@@ -966,6 +1273,7 @@ impl Mobs {
                     if dist < (m.w + m.h) * 0.4 + 4.0 && m.attack_cd <= 0.0 {
                         pet_hits.push((ti, s.dmg * 1.5, m.facing));
                         m.attack_cd = 0.6;
+                        m.attack_t = ATTACK_ANIM;
                     }
                 }
                 continue;
@@ -979,10 +1287,13 @@ impl Mobs {
                     player.vx += (player.x - m.x).signum() * 90.0;
                     player.vy -= 60.0;
                     m.attack_cd = 0.8;
+                    m.attack_t = ATTACK_ANIM;
+                    m.st = 0.0;
                 }
             }
         }
         self.shots.append(&mut new_shots);
+        self.popups.append(&mut new_popups);
         for (i, dmg, dir) in pet_hits {
             self.hurt_by(i, dmg, (dir * 60.0, -40.0), Dmg::Physical, fx);
         }
@@ -1083,6 +1394,7 @@ impl Mobs {
                     t: 0.0,
                     facing: m.facing,
                     style,
+                    seed: m.seed,
                 });
                 if style == Dmg::Lightning {
                     fx.burst(cx, cy, 30, 90.0, [200, 230, 255]);
@@ -1170,7 +1482,8 @@ impl Mobs {
     /// Burst a body into its gib material and sparks.
     fn splatter(&mut self, kind: MobKind, cx: f32, cy: f32, segs: &[(f32, f32)], fx: &mut Fx) {
         let s = spec(kind);
-        let (w, h) = (s.sprite[0].len(), s.sprite.len());
+        let (w, h) = size(kind);
+        let (w, h) = (w as usize, h as usize);
         let mut parts: Vec<(f32, f32)> = vec![(cx, cy)];
         parts.extend(segs.iter().copied());
         for (x, y) in parts {
@@ -1264,35 +1577,30 @@ impl Mobs {
                 }
                 Ai::Dragon => draw_dragon(cv, m, &tint),
                 _ => {
-                    let bob = if matches!(s.ai, Ai::Walker | Ai::Pouncer) && m.vx.abs() > 2.0 && ((m.t * 8.0) as i32) % 2 == 1 { 1 } else { 0 };
-                    let flap = m.kind == MobKind::Bat && ((m.t * 10.0) as i32) % 2 == 1;
-                    let h = s.sprite.len();
-                    for (row, line) in s.sprite.iter().enumerate() {
-                        let line = if flap { s.sprite[h - 1 - row].as_bytes() } else { line.as_bytes() };
-                        let w = line.len();
-                        for col in 0..w {
-                            let ch = if m.facing >= 0.0 { line[col] } else { line[w - 1 - col] };
-                            let Some(&(_, c)) = s.pal.iter().find(|p| p.0 == ch) else { continue };
-                            let (gx, gy) = (m.x as i32 + col as i32, m.y as i32 + row as i32 + bob);
-                            if m.kind == MobKind::Ghost {
-                                cv.blend(gx, gy, tint(c), 0.55);
-                            } else {
-                                cv.put(gx, gy, tint(c));
-                            }
-                        }
-                    }
-                    // Eyes that watch you.
-                    if matches!(m.kind, MobKind::DemonEye | MobKind::VoidEye) {
+                    let moving = if matches!(s.ai, Ai::Walker | Ai::Pouncer | Ai::Hopper) { m.vx.abs() } else { (m.vx * m.vx + m.vy * m.vy).sqrt() };
+                    let anim = Anim {
+                        t: m.t,
+                        walk: m.walk,
+                        speed: (moving / s.speed.max(1.0)).min(1.0),
+                        vy: m.vy,
+                        ground: m.on_ground || !matches!(s.ai, Ai::Walker | Ai::Pouncer | Ai::Hopper),
+                        pose: m.pose,
+                        attack: if m.attack_t > 0.0 { (std::f32::consts::PI * (1.0 - m.attack_t / ATTACK_ANIM)).sin() } else { 0.0 },
+                        look: m.look,
+                        seed: m.seed,
+                        w: m.w,
+                        h: m.h,
+                    };
+                    let pix = creatures::paint(m.kind, &anim);
+                    // Ghosts fade the further away they are.
+                    let fade = if m.kind == MobKind::Ghost {
                         let (cx, cy) = Self::center(m);
-                        let (dx, dy) = (px - cx, py - cy);
-                        let l = (dx * dx + dy * dy).sqrt().max(1.0);
-                        let (ix, iy) = ((cx + dx / l * 1.5) as i32, (cy + dy / l * 1.5) as i32);
-                        let iris = if m.kind == MobKind::DemonEye { [60, 100, 210] } else { [210, 70, 255] };
-                        for (ox, oy) in [(0, 0), (1, 0), (0, 1), (1, 1), (-1, 0), (0, -1)] {
-                            cv.put(ix + ox, iy + oy, tint(iris));
-                        }
-                        cv.put(ix, iy, [10, 10, 20]);
-                    }
+                        let d = ((cx - px).powi(2) + (cy - py).powi(2)).sqrt();
+                        0.35 + 0.65 * (1.0 - d / 150.0).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    };
+                    blit(cv, &pix, m.x.floor() as i32, m.y.floor() as i32, m.w.ceil() as i32, m.facing, fade, &tint);
                     if m.pet {
                         let (hx, hy) = (m.x as i32 + m.w as i32 / 2 - 1, m.y as i32 - 4);
                         for (ox, oy) in [(0, 0), (2, 0), (0, 1), (1, 1), (2, 1), (1, 2)] {
@@ -1312,21 +1620,22 @@ impl Mobs {
             }
         }
         for c in &self.corpses {
-            let s = spec(c.kind);
-            let (w, h) = (s.sprite[0].len() as f32, s.sprite.len() as f32);
-            let r = (w.max(h) * 0.75) as i32 + 1;
+            let (w, h) = size(c.kind);
+            let pix = creatures::paint(c.kind, &Anim { t: 0.0, walk: 0.0, speed: 0.0, vy: 0.0, ground: true, pose: Pose::Dead, attack: 0.0, look: (1.0, 0.0), seed: c.seed, w, h });
+            let r = (w.max(h) * 0.75) as i32 + 3;
             let (sn, cs) = c.rot.sin_cos();
             for dy in -r..=r {
                 for dx in -r..=r {
-                    // Inverse-rotate each screen pixel back into the sprite.
+                    // Inverse-rotate each screen pixel back into the body.
                     let (fx_, fy_) = (dx as f32 * cs + dy as f32 * sn, -dx as f32 * sn + dy as f32 * cs);
-                    let (sx, sy) = ((fx_ + w * 0.5).floor() as i32, (fy_ + h * 0.5).floor() as i32);
-                    if sx < 0 || sy < 0 || sx >= w as i32 || sy >= h as i32 {
+                    let (sx, sy) = ((fx_ + w * 0.5).floor() as i32 + pix.m, (fy_ + h * 0.5).floor() as i32 + pix.m);
+                    if sx < 0 || sy < 0 || sx >= pix.w || sy >= pix.h {
                         continue;
                     }
-                    let line = s.sprite[sy as usize].as_bytes();
-                    let col = if c.facing >= 0.0 { sx as usize } else { line.len() - 1 - sx as usize };
-                    if let Some(&(_, rgb)) = s.pal.iter().find(|p| p.0 == line[col]) {
+                    let ix = if c.facing >= 0.0 { sx } else { pix.w - 1 - sx };
+                    let px_ = pix.px[(sy * pix.w + ix) as usize];
+                    if px_[3] > 100 {
+                        let rgb = [px_[0], px_[1], px_[2]];
                         let out = match c.style {
                             Dmg::Fire => {
                                 let ember = ((c.t * 20.0 + (dx * 3 + dy) as f32).sin() > 0.7) as u8;
@@ -1378,6 +1687,28 @@ fn shot_color(k: Ranged) -> [u8; 3] {
         Ranged::Void => [200, 80, 255],
         Ranged::Zap => [255, 255, 160],
         Ranged::None => [255, 255, 255],
+    }
+}
+
+/// Copy painted creature art into the world, mirrored when facing left.
+#[allow(clippy::too_many_arguments)]
+fn blit(cv: &mut Canvas, pix: &creatures::Pix, x0: i32, y0: i32, wc: i32, facing: f32, fade: f32, tint: &dyn Fn([u8; 3]) -> [u8; 3]) {
+    for iy in 0..pix.h {
+        for ix in 0..pix.w {
+            let p = pix.px[(iy * pix.w + ix) as usize];
+            if p[3] == 0 {
+                continue;
+            }
+            let (lx, ly) = (ix - pix.m, iy - pix.m);
+            let gx = if facing >= 0.0 { x0 + lx } else { x0 + wc - 1 - lx };
+            let c = tint([p[0], p[1], p[2]]);
+            let a = p[3] as f32 / 255.0 * fade;
+            if a > 0.97 {
+                cv.put(gx, y0 + ly, c);
+            } else {
+                cv.blend(gx, y0 + ly, c, a);
+            }
+        }
     }
 }
 

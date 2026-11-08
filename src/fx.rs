@@ -22,7 +22,17 @@ pub struct Particle {
     pub gravity: f32,
     /// Side-to-side drift (leaves, snow).
     pub flutter: f32,
+    /// Drawn finer than a world pixel: 0 pixel, 1 rain streak, 2 soft ember, 3 wind stream.
+    pub fine: u8,
+    /// Starting life, for fading in and out.
+    pub max: f32,
+    /// How hard a wind stream curls.
+    pub curl: f32,
 }
+
+pub const FINE_RAIN: u8 = 1;
+pub const FINE_EMBER: u8 = 2;
+pub const FINE_WIND: u8 = 3;
 
 pub struct Fx {
     particles: Vec<Particle>,
@@ -57,7 +67,9 @@ impl Fx {
 
     pub fn spark(&mut self, x: f32, y: f32, vx: f32, vy: f32, life: f32, col: [u8; 3]) {
         if self.particles.len() < MAX_PARTICLES {
-            self.particles.push(Particle { x, y, vx, vy, mat: M::Empty, shade: 0, life, col, glow: 0.6, gravity: 220.0, flutter: 0.0 });
+            let fiery = col[0] >= 200 && col[2] <= 140 && col[1] <= 220;
+            let fine = if fiery && self.rng.chance(0.5) { FINE_EMBER } else { 0 };
+            self.particles.push(Particle { x, y, vx, vy, mat: M::Empty, shade: 0, life, col, glow: 0.6, gravity: 220.0, flutter: 0.0, fine, max: life, curl: 0.0 });
         }
     }
 
@@ -73,7 +85,7 @@ impl Fx {
     /// A material particle that becomes a cell where it lands.
     pub fn debris(&mut self, x: f32, y: f32, vx: f32, vy: f32, mat: M, shade: u8) {
         if self.particles.len() < MAX_PARTICLES {
-            self.particles.push(Particle { x, y, vx, vy, mat, shade, life: 4.0, col: [0; 3], glow: 0.0, gravity: 220.0, flutter: 0.0 });
+            self.particles.push(Particle { x, y, vx, vy, mat, shade, life: 4.0, col: [0; 3], glow: 0.0, gravity: 220.0, flutter: 0.0, fine: 0, max: 4.0, curl: 0.0 });
         }
     }
 
@@ -81,7 +93,7 @@ impl Fx {
     #[allow(clippy::too_many_arguments)]
     pub fn mote(&mut self, x: f32, y: f32, vx: f32, vy: f32, life: f32, col: [u8; 3], glow: f32, gravity: f32, flutter: f32) {
         if self.particles.len() < MAX_PARTICLES - 500 {
-            self.particles.push(Particle { x, y, vx, vy, mat: M::Empty, shade: 0, life, col, glow, gravity, flutter });
+            self.particles.push(Particle { x, y, vx, vy, mat: M::Empty, shade: 0, life, col, glow, gravity, flutter, fine: 0, max: life, curl: 0.0 });
         }
     }
 
@@ -116,8 +128,21 @@ impl Fx {
         self.time += dt;
         let mut ps = std::mem::take(&mut self.particles);
         let attractors = std::mem::take(&mut self.attractors);
+        let time = self.time;
         ps.retain_mut(|p| {
             p.life -= dt;
+            if p.fine == FINE_WIND {
+                // Swirl: the curl swings back and forth, so streams draw S-curves.
+                let age = p.max - p.life;
+                let turn = p.curl * (age * 5.0 + p.y * 0.05 + time).sin() * dt;
+                let (sn, cs) = turn.sin_cos();
+                let (vx, vy) = (p.vx * cs - p.vy * sn, p.vx * sn + p.vy * cs);
+                p.vx = vx;
+                p.vy = vy;
+                p.x += p.vx * dt;
+                p.y += p.vy * dt;
+                return p.life > 0.0;
+            }
             let mut pulled = false;
             for &(ax, ay) in &attractors {
                 let (dx, dy) = (ax - p.x, ay - p.y);
@@ -239,13 +264,20 @@ impl Fx {
 
     pub fn snow_flake(&mut self, x: f32, y: f32, wind: f32) {
         if self.particles.len() < MAX_PARTICLES - 800 {
-            self.particles.push(Particle { x, y, vx: wind * 0.5, vy: 28.0, mat: M::Empty, shade: 0, life: 9.0, col: SNOWF, glow: 0.0, gravity: 0.0, flutter: 35.0 });
+            self.particles.push(Particle { x, y, vx: wind * 0.5, vy: 28.0, mat: M::Empty, shade: 0, life: 9.0, col: SNOWF, glow: 0.0, gravity: 0.0, flutter: 35.0, fine: 0, max: 9.0, curl: 0.0 });
+        }
+    }
+
+    /// A curling streak of wind, drawn as a thin flowing line.
+    pub fn wind_stream(&mut self, x: f32, y: f32, vx: f32, vy: f32, life: f32, curl: f32) {
+        if self.particles.len() < MAX_PARTICLES - 300 {
+            self.particles.push(Particle { x, y, vx, vy, mat: M::Empty, shade: 0, life, col: [236, 244, 255], glow: 0.0, gravity: 0.0, flutter: 0.0, fine: FINE_WIND, max: life, curl });
         }
     }
 
     pub fn rain_drop(&mut self, x: f32, y: f32, wind: f32) {
         if self.particles.len() < MAX_PARTICLES {
-            self.particles.push(Particle { x, y, vx: wind, vy: 260.0, mat: M::Empty, shade: 0, life: 2.0, col: RAIN, glow: 0.0, gravity: 0.0, flutter: 0.0 });
+            self.particles.push(Particle { x, y, vx: wind, vy: 260.0, mat: M::Empty, shade: 0, life: 2.0, col: RAIN, glow: 0.0, gravity: 0.0, flutter: 0.0, fine: FINE_RAIN, max: 2.0, curl: 0.0 });
         }
     }
 
@@ -410,7 +442,7 @@ impl Fx {
     }
 
     pub fn draw(&self, cv: &mut Canvas) {
-        for p in &self.particles {
+        for p in self.particles.iter().filter(|p| p.fine == 0) {
             let rgb = if p.mat == M::Empty {
                 let t = (p.life * 3.0).min(1.0);
                 [
@@ -422,8 +454,53 @@ impl Fx {
                 shade(p.mat.base_color(), p.shade, p.mat.variation())
             };
             cv.put(p.x as i32, p.y as i32, rgb);
-            if p.col == RAIN {
-                cv.put((p.x - p.vx * 0.006) as i32, p.y as i32 - 1, rgb);
+        }
+    }
+
+    /// Finer-than-pixel effects drawn over the finished frame: hair-thin rain, soft
+    /// glowing embers, and flowing wind lines. `left`/`top` is the view's corner in
+    /// world cells and `s` its screen pixels per cell.
+    pub fn draw_fine(&self, left: f32, top: f32, s: f32) {
+        use macroquad::prelude::{draw_circle, draw_line, Color};
+        let to = |x: f32, y: f32| ((x - left) * s, (y - top) * s);
+        let col = |c: [u8; 3], a: f32| Color::new(c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, a.clamp(0.0, 1.0));
+        for p in self.particles.iter().filter(|p| p.fine != 0) {
+            let (x, y) = to(p.x, p.y);
+            match p.fine {
+                FINE_RAIN => {
+                    let (tx, ty) = to(p.x - p.vx * 0.011, p.y - p.vy * 0.011);
+                    draw_line(tx, ty, x, y, 1.0, col(p.col, 0.3));
+                }
+                FINE_EMBER => {
+                    let f = (p.life / p.max.max(0.01)).clamp(0.0, 1.0);
+                    let r = (0.28 + 0.2 * f) * s;
+                    let warm = [p.col[0], (p.col[1] as f32 * (0.55 + 0.45 * f)) as u8, (p.col[2] as f32 * f) as u8];
+                    draw_circle(x, y, r * 3.0, col(warm, 0.12 * f));
+                    let (tx, ty) = to(p.x - p.vx * 0.025, p.y - p.vy * 0.025);
+                    draw_line(tx, ty, x, y, r * 1.1, col(warm, 0.45 * f));
+                    draw_circle(x, y, r, col([255, 240, 200], 0.95 * f + 0.05));
+                }
+                _ => {
+                    // Walk backwards along the curl to draw the stream's tail.
+                    let env = (std::f32::consts::PI * (1.0 - p.life / p.max.max(0.01))).sin();
+                    let (mut px, mut py, mut vx, mut vy) = (p.x, p.y, p.vx, p.vy);
+                    let age = p.max - p.life;
+                    let n = 12;
+                    for k in 0..n {
+                        let h = 0.014;
+                        let turn = -p.curl * ((age - k as f32 * h) * 5.0 + py * 0.05 + self.time).sin() * h;
+                        let (sn, cs) = turn.sin_cos();
+                        let (nvx, nvy) = (vx * cs - vy * sn, vx * sn + vy * cs);
+                        vx = nvx;
+                        vy = nvy;
+                        let (qx, qy) = (px - vx * h, py - vy * h);
+                        let (a, b) = (to(px, py), to(qx, qy));
+                        let fade = 1.0 - k as f32 / n as f32;
+                        draw_line(a.0, a.1, b.0, b.1, 1.0 + fade * 0.8, col(p.col, 0.42 * env * fade));
+                        px = qx;
+                        py = qy;
+                    }
+                }
             }
         }
     }

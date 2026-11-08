@@ -266,6 +266,8 @@ pub struct Spells {
     /// which of them a Portal Wand bolt struck.
     pub rift_zones: Vec<(f32, f32, f32, f32)>,
     pub rift_hits: Vec<usize>,
+    /// Where lightning landed this frame, so the game can run current through water and metal.
+    pub zaps: Vec<(f32, f32)>,
     pub tornadoes: Vec<Twister>,
     /// Hue of the planet the Portal Wand is tuned to.
     pub portal_hue: f32,
@@ -276,7 +278,7 @@ pub struct Spells {
 
 impl Spells {
     pub fn new() -> Self {
-        Self { projs: Vec::new(), teleport: None, beam: None, bolts: Vec::new(), holes: Vec::new(), rifts_born: Vec::new(), rift_zones: Vec::new(), rift_hits: Vec::new(), tornadoes: Vec::new(), portal_hue: 0.58, portal_hits: Vec::new(), sounds: Vec::new() }
+        Self { projs: Vec::new(), teleport: None, beam: None, bolts: Vec::new(), holes: Vec::new(), rifts_born: Vec::new(), rift_zones: Vec::new(), rift_hits: Vec::new(), zaps: Vec::new(), tornadoes: Vec::new(), portal_hue: 0.58, portal_hits: Vec::new(), sounds: Vec::new() }
     }
 
     pub fn clear(&mut self) {
@@ -437,6 +439,7 @@ impl Spells {
                 }
                 fx.explode(world, bx, by, 3 + m.heavy as i32 * 2, 0.6);
                 world.scorch(bx as i32, by as i32, 6, 0.8);
+                self.zaps.push((bx, by));
                 fx.burst(bx, by, 50, 160.0, [210, 235, 255]);
                 fx.burst(bx, by, 20, 90.0, [255, 250, 200]);
                 fx.flash = fx.flash.max(0.6);
@@ -776,15 +779,15 @@ impl Spells {
                 _ => {}
             }
         }
-        // Visible gusts.
-        let streaks = if strong { 220 } else { 5 };
-        for _ in 0..streaks {
+        // Visible gusts: thin curling streams of air.
+        let streams = if strong { 40 } else { 2 };
+        for _ in 0..streams {
             let along = fx.rng.f32() * len * if strong { 0.5 } else { 0.3 };
             let side = fx.rng.rangef(-1.0, 1.0) * (along * half + 2.0);
-            let sp = fx.rng.rangef(220.0, 360.0);
-            let a = fx.rng.rangef(0.35, 0.7);
-            let life = fx.rng.rangef(0.15, 0.4) * if strong { 1.6 } else { 1.0 };
-            fx.mote(x + ux * along - uy * side, y + uy * along + ux * side, ux * sp, uy * sp, life, [(225.0 * a + 30.0) as u8, (235.0 * a + 20.0) as u8, (245.0 * a + 10.0) as u8], 0.0, 0.0, 0.0);
+            let sp = fx.rng.rangef(150.0, 240.0) * if strong { 1.4 } else { 1.0 };
+            let life = fx.rng.rangef(0.3, 0.6) * if strong { 1.4 } else { 1.0 };
+            let curl = fx.rng.rangef(2.0, 6.0) * fx.rng.sign() as f32;
+            fx.wind_stream(x + ux * along - uy * side, y + uy * along + ux * side, ux * sp, uy * sp, life, curl);
         }
         fx.push_cone(x, y, ux, uy, len, half, if strong { 280.0 } else { 16.0 });
         mobs.push_cone(x, y, (ux, uy), len, half, if strong { 420.0 } else { 26.0 }, if strong { 35.0 } else { 0.0 }, fx);

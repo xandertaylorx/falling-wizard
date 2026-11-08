@@ -28,8 +28,15 @@ pub struct Updater {
 impl Updater {
     /// Start a background check against GitHub.
     pub fn start() -> Self {
-        let status = Arc::new(Mutex::new(Status::Checking));
-        let s = status.clone();
+        let u = Self { status: Arc::new(Mutex::new(Status::Checking)), progress: Arc::new(Mutex::new((String::new(), 0.0))) };
+        u.check();
+        u
+    }
+
+    /// Ask GitHub again whether there's a newer version (no restart needed).
+    pub fn check(&self) {
+        *self.status.lock().unwrap() = Status::Checking;
+        let s = self.status.clone();
         std::thread::spawn(move || {
             let mine = env!("FW_COMMIT");
             let result = if mine.is_empty() {
@@ -47,9 +54,10 @@ impl Updater {
                     _ => Status::Unknown,
                 }
             };
+            // Show "checking" for a moment so the click feels like it did something.
+            std::thread::sleep(std::time::Duration::from_millis(400));
             *s.lock().unwrap() = result;
         });
-        Self { status, progress: Arc::new(Mutex::new((String::new(), 0.0))) }
     }
 
     pub fn progress(&self) -> (String, f32) {

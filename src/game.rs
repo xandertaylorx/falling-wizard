@@ -143,6 +143,8 @@ pub struct Game {
     /// Set when the wizard falls into a rift: where they'll come out (and where on Earth).
     pub rift_travel: Option<(Planet, Option<f32>)>,
     rift_cool: f32,
+    /// Bodies of water and metal carrying current: their cells and how long is left.
+    charges: Vec<(Vec<(i32, i32)>, f32, f32)>,
 }
 
 impl Game {
@@ -199,6 +201,7 @@ impl Game {
             rift_zone_ids: Vec::new(),
             rift_travel: None,
             rift_cool: 0.0,
+            charges: Vec::new(),
         };
         game.apply_mode();
         game.mobs.density = [0.0, 1.0, 2.2][game.options.creatures.min(2)];
@@ -450,7 +453,8 @@ impl Game {
             if !idle {
                 self.mobs.spawn_tick(&self.world, pcx, pcy, self.weather.night(), dt);
             }
-            self.mobs.update(&mut self.world, &mut self.player, &mut self.fx, dt);
+            let day = self.weather.daylight();
+            self.mobs.update(&mut self.world, &mut self.player, &mut self.fx, day, dt);
         }
 
         self.hitstop = self.hitstop.max(std::mem::take(&mut self.fx.hitstop));
@@ -572,7 +576,12 @@ impl Game {
         let pc = self.player.center();
         self.weather.ambience(&self.world, &mut self.fx, pc);
         self.weather.update(dt, &mut self.world, &mut self.fx, pc, &mut self.sounds);
+        for (x, y) in std::mem::take(&mut self.spells.zaps) {
+            self.electrify(x, y);
+        }
+        self.step_charges(dt, idle);
         for (x, y) in std::mem::take(&mut self.weather.strikes) {
+            self.electrify(x, y);
             self.mobs.damage_area(x, y, 12.0, 45.0, crate::mobs::Dmg::Lightning, &mut self.fx);
             let (cx, cy) = self.player.center();
             if !idle && (cx - x).powi(2) + (cy - y).powi(2) < 10.0 * 10.0 {
@@ -1103,6 +1112,104 @@ impl Game {
             self.toast(format!("{}  -  FAR BEYOND THE PORTALS", dest.kind.name()), [200, 200, 220]);
         }
         self.save();
+    }
+
+    /// Lightning that lands on or near something conductive (water, acid, blood, goo,
+    /// gold, lava) runs through all of it that's connected.
+    pub fn electrify(&mut self, x: f32, y: f32) {
+        let conductive = |m: M| matches!(m, M::Water | M::Acid | M::Blood | M::Goo | M::Gold | M::Lava);
+        let (x, y) = (x as i32, y as i32);
+        let mut start = None;
+        'find: for r in 0..6 {
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    if (dx as i32).abs().max((dy as i32).abs()) == r && conductive(self.world.mat(x + dx, y + dy)) {
+                        start = Some((x + dx, y + dy));
+                        break 'find;
+                    }
+                }
+            }
+        }
+        let Some(start) = start else { return };
+        let mut seen = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        let mut cells = Vec::new();
+        seen.insert(start);
+        queue.push_back(start);
+        while let Some((cx, cy)) = queue.pop_front() {
+            cells.push((cx, cy));
+            if cells.len() >= 6000 {
+                break;
+            }
+            for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let n = (cx + dx, cy + dy);
+                if !seen.contains(&n) && conductive(self.world.mat(n.0, n.1)) {
+                    seen.insert(n);
+                    queue.push_back(n);
+                }
+            }
+        }
+        if cells.len() < 4 {
+            return;
+        }
+        // A little boils off where the current is strongest.
+        for &(cx, cy) in cells.iter().take(60) {
+            if self.world.mat(cx, cy) == M::Water && self.world.mat(cx, cy - 1) == M::Empty && self.fx.rng.chance(0.25) {
+                let c = Cell::gas(M::Steam, &mut self.world.rng, 30, 60);
+                self.world.set(cx, cy, c);
+            }
+        }
+        // Anything explosive touching it goes off.
+        for &(cx, cy) in cells.iter().step_by(3) {
+            for (dx, dy) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                if matches!(self.world.mat(cx + dx, cy + dy), M::Gunpowder | M::Oil | M::Gas) {
+                    self.world.ignite_at(cx + dx, cy + dy);
+                }
+            }
+        }
+        self.fx.flash = self.fx.flash.max(0.25);
+        self.sounds.push(Sfx::Zap);
+        self.charges.push((cells, 1.2, 0.0));
+    }
+
+    /// Charged water and metal crackle for a moment and shock whatever is in them.
+    fn step_charges(&mut self, dt: f32, idle: bool) {
+        let mut charges = std::mem::take(&mut self.charges);
+        for (cells, left, tick) in charges.iter_mut() {
+            *left -= dt;
+            *tick -= dt;
+            let k = (*left / 1.2).clamp(0.0, 1.0);
+            // Crackle: sparks hopping across the surface.
+            let n = ((cells.len() as f32).sqrt() * 2.0 * k) as usize + 2;
+            for _ in 0..n {
+                let (cx, cy) = cells[self.fx.rng.range(0, cells.len() as i32) as usize];
+                let col = if self.fx.rng.chance(0.3) { [255, 255, 255] } else { [150, 210, 255] };
+                let (vx, vy) = (self.fx.rng.rangef(-60.0, 60.0), self.fx.rng.rangef(-60.0, 10.0));
+                let mut p = (cx as f32 + 0.5, cy as f32 + 0.5);
+                p.0 += self.fx.rng.rangef(-0.5, 0.5);
+                self.fx.mote(p.0, p.1, vx, vy, 0.12, col, 2.5, 0.0, 0.0);
+            }
+            if *tick > 0.0 {
+                continue;
+            }
+            *tick = 0.35;
+            let set: std::collections::HashSet<(i32, i32)> = cells.iter().copied().collect();
+            for i in 0..self.mobs.list.len() {
+                let (bx, by, bw, bh) = self.mobs.bounds(i);
+                let hit = (0..4).any(|ky| (0..4).any(|kx| set.contains(&((bx + bw * kx as f32 / 3.0) as i32, (by + bh * ky as f32 / 3.0) as i32))));
+                if hit && !self.mobs.list[i].pet {
+                    self.mobs.hurt_by(i, 14.0 * k + 4.0, (0.0, -30.0), crate::mobs::Dmg::Lightning, &mut self.fx);
+                }
+            }
+            let (px, py) = self.player.center();
+            let feet = (px as i32, (self.player.y + 9.0) as i32);
+            if !idle && (set.contains(&(px as i32, py as i32)) || set.contains(&feet)) {
+                self.player.hurt(10.0 * k + 3.0);
+                self.player.vy -= 40.0;
+            }
+        }
+        charges.retain(|c| c.1 > 0.0);
+        self.charges = charges;
     }
 
     /// A world for the current planet, with any chunks you changed last time restored.

@@ -199,6 +199,17 @@ impl Weather {
                 }
             }
         }
+        // Wind you can see: long thin streams curling across the sky.
+        let wind = self.wind_now();
+        if wind.abs() > 18.0 && self.rng.chance(((wind.abs() - 18.0) / 40.0).min(1.0) * 0.6) {
+            let x = px - wind.signum() * self.rng.rangef(120.0, 220.0) + self.rng.rangef(-60.0, 60.0);
+            let y = py + self.rng.rangef(-90.0, 40.0);
+            if y < world.surface_at(x as i32) as f32 {
+                let curl = self.rng.rangef(1.0, 3.5) * if self.rng.chance(0.5) { 1.0 } else { -1.0 };
+                let life = self.rng.rangef(1.2, 2.2);
+                fx.wind_stream(x, y, wind * self.rng.rangef(3.0, 4.5), self.rng.rangef(-8.0, 8.0), life, curl);
+            }
+        }
         // Sandstorm: sand streams across the dunes and drifts pile up.
         if self.sand > 0.05 {
             let wind = self.wind_now();
