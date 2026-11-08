@@ -279,6 +279,8 @@ pub struct Body {
     pub ring: Option<[u8; 3]>,
     /// Parallax strength.
     pub depth: f32,
+    /// How clearly it shows against space: 1 close by, fainter the farther away.
+    pub fade: f32,
 }
 
 /// The sky scene of a planet: its suns, the bodies you can see from orbit, and the
@@ -318,7 +320,10 @@ impl Planet {
     /// The real nearest planets (the same ones the Portal Wand lists), placed in the sky
     /// in their true directions across the galaxy: the closer, the bigger.
     pub fn neighbours(&self) -> Vec<Body> {
-        let list: Vec<Planet> = Planet::nearest(self.gx, self.gy, 10).into_iter().filter(|p| p != self).take(8).collect();
+        // Nearest first, so closer worlds are drawn in front of farther ones.
+        let mut list: Vec<Planet> = Planet::nearest(self.gx, self.gy, 10).into_iter().filter(|p| p != self).collect();
+        list.sort_by_key(|p| (p.gx - self.gx).pow(2) + (p.gy - self.gy).pow(2));
+        list.truncate(8);
         let maxd = list.iter().map(|p| (p.gx - self.gx).abs().max((p.gy - self.gy).abs())).max().unwrap_or(1).max(1) as f32;
         list.iter()
             .map(|p| {
@@ -338,12 +343,14 @@ impl Planet {
                 Body {
                     fx: 0.5 + dx / maxd * 0.44,
                     y: 75.0 + dy / maxd * 55.0,
-                    r: (13.0 / dist).clamp(3.0, 9.0),
+                    r: (14.0 / dist.powf(1.2)).clamp(2.0, 9.5),
                     a,
                     b,
                     style,
                     ring: (h % 5 == 0 && !p.is_earth()).then(|| hue_rgb(p.hue, 0.3, 0.9)),
-                    depth: 0.03,
+                    // Farther planets drift less as you move and fade into the dark.
+                    depth: 0.045 / dist,
+                    fade: (1.25 / dist).clamp(0.22, 1.0),
                 }
             })
             .collect()

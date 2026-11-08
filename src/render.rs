@@ -828,7 +828,7 @@ fn sky(c: &SkyCtx, vx: usize, vy: usize, gy: i32) -> [u8; 3] {
             if ring && dy < 0.0 && d < b.r {
                 // The far side of the ring hides behind the planet.
             } else if ring {
-                return lerp3(col, b.ring.unwrap_or([200, 200, 200]), space * 0.8);
+                return lerp3(col, b.ring.unwrap_or([200, 200, 200]), space * 0.8 * b.fade);
             }
             if d < b.r {
                 let lit = (1.0 - (dx + dy * 0.6) / (b.r * 1.7)).clamp(0.15, 1.0);
@@ -874,9 +874,11 @@ fn sky(c: &SkyCtx, vx: usize, vy: usize, gy: i32) -> [u8; 3] {
                         }
                     }
                 };
-                return lerp3(col, shade(base, (lit * 255.0) as u8, 0.9), space);
+                // Distant worlds are dimmer and washed into the dark blue of space.
+                let far = lerp3([18, 20, 40], shade(base, (lit * 255.0) as u8, 0.9), 0.35 + 0.65 * b.fade);
+                return lerp3(col, far, space * (0.3 + 0.7 * b.fade));
             } else if d < b.r + 1.5 && b.style == 2 {
-                col = lerp3(col, [140, 190, 255], space * 0.5);
+                col = lerp3(col, [140, 190, 255], space * 0.5 * b.fade);
             }
         }
     }
