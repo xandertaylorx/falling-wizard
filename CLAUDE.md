@@ -115,7 +115,8 @@ Saving happens every 60 s, before warping, on Pause → Main Menu, and on Quit. 
 
 ### Other modules
 
-- **`spells.rs`:** the 19 spells in `SPELL_BAR` (keys 1–0, -, =, Q, R, G, P, V, C, H), projectiles, black holes, tornadoes and the wind `gust`. Cards with `beam_after()` become held beams via `beam_tick` (lightning stream, flamethrower, frost breath, Heat Ray, Gravity Gun); `Storm` clouds rain and strike.
+- **`spells.rs`:** the 18 spells in `SPELL_BAR` (keys 1–0, -, =, Q, R, G, P, V, C), projectiles, black holes, tornadoes and the wind `gust`. Cards with `beam_after()` become held beams via `beam_tick` (lightning stream, `inferno` fire beam, `frost_ray`, Gravity Gun); holding a beam on one spot builds `charge`. `Storm` clouds rain and strike.
+- **Spell wheel:** there's no hotbar. Hold Tab or middle mouse for the radial wheel (`ui::spell_wheel`, groups in `ui::WHEEL`, picked with `wheel_pick`); time runs at 15% while it's open. A small chip shows the current spell.
 - **`weather.rs`:** the day clock (`daylight()`), sky states and particle spawning.
 - **`ui.rs`:** the pixel font, HUD, planet sphere, chat and the menu widgets.
 - **`audio.rs`:** synthesised sound effects (`Sfx`).

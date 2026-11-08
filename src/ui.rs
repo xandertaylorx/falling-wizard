@@ -142,11 +142,13 @@ pub struct Ui {
     pub hovering: bool,
     carousel: f32,
     carousel_target: f32,
+    last_spell: usize,
+    spell_t: f32,
 }
 
 impl Ui {
     pub fn new() -> Self {
-        Self { font: Font::new(), mouse: Vec2::ZERO, pressed: false, down: false, next_id: 0, dragging: None, clicked: false, hovering: false, carousel: 0.0, carousel_target: 0.0 }
+        Self { font: Font::new(), mouse: Vec2::ZERO, pressed: false, down: false, next_id: 0, dragging: None, clicked: false, hovering: false, carousel: 0.0, carousel_target: 0.0, last_spell: 0, spell_t: 9.0 }
     }
 
     pub fn begin(&mut self) {
@@ -415,36 +417,151 @@ impl Ui {
             return;
         }
 
-        // Spell hotbar, bottom-centre: one numbered slot per spell.
-        let n = SPELL_BAR.len();
-        let size = 46.0f32.min((sw - 40.0) / n as f32 - 5.0);
-        let gap = 5.0;
-        let total = n as f32 * size + (n - 1) as f32 * gap;
-        let x0 = (sw - total) * 0.5;
-        let y = sh - size - 18.0;
-        const KEYS: [&str; 19] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Q", "R", "G", "P", "V", "C", "H"];
-        for (k, sp) in SPELL_BAR.iter().enumerate() {
-            let x = x0 + k as f32 * (size + gap);
-            if self.hot(x, y, size, size) && self.pressed {
-                game.spell = k;
-                self.clicked = true;
-            }
-            let sel = k == game.spell;
-            draw_rectangle(x, y, size, size, PANEL);
-            if sel {
-                draw_rectangle(x, y, size, size, Color::new(1.0, 0.71, 0.29, 0.12));
-            }
-            draw_rectangle_lines(x, y, size, size, if sel { 2.0 } else { 1.0 }, if sel { ACCENT } else { LINE });
-            let (rows, main, acc) = sp.icon();
-            let s = ((size - 14.0) / 7.0).floor().max(2.0);
-            let off = (size - s * 7.0) * 0.5;
-            let afford = game.player.mana >= sp.mana();
-            self.icon(&rows, main, acc, x + off, y + off + 2.0, s, if afford { 1.0 } else { 0.3 });
-            self.font.draw(KEYS[k], x + 4.0, y + 4.0, 1.0, if sel { ACCENT } else { MUTED });
+        // The current spell: a small chip, bright for a moment after you change it, then
+        // fading back so the screen stays clear. Hold TAB for the full spell wheel.
+        if self.last_spell != game.spell {
+            self.last_spell = game.spell;
+            self.spell_t = 0.0;
         }
+        self.spell_t += get_frame_time();
+        let a = 0.4 + 0.6 * (1.0 - ((self.spell_t - 1.6) / 0.6).clamp(0.0, 1.0));
         let sp = game.current_spell();
-        self.text_center(&format!("{}  -  {}", sp.name().to_uppercase(), sp.desc().to_uppercase()), sw * 0.5, y - 22.0, 2.0, TEXT);
+        let (rows, main, acc) = sp.icon();
+        let name = sp.name().to_uppercase();
+        let w = 44.0 + self.font.width(&name, 2.0) + 16.0;
+        let (x, y) = ((sw - w) * 0.5, sh - 52.0);
+        draw_rectangle(x, y, w, 34.0, Color::new(PANEL.r, PANEL.g, PANEL.b, PANEL.a * a));
+        let afford = game.player.mana >= sp.mana();
+        self.icon(&rows, main, acc, x + 9.0, y + 6.0, 3.0, a * if afford { 1.0 } else { 0.4 });
+        self.text(&name, x + 40.0, y + 10.0, 2.0, Color::new(TEXT.r, TEXT.g, TEXT.b, a));
+        if self.spell_t < 2.2 {
+            self.text_center(&sp.desc().to_uppercase(), sw * 0.5, y - 20.0, 1.0, Color::new(MUTED.r, MUTED.g, MUTED.b, a));
+        }
+        self.text_center("TAB  SPELL WHEEL", sw * 0.5, sh - 14.0, 1.0, Color::new(MUTED.r, MUTED.g, MUTED.b, 0.5 * a));
     }
+
+    /// The spell wheel: every spell in a ring, grouped by element. `hover` is the slot
+    /// being pointed at, `open` its 0..1 opening animation.
+    pub fn spell_wheel(&self, game: &Game, hover: Option<usize>, open: f32) {
+        let (sw, sh) = (screen_width(), screen_height());
+        let (cx, cy) = (sw * 0.5, sh * 0.5);
+        let ease = 1.0 - (1.0 - open).powi(3);
+        draw_rectangle(0.0, 0.0, sw, sh, Color::new(0.02, 0.015, 0.04, 0.55 * ease));
+        let r = wheel_radius() * (0.82 + 0.18 * ease);
+        let slots = wheel_slots();
+        // Element arcs behind each group, with the group's name outside the ring.
+        for (g, (label, col, members)) in WHEEL.iter().enumerate() {
+            let angs: Vec<f32> = slots.iter().filter(|s| s.1 == g).map(|s| s.2).collect();
+            let (a0, a1) = (angs[0] - 0.13, angs[angs.len() - 1] + 0.13);
+            let c = Color::from_rgba(col[0], col[1], col[2], (150.0 * ease) as u8);
+            let n = 24;
+            for k in 0..n {
+                let (t0, t1) = (a0 + (a1 - a0) * k as f32 / n as f32, a0 + (a1 - a0) * (k + 1) as f32 / n as f32);
+                draw_line(cx + t0.cos() * (r + 40.0), cy + t0.sin() * (r + 40.0), cx + t1.cos() * (r + 40.0), cy + t1.sin() * (r + 40.0), 3.0, c);
+            }
+            let mid = (a0 + a1) * 0.5;
+            let lit = hover.is_some_and(|h| members.contains(&h));
+            let lc = Color::from_rgba(col[0], col[1], col[2], ((if lit { 255.0 } else { 170.0 }) * ease) as u8);
+            self.text_center(label, cx + mid.cos() * (r + 66.0), cy + mid.sin() * (r + 66.0) - 6.0, 1.5, lc);
+        }
+        for &(i, g, ang) in &slots {
+            let sp = SPELL_BAR[i];
+            let hot = hover == Some(i);
+            let size = if hot { 64.0 } else { 50.0 };
+            let (x, y) = (cx + ang.cos() * r - size * 0.5, cy + ang.sin() * r - size * 0.5);
+            let col = WHEEL[g].1;
+            draw_rectangle(x, y, size, size, PANEL);
+            if hot {
+                draw_rectangle(x, y, size, size, Color::from_rgba(col[0], col[1], col[2], 50));
+            }
+            draw_rectangle_lines(x, y, size, size, if hot { 2.0 } else { 1.0 }, if hot { ACCENT } else { LINE });
+            let (rows, main, acc) = sp.icon();
+            let px = ((size - 14.0) / 7.0).floor();
+            let off = (size - px * 7.0) * 0.5;
+            let afford = game.player.mana >= sp.mana();
+            self.icon(&rows, main, acc, x + off, y + off, px, ease * if afford { 1.0 } else { 0.35 });
+            self.font.draw(KEYS[i], x + 4.0, y + 4.0, 1.0, if hot { ACCENT } else { MUTED });
+            if i == game.spell {
+                draw_rectangle(x + size * 0.5 - 3.0, y + size + 4.0, 6.0, 6.0, ACCENT);
+            }
+        }
+        // The middle: what you're pointing at.
+        let show = hover.unwrap_or(game.spell);
+        let sp = SPELL_BAR[show];
+        let (rows, main, acc) = sp.icon();
+        self.icon(&rows, main, acc, cx - 28.0, cy - 96.0, 8.0, ease);
+        self.text_center(&sp.name().to_uppercase(), cx, cy - 22.0, 3.0, TEXT);
+        let mut line = String::new();
+        let mut y = cy + 16.0;
+        for word in sp.desc().to_uppercase().split(' ') {
+            if line.len() + word.len() > 26 && !line.is_empty() {
+                self.text_center(&line, cx, y, 1.5, MUTED);
+                y += 18.0;
+                line.clear();
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+        self.text_center(&line, cx, y, 1.5, MUTED);
+        let cost = if sp.beam_after() == Some(0.0) { format!("{} MANA / S", sp.beam_mana() as i32) } else { format!("{} MANA", sp.mana() as i32) };
+        self.text_center(&format!("KEY {}    {}", KEYS[show], cost), cx, y + 30.0, 1.0, ACCENT);
+    }
+}
+
+const KEYS: [&str; 18] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Q", "R", "G", "P", "V", "C"];
+
+/// The wheel's groups: name, colour and members (indices into `SPELL_BAR`).
+pub const WHEEL: [(&str, [u8; 3], &[usize]); 5] = [
+    ("FIRE", [255, 130, 50], &[0, 1, 2]),
+    ("STORM", [255, 236, 130], &[3, 17, 12, 13, 14]),
+    ("WATER", [110, 180, 255], &[4, 6, 5, 10]),
+    ("EARTH", [140, 210, 110], &[7, 9, 16]),
+    ("ARCANE", [190, 140, 255], &[8, 11, 15]),
+];
+
+pub fn wheel_radius() -> f32 {
+    (screen_width().min(screen_height()) * 0.31).clamp(170.0, 300.0)
+}
+
+/// Every slot on the wheel: (spell index, group, angle), clockwise from the top,
+/// with a gap between groups.
+pub fn wheel_slots() -> Vec<(usize, usize, f32)> {
+    let n: usize = WHEEL.iter().map(|g| g.2.len()).sum();
+    let gap = 0.9;
+    let step = std::f32::consts::TAU / (n as f32 + gap * WHEEL.len() as f32);
+    let mut a = -std::f32::consts::FRAC_PI_2 - step * (WHEEL[0].2.len() as f32 - 1.0) * 0.5;
+    let mut out = Vec::new();
+    for (g, (_, _, members)) in WHEEL.iter().enumerate() {
+        for &i in members.iter() {
+            out.push((i, g, a));
+            a += step;
+        }
+        a += step * gap;
+    }
+    out
+}
+
+/// Which spell the mouse picks: the slot under the cursor, or else the slot in the
+/// direction the mouse has moved from `anchor` (so a small flick is enough).
+pub fn wheel_pick(anchor: (f32, f32)) -> Option<usize> {
+    let (mx, my) = mouse_position();
+    let (cx, cy) = (screen_width() * 0.5, screen_height() * 0.5);
+    let r = wheel_radius();
+    let slots = wheel_slots();
+    for &(i, _, a) in &slots {
+        if (mx - (cx + a.cos() * r)).abs() < 30.0 && (my - (cy + a.sin() * r)).abs() < 30.0 {
+            return Some(i);
+        }
+    }
+    let (dx, dy) = (mx - anchor.0, my - anchor.1);
+    if dx * dx + dy * dy < 18.0 * 18.0 {
+        return None;
+    }
+    let ang = dy.atan2(dx);
+    let diff = |a: f32| ((a - ang + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI).abs();
+    slots.iter().min_by(|x, y| diff(x.2).total_cmp(&diff(y.2))).map(|s| s.0)
 }
 
 impl Ui {

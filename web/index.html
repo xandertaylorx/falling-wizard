@@ -40,31 +40,29 @@
   p { margin: 0 0 16px; }
   .muted { color: var(--muted); }
 
-  /* ---------- the sandbox hero ---------- */
-  .hero { position: relative; background: linear-gradient(180deg, var(--sky) 0%, var(--dusk) 70%, #6b5a7c 100%); }
-  .hero canvas { display: block; width: 100%; height: min(82vh, 760px); image-rendering: pixelated; touch-action: none; cursor: crosshair; }
-  .intro { position: absolute; left: 0; right: 0; top: 0; padding: 28px 0; pointer-events: none; }
-  .intro .wide { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }
-  .intro > .wide > * { pointer-events: auto; }
-  h1 { font-size: clamp(56px, 10vw, 136px); letter-spacing: -0.02em; margin-top: 4vh; text-shadow: 0 4px 0 rgba(10, 8, 20, 0.45); }
-  .intro p { max-width: 34ch; font-size: 20px; color: #ded9ef; text-shadow: 0 1px 8px rgba(10, 8, 20, 0.6); }
-  .tools { position: absolute; left: 0; right: 0; bottom: 14px; }
-  .tools .wide { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-  .tools button {
-    font: 16px var(--pixel); color: var(--text); background: rgba(25, 22, 29, 0.78); border: 0; padding: 7px 12px 8px; cursor: pointer;
-    display: inline-flex; align-items: center; gap: 8px; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.08);
+  /* ---------- hero ---------- */
+  .hero { position: relative; overflow: hidden; }
+  .hero .scene { display: block; width: 100%; height: min(90vh, 880px); object-fit: cover; object-position: center 60%; image-rendering: pixelated; }
+  .hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(30, 28, 61, 0.35) 0%, transparent 30%, rgba(43, 39, 49, 0.55) 62%, var(--stone) 100%); pointer-events: none; }
+  .intro { position: absolute; left: 0; right: 0; bottom: 6vh; z-index: 1; }
+  h1 { font-size: clamp(60px, 11vw, 150px); letter-spacing: -0.02em; line-height: 0.9; text-shadow: 0 5px 0 rgba(10, 8, 20, 0.5); margin-bottom: 26px; }
+  h1 > span { display: block; }
+  /* "Falling": each letter has dropped a little further, leaving a trail of grains. */
+  .fall span { display: inline-block; position: relative; transform: translateY(var(--d)); }
+  .fall span::before {
+    content: ""; position: absolute; left: 45%; top: -0.16em; width: 0.07em; height: 0.07em; background: var(--sand);
+    opacity: var(--g, 0);
+    box-shadow: 0.05em -0.17em 0 rgba(224, 191, 120, 0.55), -0.04em -0.33em 0 rgba(224, 191, 120, 0.3), 0.02em -0.5em 0 rgba(224, 191, 120, 0.15);
   }
-  .tools button i { width: 12px; height: 12px; display: inline-block; }
-  .tools button[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--sand); }
-  .tools .hint { margin-left: auto; font-size: 15px; color: #d0cbe0; }
+  .fall + span { color: var(--sand); padding-left: 0.5em; }
+  .intro p { max-width: 36ch; font-size: 21px; color: #eeeaf7; text-shadow: 0 1px 10px rgba(10, 8, 20, 0.7); margin-bottom: 24px; }
+  .intro .install { max-width: 620px; }
 
   /* ---------- install ---------- */
   .install { display: flex; flex-wrap: wrap; gap: 0; background: var(--deep); box-shadow: 4px 4px 0 #0f0d12; max-width: 100%; }
   .install code { font: 15px/1.4 ui-monospace, Menlo, monospace; padding: 15px 16px; overflow-x: auto; white-space: nowrap; flex: 1 1 320px; color: #f4efe2; }
   .install button { font: 16px var(--pixel); background: var(--sand); color: #241a0b; border: 0; padding: 0 22px; cursor: pointer; min-height: 50px; }
   .install button:hover { background: #ecd197; }
-  .first { padding-top: 56px; }
-  .first p { margin-top: 18px; }
 
   /* ---------- reactions ---------- */
   .reactions { list-style: none; padding: 0; margin: 26px 0 0; }
@@ -106,8 +104,7 @@
   footer .wide { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; border-top: 2px solid rgba(255, 255, 255, 0.05); padding-top: 22px; }
 
   @media (max-width: 760px) {
-    .hero canvas { height: 92vh; }
-    .tools .hint { display: none; }
+    .hero .scene { height: 92vh; }
     .pics, .planets { grid-template-columns: 1fr; }
     .pics .tall { grid-row: auto; }
     .reactions li { grid-template-columns: 1fr; gap: 6px; }
@@ -118,29 +115,18 @@
 <body>
 
 <header class="hero">
-  <canvas id="sand" aria-label="A falling-sand sandbox. Pick a material below and draw in it."></canvas>
+  <img class="scene" src="img/hero.jpg" alt="A pixel forest at dawn with an ancient portal and a geyser erupting">
   <div class="intro">
     <div class="wide">
-      <h1>Falling Wizard</h1>
-      <p>A wizard game for the Mac where everything is made of simulated grains. This box runs the same rules. Draw in it.</p>
-    </div>
-  </div>
-  <div class="tools">
-    <div class="wide" id="tools">
-      <span class="hint">Try oil on water, then fire</span>
+      <h1 aria-label="Falling Wizard"><span class="fall" aria-hidden="true"><span style="--d:0em">F</span><span style="--d:0.03em">a</span><span style="--d:0.09em;--g:1">l</span><span style="--d:0.02em">l</span><span style="--d:0.15em;--g:1">i</span><span style="--d:0.06em">n</span><span style="--d:0.11em;--g:1">g</span></span><span aria-hidden="true">Wizard</span></h1>
+      <p>A wizard game for the Mac where everything is made of simulated grains: sand, water, oil, fire, lava, ice. They all react with each other.</p>
+      <div class="install">
+        <code>curl -fsSL https://fw.crooli.com/install.sh | bash</code>
+        <button class="copy" type="button">Copy</button>
+      </div>
     </div>
   </div>
 </header>
-
-<section class="first">
-  <div class="col">
-    <div class="install">
-      <code>curl -fsSL https://fw.crooli.com/install.sh | bash</code>
-      <button class="copy" type="button">Copy</button>
-    </div>
-    <p class="muted">Paste it into Terminal. It builds the game on your Mac, puts it in Applications, and running it again updates it.</p>
-  </div>
-</section>
 
 <section>
   <div class="col">
@@ -166,7 +152,7 @@
 <section class="deeper">
   <div class="col">
     <h2>Spells</h2>
-    <p>Nineteen of them, one per key. Lightning, Fireball and Frost do one thing when you tap and another when you hold.</p>
+    <p>Eighteen of them. Hold Tab to open the spell wheel: time slows, flick the mouse towards a spell and let go. Number keys switch instantly. Lightning, Fireball and Frost do one thing when you tap and another when you hold.</p>
     <table id="spells"></table>
     <p class="note">Creative mode gives you unlimited mana, so the beams never run dry. There's also a sandbox brush (B) with every material in the game.</p>
   </div>
@@ -214,10 +200,10 @@
   // ---------- spell table, drawn with the game's own 7x7 icons ----------
   const spells = [
     ["1", "Spark Bolt", "A quick bolt that bursts on impact.", ["...+...", "..+#+..", ".+###+.", "+#####+", ".+###+.", "..+#+..", "...+..."], "#fff0aa", "#ffaa3c"],
-    ["2", "Fireball", "Tap to throw a fireball. Hold for a flamethrower that sets fields alight and boils water.", ["....+..", "..+#+..", ".+###+.", "+##+##+", "+#+++#+", ".+###+.", "..+++.."], "#ff821e", "#ffdc5a"],
+    ["2", "Fireball", "Tap to throw a fireball. Hold for a roaring fire beam: it sets everything along it alight, and the longer you hold it on one spot the hotter it gets, until rock melts into lava.", ["....+..", "..+#+..", ".+###+.", "+##+##+", "+#+++#+", ".+###+.", "..+++.."], "#ff821e", "#ffdc5a"],
     ["3", "Bomb", "Bounces, ticks, then levels the area.", ["....++.", "...+...", "..###..", ".#####.", ".##+##.", ".#####.", "..###.."], "#6a6674", "#ffbe50"],
     ["4", "Lightning", "Tap for a strike. Hold for an endless stream that bends towards water and metal and jumps between creatures.", ["....##.", "...##..", "..##...", ".#####.", "...##..", "..##...", ".##...."], "#fffa8c", "#ffffff"],
-    ["5", "Frost", "Tap for a frost bolt. Hold to breathe ice: water freezes, lava turns to obsidian.", ["#..#..#", ".#.#.#.", "..#+#..", "##+++##", "..#+#..", ".#.#.#.", "#..#..#"], "#a0dcff", "#ffffff"],
+    ["5", "Frost", "Tap for a frost bolt. Hold for an ice beam that flash-freezes water, turns lava to obsidian, and grows branching ice spikes out of whatever it hits.", ["#..#..#", ".#.#.#.", "..#+#..", "##+++##", "..#+#..", ".#.#.#.", "#..#..#"], "#a0dcff", "#ffffff"],
     ["6", "Acid Ball", "Splashes acid that eats through almost anything.", ["..###..", ".##+##.", "##+####", "#######", "#######", ".#####.", "#.#.#.."], "#6ee840", "#dcffb4"],
     ["7", "Torrent", "A steady spray of water.", ["...#...", "..###..", ".##+##.", ".#+###.", ".#####.", "..###..", "......."], "#3c82e6", "#b4dcff"],
     ["8", "Seeds of Life", "Grows plants, and tames creatures.", ["...#...", ".##.##.", "..###..", "...#...", "...#...", "..+++..", ".+++++."], "#6ec850", "#825c38"],
@@ -230,8 +216,7 @@
     ["G", "Tornado", "A twister that wanders, lifting all it touches.", ["#######", ".#####.", "..###..", "..##...", "...##..", "...#...", "..+...."], "#b0b0bc", "#e6e6f0"],
     ["P", "Portal Wand", "Opens gates to other planets.", ["..+#+..", ".#...#.", "+..#..+", "#.#+#.#", "+..#..+", ".#...#.", "..+#+.."], "#78e6ff", "#ff78dc"],
     ["V", "Gravity Gun", "Hold to pull sand, water, rock and creatures into a spinning ball. Flick the mouse and let go to throw it.", ["+#...#+", "+#...#+", ".#...#.", ".#...#.", ".##.##.", "..###..", "......."], "#e64650", "#ebebf5"],
-    ["C", "Heat Ray", "Hold to melt rock into lava, sand into glass and water into steam.", ["#......", ".#.....", "..#....", "...#...", "....+++", "....+#+", "....+++"], "#ff7828", "#ffe678"],
-    ["H", "Storm Cloud", "Summons a cloud that rains and throws lightning. It rains acid on toxic worlds, snows on cold ones, and can't form in a vacuum.", [".......", "..###..", ".#####.", "#######", "...+...", "..+....", ".+....."], "#787c8c", "#fffa8c"],
+    ["C", "Storm Cloud", "Summons a cloud that rains and throws lightning. It rains acid on toxic worlds, snows on cold ones, and can't form in a vacuum.", [".......", "..###..", ".#####.", "#######", "...+...", "..+....", ".+....."], "#787c8c", "#fffa8c"],
   ];
   const table = document.getElementById("spells");
   for (const [key, name, desc, rows, main, acc] of spells) {
@@ -246,214 +231,6 @@
     const d = tr.insertCell(); d.className = "d"; d.textContent = desc;
   }
 
-  // ---------- the sandbox ----------
-  const E = 0, STONE = 1, SAND = 2, WATER = 3, OIL = 4, FIRE = 5, LAVA = 6, STEAM = 7, SMOKE = 8, OBSIDIAN = 9, GLASS = 10, WOOD = 11, ASH = 12;
-  const COL = {
-    [STONE]: [86, 80, 96], [SAND]: [216, 184, 114], [WATER]: [38, 98, 200], [OIL]: [58, 40, 44], [FIRE]: [255, 140, 30],
-    [LAVA]: [255, 110, 20], [STEAM]: [214, 220, 230], [SMOKE]: [120, 116, 126], [OBSIDIAN]: [40, 28, 54], [GLASS]: [190, 225, 236],
-    [WOOD]: [108, 72, 44], [ASH]: [104, 100, 104],
-  };
-  const DENS = { [WATER]: 10, [OIL]: 8, [LAVA]: 15, [SAND]: 20, [ASH]: 9 };
-  const liquid = (m) => m === WATER || m === OIL || m === LAVA;
-  const powder = (m) => m === SAND || m === ASH;
-  const gas = (m) => m === STEAM || m === SMOKE || m === FIRE;
-
-  const cv = document.getElementById("sand");
-  const ctx = cv.getContext("2d");
-  let W, H, cell, life, shade, img, stamp, tick = 0;
-  const S = 4; // screen pixels per grain
-
-  function build() {
-    W = Math.max(80, Math.floor(cv.clientWidth / S));
-    H = Math.max(60, Math.floor(cv.clientHeight / S));
-    cv.width = W; cv.height = H;
-    cell = new Uint8Array(W * H); life = new Uint8Array(W * H); shade = new Uint8Array(W * H); stamp = new Uint8Array(W * H);
-    for (let i = 0; i < shade.length; i++) shade[i] = (Math.random() * 255) | 0;
-    img = ctx.createImageData(W, H);
-    // Ground: rolling stone, a pond with an oil slick on it, and a little wooden hut to burn.
-    const pondL = Math.floor(W * 0.52), pondR = Math.floor(W * 0.82);
-    for (let x = 0; x < W; x++) {
-      let g = Math.floor(H * 0.8 + Math.sin(x * 0.05) * 3 + Math.sin(x * 0.013) * 5);
-      if (x > pondL && x < pondR) g += Math.floor(Math.sin(((x - pondL) / (pondR - pondL)) * Math.PI) * H * 0.11);
-      for (let y = g; y < H; y++) cell[y * W + x] = STONE;
-    }
-    const lvl = Math.floor(H * 0.8) + 2;
-    for (let x = pondL; x < pondR; x++) for (let y = lvl; y < H; y++) if (cell[y * W + x] === E) cell[y * W + x] = y < lvl + 2 ? OIL : WATER;
-    const hx = Math.floor(W * 0.3);
-    let base = H - 1; while (base > 0 && cell[base * W + hx] === STONE) base--;
-    for (let y = base - 8; y <= base; y++) for (let x = hx; x < hx + 12; x++) if (y === base - 8 || x === hx || x === hx + 11) cell[y * W + x] = WOOD;
-  }
-
-  const at = (x, y) => (x < 0 || y < 0 || x >= W || y >= H ? STONE : cell[y * W + x]);
-  function set(x, y, m, l = 0) { const i = y * W + x; cell[i] = m; life[i] = l; stamp[i] = tick; }
-  function swap(a, b) {
-    const m = cell[a], l = life[a], s = shade[a];
-    cell[a] = cell[b]; life[a] = life[b]; shade[a] = shade[b];
-    cell[b] = m; life[b] = l; shade[b] = s; stamp[a] = stamp[b] = tick;
-  }
-  const rnd = Math.random;
-  const ignitable = (m) => m === OIL || m === WOOD;
-
-  function step() {
-    tick = (tick + 1) & 255;
-    const ltr = tick & 1;
-    for (let y = H - 1; y >= 0; y--) {
-      for (let k = 0; k < W; k++) {
-        const x = ltr ? k : W - 1 - k;
-        const i = y * W + x, m = cell[i];
-        if (m === E || m === STONE || m === OBSIDIAN || m === GLASS || stamp[i] === tick) continue;
-        if (powder(m)) {
-          if (canEnter(x, y + 1, m)) { swap(i, i + W); continue; }
-          const d = rnd() < 0.5 ? -1 : 1;
-          if (canEnter(x + d, y + 1, m)) swap(i, i + W + d); else if (canEnter(x - d, y + 1, m)) swap(i, i + W - d);
-        } else if (liquid(m)) {
-          if (m === LAVA && lava(x, y, i)) continue;
-          if (m === LAVA && rnd() < 0.5) continue;
-          if (m === OIL || m === WATER) heatFrom(x, y, i, m);
-          if (cell[i] !== m) continue;
-          if (canEnter(x, y + 1, m)) { swap(i, i + W); continue; }
-          const d = rnd() < 0.5 ? -1 : 1;
-          if (canEnter(x + d, y + 1, m)) { swap(i, i + W + d); continue; }
-          const reach = m === WATER ? 4 : m === OIL ? 3 : 1;
-          for (const dir of [d, -d]) {
-            let tx = x;
-            for (let s = 1; s <= reach; s++) { const n = at(x + dir * s, y); if (n !== E && !gas(n)) break; tx = x + dir * s; }
-            if (tx !== x) { swap(i, y * W + tx); break; }
-          }
-        } else if (m === FIRE) fire(x, y, i);
-        else if (m === STEAM || m === SMOKE) {
-          if (--life[i] === 0) { cell[i] = m === STEAM && rnd() < 0.2 ? WATER : E; continue; }
-          const d = rnd() < 0.5 ? -1 : 1;
-          if (at(x, y - 1) === E || (liquid(at(x, y - 1)) && rnd() < 0.3)) swap(i, i - W);
-          else if (at(x + d, y - 1) === E) swap(i, i - W + d);
-          else if (at(x + d, y) === E) swap(i, i + d);
-        }
-      }
-    }
-  }
-  function canEnter(x, y, m) {
-    const n = at(x, y);
-    if (n === E || gas(n)) return true;
-    return liquid(n) && DENS[n] < DENS[m] && rnd() < 0.4;
-  }
-  // Oil catches from fire and lava; water touching a free flame quenches it.
-  function heatFrom(x, y, i, m) {
-    for (const [dx, dy] of [[0, -1], [1, 0], [-1, 0], [0, 1]]) {
-      const n = at(x + dx, y + dy);
-      if (m === OIL && (n === FIRE || n === LAVA) && rnd() < 0.08) { set(x, y, FIRE, 120 + rnd() * 80); shade[i] = 255; return; }
-    }
-  }
-  function fire(x, y, i) {
-    const fuel = shade[i] === 255;
-    if (powder(at(x, y - 1)) && rnd() < 0.3) { set(x, y, SMOKE, 30); return; }
-    for (const [dx, dy] of [[0, 1], [1, 0], [-1, 0], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
-      const nx = x + dx, ny = y + dy, n = at(nx, ny);
-      if (n === WATER) {
-        if (fuel && dy === 1) continue; // burning oil floats
-        if (fuel) { if (rnd() < 0.05) { set(nx, ny, STEAM, 60 + rnd() * 60); if (at(x, y - 1) === E) set(x, y - 1, FIRE, 10 + rnd() * 10); } }
-        else if (rnd() < 0.5) { set(x, y, STEAM, 40 + rnd() * 50); return; }
-      } else if (ignitable(n) && rnd() < (n === OIL ? 0.06 : 0.012)) {
-        set(nx, ny, FIRE, n === OIL ? 120 + rnd() * 80 : 200 + rnd() * 50); shade[ny * W + nx] = 255;
-      }
-    }
-    if (life[i] > 0) life[i]--;
-    if (rnd() < 0.3) life[i] = Math.max(0, life[i] - 1);
-    if (life[i] === 0) { set(x, y, fuel && rnd() < 0.25 ? ASH : rnd() < 0.5 ? SMOKE : E, 60 + rnd() * 80); return; }
-    if (fuel) {
-      if (at(x, y - 1) === E && rnd() < 0.35) set(x, y - 1, FIRE, 6 + rnd() * 14);
-      if (at(x, y + 1) === E) swap(i, i + W);
-    } else if (rnd() < 0.6) {
-      const d = ((rnd() * 3) | 0) - 1;
-      if (at(x + d, y - 1) === E) swap(i, i - W + d);
-    }
-  }
-  function lava(x, y, i) {
-    for (const [dx, dy] of [[0, -1], [1, 0], [-1, 0], [0, 1]]) {
-      const nx = x + dx, ny = y + dy, n = at(nx, ny);
-      if (n === WATER) {
-        set(nx, ny, STEAM, 50 + rnd() * 60);
-        if (rnd() < 0.5) { set(x, y, dy < 0 ? OBSIDIAN : STONE); return true; }
-      } else if (n === SAND && rnd() < 0.01) set(nx, ny, GLASS);
-      else if (ignitable(n) && rnd() < 0.1) { set(nx, ny, FIRE, 150); shade[ny * W + nx] = 255; }
-    }
-    if (rnd() < 0.003 && at(x, y - 1) === E) set(x, y - 1, FIRE, 8 + rnd() * 10);
-    return false;
-  }
-
-  function draw() {
-    const d = img.data;
-    for (let i = 0, o = 0; i < cell.length; i++, o += 4) {
-      const m = cell[i];
-      if (m === E) { d[o + 3] = 0; continue; }
-      let c = COL[m], k = 1 + ((shade[i] & 127) / 127 - 0.5) * (m === STONE ? 0.35 : 0.18);
-      if (m === FIRE) { const t = Math.min(1, life[i] / 40); c = [255, 90 + 150 * t, 20 + 80 * t * t]; k = 1; }
-      else if (m === LAVA) k = 0.9 + 0.2 * Math.sin(tick * 0.1 + (shade[i] & 31));
-      d[o] = Math.min(255, c[0] * k); d[o + 1] = Math.min(255, c[1] * k); d[o + 2] = Math.min(255, c[2] * k);
-      d[o + 3] = m === STEAM || m === SMOKE ? 150 : 255;
-    }
-    ctx.putImageData(img, 0, 0);
-  }
-
-  // Tools.
-  const tools = [["Sand", SAND], ["Water", WATER], ["Oil", OIL], ["Fire", FIRE], ["Lava", LAVA], ["Wood", WOOD], ["Erase", E]];
-  let tool = OIL;
-  const bar = document.getElementById("tools"), hint = bar.querySelector(".hint");
-  for (const [name, m] of tools) {
-    const b = document.createElement("button");
-    b.type = "button";
-    const c = m === E ? [30, 26, 34] : COL[m];
-    b.innerHTML = `<i style="background:rgb(${c})"></i>${name}`;
-    b.setAttribute("aria-pressed", m === tool);
-    b.onclick = () => { tool = m; bar.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b)); };
-    bar.insertBefore(b, hint);
-  }
-  const reset = document.createElement("button");
-  reset.type = "button"; reset.textContent = "Reset";
-  reset.onclick = build;
-  bar.insertBefore(reset, hint);
-
-  let down = false, px = 0, py = 0;
-  const pos = (e) => { const r = cv.getBoundingClientRect(); return [Math.floor((e.clientX - r.left) / r.width * W), Math.floor((e.clientY - r.top) / r.height * H)]; };
-  function paint(x, y) {
-    const r = tool === E ? 4 : 3;
-    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
-      const nx = x + dx, ny = y + dy;
-      if (dx * dx + dy * dy > r * r || nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
-      const i = ny * W + nx;
-      if (tool === E) { cell[i] = E; continue; }
-      if (tool === FIRE) {
-        if (ignitable(cell[i])) { set(nx, ny, FIRE, 150); shade[i] = 255; }
-        else if (cell[i] === E && rnd() < 0.3) set(nx, ny, FIRE, 10 + rnd() * 20);
-      } else if (cell[i] === E && (tool === WOOD || rnd() < 0.45)) set(nx, ny, tool);
-    }
-  }
-  cv.addEventListener("pointerdown", (e) => { down = true; cv.setPointerCapture(e.pointerId); [px, py] = pos(e); paint(px, py); });
-  cv.addEventListener("pointermove", (e) => {
-    if (!down) return;
-    const [x, y] = pos(e), n = Math.max(Math.abs(x - px), Math.abs(y - py), 1);
-    for (let k = 1; k <= n; k++) paint(Math.round(px + (x - px) * k / n), Math.round(py + (y - py) * k / n));
-    px = x; py = y;
-  });
-  addEventListener("pointerup", () => (down = false));
-
-  // On load, a little lava pours into the oily pond so the first thing you see is a reaction.
-  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let pour = still ? 0 : 200;
-  build();
-  let rw = cv.clientWidth;
-  addEventListener("resize", () => { if (Math.abs(cv.clientWidth - rw) > 40) { rw = cv.clientWidth; build(); } });
-  function frame() {
-    if (pour > 0) {
-      pour--;
-      const x = Math.floor(W * 0.6) + ((rnd() * 3) | 0);
-      if (cell[2 * W + x] === E) set(x, 2, LAVA);
-    }
-    step();
-    draw();
-    requestAnimationFrame(frame);
-  }
-  if (still) { for (let k = 0; k < 60; k++) step(); draw(); cv.addEventListener("pointerdown", function go() { cv.removeEventListener("pointerdown", go); frame(); }); }
-  else frame();
 </script>
 </body>
 </html>

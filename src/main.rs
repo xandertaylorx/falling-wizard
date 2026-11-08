@@ -254,6 +254,10 @@ struct App {
     world_scroll: usize,
     /// Esc pressed this frame and not yet handled (so one press can't open and close a menu).
     esc: bool,
+    /// Spell wheel: 0..1 opening, the slot pointed at, and where the mouse was when it opened.
+    wheel_open: f32,
+    wheel_hover: Option<usize>,
+    wheel_anchor: (f32, f32),
 }
 
 async fn run(args: Vec<String>) {
@@ -305,6 +309,9 @@ async fn run(args: Vec<String>) {
         world_del: false,
         world_scroll: 0,
         esc: false,
+        wheel_open: 0.0,
+        wheel_hover: None,
+        wheel_anchor: (0.0, 0.0),
     };
 
     let t0 = get_time();
@@ -557,11 +564,46 @@ impl App {
         match self.screen {
             Screen::Play => {
                 let view = View::new(self.game.cam.0, self.game.cam.1, sw, sh, self.game.zoom);
-                let ctl = match script {
+                // Spell wheel: hold TAB (or the middle mouse button), flick towards a
+                // spell and let go. Time slows while it's open.
+                let want = script.is_none() && !self.game.sandbox && (is_key_down(KeyCode::Tab) || is_mouse_button_down(MouseButton::Middle));
+                if want {
+                    if self.wheel_open == 0.0 {
+                        self.wheel_anchor = mouse_position();
+                        self.wheel_hover = None;
+                    }
+                    self.wheel_open = (self.wheel_open + dt * 7.0).min(1.0);
+                    if let Some(i) = ui::wheel_pick(self.wheel_anchor) {
+                        self.wheel_hover = Some(i);
+                    }
+                    if is_mouse_button_pressed(MouseButton::Left) {
+                        if let Some(i) = self.wheel_hover {
+                            self.game.spell = i;
+                        }
+                    }
+                } else if self.wheel_open > 0.0 {
+                    if let Some(i) = self.wheel_hover.take() {
+                        if self.game.spell != i {
+                            self.game.spell = i;
+                            if let Some(a) = &mut self.audio {
+                                a.play(Sfx::Click);
+                            }
+                        }
+                    }
+                    self.wheel_open = 0.0;
+                }
+                let mut ctl = match script {
                     Some(c) => c,
                     None => self.read_controls(&view),
                 };
-                self.game.update(dt, &ctl, false);
+                let slow = if self.wheel_open > 0.0 {
+                    ctl.primary = false;
+                    ctl.secondary = false;
+                    0.15
+                } else {
+                    1.0
+                };
+                self.game.update(dt * slow, &ctl, false);
                 if self.game.player.dead() {
                     self.screen = Screen::Dead;
                 }
@@ -752,9 +794,13 @@ impl App {
                 if !self.clean {
                     self.ui.hud(&mut self.game, &view, self.fps, self.settings.show_fps);
                     self.ui.chat(&self.game, None, self.game.time, 0);
-                    self.crosshair(&view);
+                    if self.wheel_open > 0.0 {
+                        self.ui.spell_wheel(&self.game, self.wheel_hover, self.wheel_open);
+                    } else {
+                        self.crosshair(&view);
+                    }
                 }
-                show_mouse(false);
+                show_mouse(self.wheel_open > 0.0);
             }
             Screen::Planets => {
                 self.ui.hud(&mut self.game, &view, self.fps, false);
@@ -820,7 +866,6 @@ impl App {
             KeyCode::P,
             KeyCode::V,
             KeyCode::C,
-            KeyCode::H,
         ];
         for (k, key) in keys.iter().enumerate() {
             if is_key_pressed(*key) {
@@ -867,7 +912,7 @@ impl App {
     fn ui_hover_hud(&self) -> bool {
         let (mx, my) = mouse_position();
         let (sw, sh) = (screen_width(), screen_height());
-        my > sh - 80.0 && (mx - sw * 0.5).abs() < 420.0
+        self.game.sandbox && my > sh - 80.0 && (mx - sw * 0.5).abs() < 420.0
     }
 
     fn crosshair(&self, view: &View) {
@@ -1692,7 +1737,8 @@ impl App {
             ("F", "GRAPPLING VINE"),
             ("LEFT MOUSE", "CAST  (HOLD: BEAMS)"),
             ("RIGHT MOUSE", "DIG"),
-            ("1-0 - = Q R G P V C H / WHEEL", "CHOOSE SPELL"),
+            ("TAB / MIDDLE MOUSE", "HOLD FOR SPELL WHEEL"),
+            ("1-0 - = Q R G P V C / WHEEL", "QUICK-SWITCH SPELL"),
             ("E", "OPEN CHEST / USE ALTAR"),
             ("PORTAL WAND (P)", "RMB PICK PLANET, LMB OPEN PORTAL"),
             ("T  /  /", "CHAT  /  COMMANDS  (/HELP)"),
