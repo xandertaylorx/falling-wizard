@@ -288,7 +288,9 @@ impl Renderer {
         let planet = &game.world.gen.planet;
         let tint = planet.tint;
         let tinted = !planet.is_earth();
-        let sky_ctx = SkyCtx { view: *view, day, tod, rain, clouds, top: planet.sky_top, horizon: planet.sky_horizon, time, far: &self.far, near: &self.near };
+        let scene = planet.sky_scene();
+        let atmo = world.climate.atmo as f32;
+        let sky_ctx = SkyCtx { view: *view, day, tod, rain, clouds, top: planet.sky_top, horizon: planet.sky_horizon, time, far: &self.far, near: &self.near, atmo, scene: &scene };
         let sky_light = [0.92 * day + 0.04, 0.95 * day + 0.05, 1.0 * day + 0.09];
         // Void wastelands on screen: their sky turns to open space.
         let here = (game.planet.gx, game.planet.gy);
@@ -762,6 +764,9 @@ struct SkyCtx<'a> {
     time: f32,
     far: &'a [f32],
     near: &'a [f32],
+    /// Height of the atmosphere's edge (0 = airless).
+    atmo: f32,
+    scene: &'a crate::planets::SkyScene,
 }
 
 /// Sky: day/night gradient, sunset glow, sun and moon, clouds, parallax mountains,
@@ -777,24 +782,31 @@ fn sky(c: &SkyCtx, vx: usize, vy: usize, gy: i32) -> [u8; 3] {
     let dusk = (1.0 - (c.day - 0.35).abs() * 4.0).clamp(0.0, 1.0);
     col = lerp3(col, [236, 140, 96], dusk * t * 0.55);
     col = lerp3(col, lerp3([60, 64, 76], [150, 156, 166], c.day), c.clouds * 0.45 + c.rain * 0.3);
-    let space = ((-(gy as f32) - 260.0) / 340.0).clamp(0.0, 1.0);
+    // Airless worlds are always under open space; elsewhere it fades in as you climb.
+    let space = if c.atmo <= 0.0 { 1.0 } else { ((-(gy as f32) - (c.atmo - 220.0)) / 340.0).clamp(0.0, 1.0) };
     col = lerp3(col, [3, 3, 10], space);
+    // Faint nebula behind the stars, its colour set by where in the galaxy you are.
+    if space > 0.0 && c.scene.nebula_amt > 0.0 {
+        let n = value_noise((v.left * 0.02 + sx) * 0.012, (v.top * 0.02 + sy) * 0.02, 91);
+        let k = ((n - 0.45) * 2.2).clamp(0.0, 1.0) * c.scene.nebula_amt * space;
+        col = lerp3(col, c.scene.nebula, k);
+    }
     // The edge of the atmosphere: a thin glowing band, with aurora curtains at night.
-    let band = (gy as f32 + 480.0).abs();
-    if band < 14.0 {
+    let band = (gy as f32 + c.atmo).abs();
+    if c.atmo > 0.0 && band < 14.0 {
         let wave = (v.left * 0.6 + sx) * 0.045 + c.time * 0.7;
         let k = (1.0 - band / 14.0).powi(2) * (0.45 + 0.25 * wave.sin());
-        col = lerp3(col, lerp3([90, 220, 200], [140, 120, 255], (wave * 0.5).sin() * 0.5 + 0.5), k);
+        col = lerp3(col, lerp3(c.scene.rim[0], c.scene.rim[1], (wave * 0.5).sin() * 0.5 + 0.5), k);
     }
-    if c.day < 0.3 && (-(gy as f32)) > 380.0 && (-(gy as f32)) < 520.0 {
+    if c.atmo > 0.0 && c.day < 0.3 && (-(gy as f32)) > c.atmo - 100.0 && (-(gy as f32)) < c.atmo + 40.0 {
         let curtain = ((v.left * 0.3 + sx) * 0.09 + c.time * 0.4).sin() * ((v.left * 0.3 + sx) * 0.023).sin();
         if curtain > 0.35 {
             let k = (curtain - 0.35) * 0.9 * (1.0 - c.day / 0.3);
-            col = lerp3(col, [80, 255, 170], k * 0.5);
+            col = lerp3(col, c.scene.rim[0], k * 0.5);
         }
     }
 
-    // Stars and a ringed planet.
+    // Stars, and this planet's neighbours hanging in space.
     let stars = (1.0 - c.day * 1.4).max(space).max(0.0) * (1.0 - c.rain);
     if stars > 0.0 {
         let (px, py) = ((v.left * 0.05 + sx) as i32, (v.top * 0.05 + sy) as i32);
@@ -805,16 +817,60 @@ fn sky(c: &SkyCtx, vx: usize, vy: usize, gy: i32) -> [u8; 3] {
         }
     }
     if space > 0.2 {
-        let (pcx, pcy) = (v.view_w() * 0.72 - v.left * 0.02, 40.0 - v.top * 0.03 - 30.0);
-        let (dx, dy) = (sx - pcx, sy - pcy);
-        let d = (dx * dx + dy * dy).sqrt();
-        let ring = ((dx * 0.9 + dy * 2.6).abs() < 2.2) && d > 16.0 && d < 34.0;
-        if d < 18.0 {
-            let lit = (1.0 - (dx + dy * 0.6) / 30.0).clamp(0.2, 1.0);
-            let band = if ((dy * 0.4 + value_noise(dx * 0.1, dy * 0.6, 4) * 3.0) as i32) % 2 == 0 { [196, 150, 110] } else { [170, 120, 96] };
-            return lerp3(col, shade(band, (lit * 255.0) as u8, 0.9), space);
-        } else if ring && (dy > 0.0 || d > 18.0) {
-            return lerp3(col, [210, 190, 160], space * 0.8);
+        for b in &c.scene.bodies {
+            let (pcx, pcy) = (v.view_w() * b.fx - v.left * b.depth, b.y - 30.0 - v.top * b.depth);
+            let (dx, dy) = (sx - pcx, sy - pcy);
+            let d = (dx * dx + dy * dy).sqrt();
+            if d > b.r * 2.0 + 2.0 {
+                continue;
+            }
+            let ring = b.ring.is_some() && ((dx * 0.9 + dy * 2.6).abs() < b.r * 0.12 + 0.8) && d > b.r * 0.9 && d < b.r * 1.9;
+            if ring && dy < 0.0 && d < b.r {
+                // The far side of the ring hides behind the planet.
+            } else if ring {
+                return lerp3(col, b.ring.unwrap_or([200, 200, 200]), space * 0.8);
+            }
+            if d < b.r {
+                let lit = (1.0 - (dx + dy * 0.6) / (b.r * 1.7)).clamp(0.15, 1.0);
+                let base = match b.style {
+                    0 => {
+                        if ((dy / b.r * 7.0 + value_noise(dx * 0.1, dy * 0.6, 4) * 3.0) as i32) % 2 == 0 {
+                            b.a
+                        } else {
+                            b.b
+                        }
+                    }
+                    1 => {
+                        let cr = value_noise(dx * 0.35 + b.r, dy * 0.35, 8);
+                        if cr > 0.62 {
+                            b.b
+                        } else {
+                            b.a
+                        }
+                    }
+                    2 => {
+                        let cl = value_noise(dx * 0.25 + c.time * 0.05, dy * 0.5, 12);
+                        if cl > 0.6 {
+                            b.b
+                        } else if value_noise(dx * 0.15, dy * 0.15, 13) > 0.55 {
+                            [70, 140, 70]
+                        } else {
+                            b.a
+                        }
+                    }
+                    _ => {
+                        let hot = value_noise(dx * 0.3, dy * 0.3 + c.time * 0.1, 14);
+                        if hot > 0.58 {
+                            b.b
+                        } else {
+                            b.a
+                        }
+                    }
+                };
+                return lerp3(col, shade(base, (lit * 255.0) as u8, 0.9), space);
+            } else if d < b.r + 1.5 && b.style == 2 {
+                col = lerp3(col, [140, 190, 255], space * 0.5);
+            }
         }
     }
 
@@ -822,7 +878,17 @@ fn sky(c: &SkyCtx, vx: usize, vy: usize, gy: i32) -> [u8; 3] {
     let phase = c.tod;
     let (bx, by, r, bc) = if c.day > 0.05 {
         let p = ((phase - 0.22) / 0.56).clamp(0.0, 1.0);
-        (p * v.view_w(), v.view_h() * (0.6 - (p * std::f32::consts::PI).sin() * 0.45), 7.0, [255, 244, 210])
+        let (bx, by) = (p * v.view_w(), v.view_h() * (0.6 - (p * std::f32::consts::PI).sin() * 0.45));
+        // A binary system: a smaller companion sun trails the first.
+        if let Some(tc) = c.scene.twin {
+            let d2 = ((sx - bx + 26.0).powi(2) + (sy - by - 9.0).powi(2)).sqrt();
+            if d2 < c.scene.sun_r * 0.55 {
+                return tc;
+            } else if d2 < c.scene.sun_r * 1.8 {
+                col = lerp3(col, tc, (1.0 - d2 / (c.scene.sun_r * 1.8)).powi(2) * 0.5);
+            }
+        }
+        (bx, by, c.scene.sun_r, c.scene.sun)
     } else {
         let p = ((phase + 0.28).fract() / 0.56).clamp(0.0, 1.0);
         (p * v.view_w(), v.view_h() * (0.6 - (p * std::f32::consts::PI).sin() * 0.45), 5.0, [226, 230, 240])

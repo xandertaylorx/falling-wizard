@@ -63,6 +63,7 @@ An infinite world streamed through a fixed **window** of `WCX`×`WCY` chunks (`C
 - **Generator:** `Generator::with_planet(seed, Planet)`. Earth is `Planet::earth()` at galaxy cell (0,0), and `Generator::new(seed)` is the same as Earth.
 - **Planets:** `Planet::at(gx, gy)` gives the procedural planet in a galaxy cell (about 55% of cells have one), and `Planet::nearest` lists the closest ones.
 - **Contents:** biomes, caves, ruins, volcanoes and geysers, sky isles and space.
+- **Climate:** `Planet::climate()` gives oxygen, heat and atmosphere height; it's copied into `world.climate` and drives fire, freezing/evaporation (`weather_tick`), the atmosphere edge in `game.rs` and the sky. `Planet::sky_scene()` gives suns, bodies seen from orbit and nebula colour.
 - **Portal structures:** `portals_near`, `portal_interior` and `portal_fill`. `PORTAL_HOME` is where the arrival portal on each planet sits.
 
 ### Game state (`game.rs`)
@@ -114,7 +115,7 @@ Saving happens every 60 s, before warping, on Pause → Main Menu, and on Quit. 
 
 ### Other modules
 
-- **`spells.rs`:** the 16 spells in `SPELL_BAR` (keys 1–0, -, =, Q, R, G, P), projectiles, black holes, tornadoes and the wind `gust`.
+- **`spells.rs`:** the 19 spells in `SPELL_BAR` (keys 1–0, -, =, Q, R, G, P, V, C, H), projectiles, black holes, tornadoes and the wind `gust`. Cards with `beam_after()` become held beams via `beam_tick` (lightning stream, flamethrower, frost breath, Heat Ray, Gravity Gun); `Storm` clouds rain and strike.
 - **`weather.rs`:** the day clock (`daylight()`), sky states and particle spawning.
 - **`ui.rs`:** the pixel font, HUD, planet sphere, chat and the menu widgets.
 - **`audio.rs`:** synthesised sound effects (`Sfx`).

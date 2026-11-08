@@ -16,7 +16,7 @@ use crate::worldgen::{Generator, PORTAL_HOME};
 pub const STEP: f32 = 1.0 / 60.0;
 
 /// Materials available to the sandbox brush, in palette order.
-pub const PALETTE: [M; 18] = [
+pub const PALETTE: [M; 21] = [
     M::Sand,
     M::Water,
     M::Oil,
@@ -34,6 +34,9 @@ pub const PALETTE: [M; 18] = [
     M::Glass,
     M::Crystal,
     M::Cloud,
+    M::Metal,
+    M::Ash,
+    M::Obsidian,
     M::Empty,
 ];
 
@@ -145,6 +148,12 @@ pub struct Game {
     rift_cool: f32,
     /// Bodies of water and metal carrying current: their cells and how long is left.
     charges: Vec<(Vec<(i32, i32)>, f32, f32)>,
+    /// How long the cast button has been held on the current spell (beams), and the
+    /// cursor's recent velocity (for Gravity Gun throws).
+    hold: f32,
+    hold_spell: usize,
+    aim_prev: (f32, f32),
+    aim_vel: (f32, f32),
 }
 
 impl Game {
@@ -202,6 +211,10 @@ impl Game {
             rift_travel: None,
             rift_cool: 0.0,
             charges: Vec::new(),
+            hold: 0.0,
+            hold_spell: 0,
+            aim_prev: (0.0, 0.0),
+            aim_vel: (0.0, 0.0),
         };
         game.apply_mode();
         game.mobs.density = [0.0, 1.0, 2.2][game.options.creatures.min(2)];
@@ -367,7 +380,44 @@ impl Game {
                     paint(&mut self.world, ax as i32, ay as i32, self.brush_r, M::Empty);
                 }
             } else {
-                if ctl.primary && self.cooldown <= 0.0 {
+                if self.options.creative {
+                    self.player.mana = crate::player::MAX_MANA;
+                }
+                // Cursor velocity, smoothed, so a flick of the mouse throws what the Gravity Gun holds.
+                let inst = ((ax - self.aim_prev.0) / dt.max(0.001), (ay - self.aim_prev.1) / dt.max(0.001));
+                self.aim_prev = (ax, ay);
+                let k = (dt * 12.0).min(1.0);
+                self.aim_vel = (self.aim_vel.0 + (inst.0 - self.aim_vel.0) * k, self.aim_vel.1 + (inst.1 - self.aim_vel.1) * k);
+                self.spells.aim = (ax, ay);
+                let held = ctl.primary && self.hold_spell == self.spell;
+                if !held && !self.spells.held.is_empty() {
+                    let (px, py) = self.player.center();
+                    let (dx, dy) = (ax - px, ay - py);
+                    let d = (dx * dx + dy * dy).sqrt().max(1.0);
+                    let mut v = (self.aim_vel.0 * 0.9, self.aim_vel.1 * 0.9);
+                    let sp = (v.0 * v.0 + v.1 * v.1).sqrt();
+                    if sp < 60.0 {
+                        v = (dx / d * 140.0, dy / d * 140.0 - 30.0);
+                    } else if sp > 420.0 {
+                        v = (v.0 * 420.0 / sp, v.1 * 420.0 / sp);
+                    }
+                    self.spells.release_grab(v, &mut self.fx, &mut self.mobs);
+                }
+                self.hold = if held { self.hold + dt } else { 0.0 };
+                self.hold_spell = self.spell;
+                let card = self.current_spell();
+                let beaming = ctl.primary && card.beam_after().is_some_and(|t| self.hold >= t);
+                if beaming {
+                    let cost = card.beam_mana() * dt;
+                    if self.player.mana >= cost {
+                        self.player.mana -= cost;
+                        let tip = self.player.staff_tip(ax, ay);
+                        self.player.gold += self.spells.beam_tick(card, tip, (ax, ay), dt, &mut self.world, &mut self.fx, &mut self.mobs);
+                    } else if self.fizzle <= 0.0 {
+                        self.fizzle = 0.3;
+                        self.sounds.push(Sfx::Tick);
+                    }
+                } else if ctl.primary && self.cooldown <= 0.0 {
                     let tip = self.player.staff_tip(ax, ay);
                     let ang = (ay - tip.1).atan2(ax - tip.0);
                     let card = self.current_spell();
@@ -534,7 +584,10 @@ impl Game {
         }
         // Breaking the atmosphere: low gravity above it, fire on the way through.
         let (_, py) = self.player.center();
-        let thin = ((-py - 420.0) / 100.0).clamp(0.0, 1.0);
+        // Each planet's atmosphere ends at its own height; a barren moon has none to leave.
+        let atmo = self.world.climate.atmo as f32;
+        let has_air = atmo > 0.0;
+        let thin = if has_air { ((-py - (atmo - 60.0)) / 100.0).clamp(0.0, 1.0) } else { 0.0 };
         let (vx_, vy_) = self.player.center();
         let here = self.here();
         let void = self.blights.iter().filter(|b| b.planet == here).map(|b| b.cover(vx_, vy_)).fold(0.0f32, f32::max);
@@ -543,7 +596,7 @@ impl Game {
             self.weather.set(crate::weather::Sky::Clear);
         }
         if !idle {
-            let crossing = (-540.0..-430.0).contains(&py) && self.player.vy.abs() > 55.0;
+            let crossing = has_air && (-(atmo + 60.0)..-(atmo - 50.0)).contains(&py) && self.player.vy.abs() > 55.0;
             if crossing {
                 let (cx, cy) = self.player.center();
                 for _ in 0..5 {
@@ -555,7 +608,7 @@ impl Game {
                 }
                 self.fx.shake = self.fx.shake.max(1.5);
             }
-            let up_high = if self.in_space { py < -470.0 } else { py < -490.0 };
+            let up_high = has_air && if self.in_space { py < -(atmo - 10.0) } else { py < -(atmo + 10.0) };
             if up_high != self.in_space {
                 self.in_space = up_high;
                 self.fx.flash = self.fx.flash.max(0.4);
@@ -618,51 +671,141 @@ impl Game {
 
 impl Game {
     /// Volcanoes and geysers near the wizard erupt on their own schedules.
+    ///
+    /// A volcano rumbles for a few seconds, blasts its plug out, then fountains lava and
+    /// lava bombs while magma wells over the crater rim and runs down the slopes. Its ash
+    /// plume rains ash and crackles with volcanic lightning. Hot worlds erupt more often;
+    /// ice worlds have cryovolcanoes that spew water and snow; airless moons get no plume.
     fn vents(&mut self, dt: f32) {
         let (px, py) = self.player.center();
+        let clim = self.world.climate;
+        let airless = clim.atmo <= 0;
+        let cryo = self.planet.kind == crate::planets::Kind::Ice;
         for (volcano, x, top) in self.world.gen.features_near(px as i32 - 260, px as i32 + 260) {
             if (top as f32 - py).abs() > 220.0 {
                 continue;
             }
-            let phase = crate::noise::hash3(x, 3, 1) % 1000;
-            let (period, dur) = if volcano { (45.0, 7.0) } else { (15.0, 3.0) };
-            let t = (self.time + phase as f32 * 0.1) % period;
-            if t >= dur {
-                continue;
-            }
+            let hv = crate::noise::hash3(x, 5, 2);
+            let phase = (crate::noise::hash3(x, 3, 1) % 1000) as f32 * 0.1;
+            let (period, dur) = if volcano {
+                let p = (35.0 + (hv % 40) as f32) * if clim.heat > 0 { 0.55 } else { 1.0 };
+                (p, 6.0 + ((hv >> 8) % 7) as f32)
+            } else {
+                (15.0, 3.0)
+            };
+            let t = (self.time + phase) % period;
+            let near = (1.0 - (x as f32 - px).abs() / 260.0).max(0.0);
             let (fx, fy) = (x as f32 + 0.5, top as f32 - 1.0);
             if !self.world.in_window(x, top) {
                 continue;
             }
             if volcano {
-                if t < dt {
-                    self.sounds.push(Sfx::Thunder);
-                    self.fx.shake = (self.fx.shake + 5.0).min(14.0);
+                let power = 0.7 + ((hv >> 16) % 100) as f32 / 100.0 * 0.8;
+                let rumble = period - t < 3.5;
+                if rumble {
+                    // The ground trembles and the crater steams before it blows.
+                    let k = 1.0 - (period - t) / 3.5;
+                    self.fx.shake = self.fx.shake.max(k * 3.0 * near);
+                    if !airless && self.fx.rng.chance(0.3) {
+                        let sx = x + self.fx.rng.range(-2, 3);
+                        if self.world.mat(sx, top - 2) == M::Empty {
+                            let sm = Cell::gas(M::Smoke, &mut self.world.rng, 60, 140);
+                            self.world.set(sx, top - 2, sm);
+                        }
+                    }
+                    if period - t < dt * 1.5 {
+                        self.sounds.push(Sfx::Thunder);
+                    }
+                    continue;
                 }
-                for _ in 0..5 {
-                    let (vx, vy) = (self.fx.rng.rangef(-70.0, 70.0), -self.fx.rng.rangef(160.0, 290.0));
+                if t >= dur {
+                    continue;
+                }
+                let k = (std::f32::consts::PI * t / dur).sin().max(0.25);
+                if t < dt {
+                    // The plug blows.
+                    self.fx.explode(&mut self.world, fx, fy + 2.0, 6, if cryo { 0.0 } else { 0.8 });
+                    self.fx.flash = self.fx.flash.max(0.3 * near);
+                    self.fx.shake = (self.fx.shake + 10.0 * near).min(14.0);
+                    self.sounds.push(Sfx::Boom);
+                    self.sounds.push(Sfx::Thunder);
+                }
+                self.fx.shake = self.fx.shake.max(2.5 * k * near);
+                let magma = if cryo { M::Water } else { M::Lava };
+                // Fountain.
+                for _ in 0..(6.0 * power * k) as usize + 1 {
+                    let (vx, vy) = (self.fx.rng.rangef(-80.0, 80.0), -self.fx.rng.rangef(150.0, 330.0) * power);
                     let sh = self.fx.rng.next_u32() as u8;
-                    self.fx.debris(fx, fy, vx, vy, M::Lava, sh);
+                    let m = if cryo && self.fx.rng.chance(0.5) { M::Snow } else { magma };
+                    self.fx.debris(fx, fy, vx, vy, m, sh);
+                }
+                // Bombs: big fast blobs that land far down the slopes.
+                if self.fx.rng.chance(0.12 * power) {
+                    let side = self.fx.rng.sign() as f32;
+                    let (vx, vy) = (side * self.fx.rng.rangef(90.0, 190.0), -self.fx.rng.rangef(260.0, 380.0));
+                    for j in 0..5 {
+                        let sh = self.fx.rng.next_u32() as u8;
+                        self.fx.debris(fx + j as f32 * 0.3, fy, vx + j as f32 * 2.0, vy + j as f32 * 3.0, magma, sh);
+                    }
+                }
+                // Magma wells up and spills over the rim.
+                for dx in -2..=2 {
+                    for dy in 0..3 {
+                        if self.world.mat(x + dx, top + dy) == M::Empty && self.fx.rng.chance(0.18 * k) {
+                            self.world.place(x + dx, top + dy, magma);
+                        }
+                    }
                 }
                 let (vx, vy) = (self.fx.rng.rangef(-40.0, 40.0), -self.fx.rng.rangef(100.0, 220.0));
                 let life = self.fx.rng.rangef(0.4, 1.0);
-                self.fx.spark(fx, fy, vx, vy, life, [255, 160, 50]);
-                if self.fx.rng.chance(0.6) {
-                    let sm = Cell::gas(M::Smoke, &mut self.world.rng, 120, 220);
-                    let sx = x + self.fx.rng.range(-2, 3);
-                    if self.world.mat(sx, top - 3) == M::Empty {
-                        self.world.set(sx, top - 3, sm);
+                self.fx.spark(fx, fy, vx, vy, life, if cryo { [200, 235, 255] } else { [255, 160, 50] });
+                if airless {
+                    continue; // nothing to hold a plume up in a vacuum
+                }
+                // The ash plume: smoke billows, ash rains out downwind.
+                for _ in 0..2 {
+                    let sx = x + self.fx.rng.range(-3, 4);
+                    let sy = top - self.fx.rng.range(2, 12);
+                    if self.world.mat(sx, sy) == M::Empty {
+                        let sm = Cell::gas(if cryo { M::Steam } else { M::Smoke }, &mut self.world.rng, 140, 240);
+                        self.world.set(sx, sy, sm);
+                    }
+                }
+                if !cryo && self.fx.rng.chance(0.6 * k) {
+                    let (vx, vy) = (self.fx.rng.rangef(-50.0, 50.0) + self.world.wind * 2.0, -self.fx.rng.rangef(200.0, 300.0));
+                    let sh = self.fx.rng.next_u32() as u8;
+                    self.fx.debris(fx, fy - 4.0, vx, vy, M::Ash, sh);
+                }
+                // Volcanic lightning: charge built by colliding ash discharges inside the plume.
+                if !cryo && power > 0.9 && self.fx.rng.chance(0.025 * k) {
+                    let a = (fx + self.fx.rng.rangef(-30.0, 30.0), fy - self.fx.rng.rangef(40.0, 90.0));
+                    let b = if self.fx.rng.chance(0.3) { (fx, fy) } else { (fx + self.fx.rng.rangef(-35.0, 35.0), fy - self.fx.rng.rangef(30.0, 100.0)) };
+                    self.spells.arc(a, b, &mut self.fx, 0.3);
+                    self.fx.flash = self.fx.flash.max(0.25 * near);
+                    self.sounds.push(Sfx::Zap);
+                    if near > 0.5 {
+                        self.sounds.push(Sfx::Thunder);
                     }
                 }
             } else {
-                for _ in 0..6 {
-                    let (vx, vy) = (self.fx.rng.rangef(-18.0, 18.0), -self.fx.rng.rangef(190.0, 300.0));
-                    let sh = self.fx.rng.next_u32() as u8;
-                    self.fx.debris(fx, fy, vx, vy, M::Water, sh);
+                // Geysers spout whatever is underground here: acid on toxic worlds; on hot
+                // worlds the water flashes to steam before it leaves the vent.
+                let fluid = if self.planet.sea == Some(M::Acid) { M::Acid } else { M::Water };
+                if clim.heat <= 0 {
+                    for _ in 0..6 {
+                        let (vx, vy) = (self.fx.rng.rangef(-18.0, 18.0), -self.fx.rng.rangef(190.0, 300.0));
+                        let sh = self.fx.rng.next_u32() as u8;
+                        self.fx.debris(fx, fy, vx, vy, fluid, sh);
+                    }
                 }
-                if self.fx.rng.chance(0.5) && self.world.mat(x, top - 3) == M::Empty {
-                    let st = Cell::gas(M::Steam, &mut self.world.rng, 40, 90);
-                    self.world.set(x, top - 3, st);
+                let puffs = if clim.heat > 0 { 4 } else { 1 };
+                for _ in 0..puffs {
+                    let sy = top - self.fx.rng.range(3, if clim.heat > 0 { 20 } else { 4 });
+                    let sx = x + self.fx.rng.range(-1, 2);
+                    if self.fx.rng.chance(0.5) && self.world.mat(sx, sy) == M::Empty {
+                        let st = Cell::gas(M::Steam, &mut self.world.rng, 40, 90);
+                        self.world.set(sx, sy, st);
+                    }
                 }
             }
         }
@@ -1117,7 +1260,7 @@ impl Game {
     /// Lightning that lands on or near something conductive (water, acid, blood, goo,
     /// gold, lava) runs through all of it that's connected.
     pub fn electrify(&mut self, x: f32, y: f32) {
-        let conductive = |m: M| matches!(m, M::Water | M::Acid | M::Blood | M::Goo | M::Gold | M::Lava);
+        let conductive = |m: M| matches!(m, M::Water | M::Acid | M::Blood | M::Goo | M::Gold | M::Lava | M::Metal);
         let (x, y) = (x as i32, y as i32);
         let mut start = None;
         'find: for r in 0..6 {
@@ -1156,6 +1299,14 @@ impl Game {
         for &(cx, cy) in cells.iter().take(60) {
             if self.world.mat(cx, cy) == M::Water && self.world.mat(cx, cy - 1) == M::Empty && self.fx.rng.chance(0.25) {
                 let c = Cell::gas(M::Steam, &mut self.world.rng, 30, 60);
+                self.world.set(cx, cy, c);
+            }
+        }
+        // Electrolysis: the current splits water, and hydrogen bubbles rise to the surface,
+        // waiting for a spark.
+        for &(cx, cy) in cells.iter().take(400) {
+            if self.world.mat(cx, cy) == M::Water && self.fx.rng.chance(0.03) {
+                let c = Cell::gas(M::Gas, &mut self.world.rng, 200, 255);
                 self.world.set(cx, cy, c);
             }
         }
@@ -1709,7 +1860,7 @@ pub fn paint(world: &mut World, cx: i32, cy: i32, r: i32, m: M) {
                         world.set(x, y, Cell::EMPTY);
                     }
                 }
-                M::Stone | M::Dirt | M::Wood | M::Glass | M::Brick | M::Crystal | M::Cloud => world.place(x, y, m),
+                M::Stone | M::Dirt | M::Wood | M::Glass | M::Brick | M::Crystal | M::Cloud | M::Metal | M::Obsidian => world.place(x, y, m),
                 M::Fire if here.flammable() => world.ignite_at(x, y),
                 _ if here == M::Empty && world.rng.chance(0.5) => world.place(x, y, m),
                 _ => {}

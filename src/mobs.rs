@@ -568,6 +568,30 @@ impl Mobs {
         }
     }
 
+    /// Hold creatures near a point (the Gravity Gun) without hurting them.
+    pub fn carry(&mut self, x: f32, y: f32, r: f32, dt: f32) {
+        for m in self.list.iter_mut() {
+            let (cx, cy) = Self::center(m);
+            let (dx, dy) = (x - cx, y - cy);
+            if dx * dx + dy * dy < r * r {
+                let k = (dt * 10.0).min(1.0);
+                m.vx += (dx * 8.0 - m.vx) * k;
+                m.vy += (dy * 8.0 - m.vy) * k;
+            }
+        }
+    }
+
+    /// Throw every creature near a point.
+    pub fn fling(&mut self, x: f32, y: f32, r: f32, (vx, vy): (f32, f32)) {
+        for m in self.list.iter_mut() {
+            let (cx, cy) = Self::center(m);
+            if (x - cx).powi(2) + (y - cy).powi(2) < r * r {
+                m.vx = vx;
+                m.vy = vy;
+            }
+        }
+    }
+
     /// Knock creatures in a cone (wind spells); pets are spared the damage.
     #[allow(clippy::too_many_arguments)]
     pub fn push_cone(&mut self, x: f32, y: f32, (ux, uy): (f32, f32), len: f32, half: f32, force: f32, dmg: f32, fx: &mut Fx) {

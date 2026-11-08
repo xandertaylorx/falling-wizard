@@ -61,10 +61,16 @@ pub enum Material {
     VoidCrystal,
     /// Loose void ash.
     VoidDust,
+    /// Fine grey ash left by burnt wood and volcanic plumes; light enough to float on water.
+    Ash,
+    /// Conducts lightning, shrugs off acid, melts only under a heat ray.
+    Metal,
+    /// Volcanic glass: lava quenched fast by water.
+    Obsidian,
 }
 
 /// The highest material id (for loading saves).
-pub const LAST_MATERIAL: Material = Material::VoidDust;
+pub const LAST_MATERIAL: Material = Material::Obsidian;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -95,8 +101,8 @@ impl Material {
         match self {
             M::Empty => Kind::Empty,
             M::Stone | M::Basalt | M::Dirt | M::Grass | M::Ice | M::Glass | M::Wood | M::Leaves | M::Plant | M::Coal | M::Gold
-            | M::MoonRock | M::Crystal | M::AlienGrass | M::Mushroom | M::Brick | M::Chest | M::Altar | M::Cloud | M::PortalStone | M::Rune | M::Portal | M::VoidRock | M::VoidCrystal => Kind::Static,
-            M::Sand | M::Snow | M::Seed | M::Gunpowder | M::Rubble | M::Gravel | M::Quicksand | M::Bone | M::VoidDust => Kind::Powder,
+            | M::MoonRock | M::Crystal | M::AlienGrass | M::Mushroom | M::Brick | M::Chest | M::Altar | M::Cloud | M::PortalStone | M::Rune | M::Portal | M::VoidRock | M::VoidCrystal | M::Metal | M::Obsidian => Kind::Static,
+            M::Sand | M::Snow | M::Seed | M::Gunpowder | M::Rubble | M::Gravel | M::Quicksand | M::Bone | M::VoidDust | M::Ash => Kind::Powder,
             M::Water | M::Oil | M::Acid | M::Lava | M::Blood | M::Goo => Kind::Liquid,
             M::Smoke | M::Steam | M::Gas => Kind::Gas,
             M::Fire => Kind::Fire,
@@ -125,6 +131,7 @@ impl Material {
             M::Sand => 20,
             M::Rubble => 22,
             M::VoidDust => 19,
+            M::Ash => 9,
             _ => 255,
         }
     }
@@ -183,6 +190,9 @@ impl Material {
             M::MoonRock | M::Brick => 0.6,
             M::VoidDust => 1.0,
             M::VoidRock => 0.2,
+            M::Ash => 1.6,
+            M::Metal => 0.15,
+            M::Obsidian => 0.05,
             M::AlienGrass | M::Mushroom => 2.0,
             M::Wood | M::Leaves | M::Plant | M::Sprout => 2.0,
             _ => 0.0,
@@ -248,6 +258,9 @@ impl Material {
             M::VoidRock => [46, 26, 70],
             M::VoidCrystal => [196, 110, 255],
             M::VoidDust => [112, 64, 160],
+            M::Ash => [104, 100, 104],
+            M::Metal => [150, 158, 172],
+            M::Obsidian => [34, 24, 46],
         }
     }
 
@@ -290,6 +303,9 @@ impl Material {
             M::VoidRock => 0.55,
             M::VoidCrystal => 0.3,
             M::VoidDust => 0.35,
+            M::Ash => 0.3,
+            M::Metal => 0.12,
+            M::Obsidian => 0.3,
             _ => 0.0,
         }
     }
@@ -369,6 +385,9 @@ impl Material {
             M::VoidRock => "Void Rock",
             M::VoidCrystal => "Void Crystal",
             M::VoidDust => "Void Dust",
+            M::Ash => "Ash",
+            M::Metal => "Metal",
+            M::Obsidian => "Obsidian",
         }
     }
 }

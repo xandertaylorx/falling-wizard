@@ -818,6 +818,9 @@ impl App {
             KeyCode::R,
             KeyCode::G,
             KeyCode::P,
+            KeyCode::V,
+            KeyCode::C,
+            KeyCode::H,
         ];
         for (k, key) in keys.iter().enumerate() {
             if is_key_pressed(*key) {
@@ -1687,9 +1690,9 @@ impl App {
             ("S", "GLIDE"),
             ("SHIFT", "DASH"),
             ("F", "GRAPPLING VINE"),
-            ("LEFT MOUSE", "CAST SPELL"),
+            ("LEFT MOUSE", "CAST  (HOLD: BEAMS)"),
             ("RIGHT MOUSE", "DIG"),
-            ("1-9 0 - = Q R G / WHEEL", "CHOOSE SPELL"),
+            ("1-0 - = Q R G P V C H / WHEEL", "CHOOSE SPELL"),
             ("E", "OPEN CHEST / USE ALTAR"),
             ("PORTAL WAND (P)", "RMB PICK PLANET, LMB OPEN PORTAL"),
             ("T  /  /", "CHAT  /  COMMANDS  (/HELP)"),

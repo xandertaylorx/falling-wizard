@@ -252,3 +252,122 @@ pub fn hue_rgb(h: f32, s: f32, v: f32) -> [u8; 3] {
     };
     [(r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8]
 }
+
+/// What the air is like: how much there is to burn, how hot or cold it runs, and
+/// how high the atmosphere reaches (0 = none at all).
+#[derive(Clone, Copy, Debug)]
+pub struct Climate {
+    /// Oxygen: scales how readily fire spreads. 0 means vacuum; fire chokes at once.
+    pub o2: f32,
+    /// -1 cold (open water freezes, lava crusts), 0 temperate, 1 hot (ice melts, water boils off).
+    pub heat: i8,
+    /// Height of the atmosphere's edge above sea level, in cells.
+    pub atmo: i32,
+}
+
+/// Something hanging in a planet's sky, seen best from orbit.
+#[derive(Clone, Copy, Debug)]
+pub struct Body {
+    /// Position: fraction of the view width, and pixels below the top.
+    pub fx: f32,
+    pub y: f32,
+    pub r: f32,
+    pub a: [u8; 3],
+    pub b: [u8; 3],
+    /// 0 banded gas giant, 1 cratered moon, 2 ocean world with clouds, 3 molten.
+    pub style: u8,
+    pub ring: Option<[u8; 3]>,
+    /// Parallax strength.
+    pub depth: f32,
+}
+
+/// The sky scene of a planet: its suns, the bodies you can see from orbit, and the
+/// colour of the nebula behind the stars.
+#[derive(Clone, Debug)]
+pub struct SkyScene {
+    pub sun: [u8; 3],
+    pub sun_r: f32,
+    /// A second, smaller sun (binary systems).
+    pub twin: Option<[u8; 3]>,
+    pub bodies: Vec<Body>,
+    pub nebula: [u8; 3],
+    pub nebula_amt: f32,
+    /// Glow colours of the atmosphere's edge.
+    pub rim: [[u8; 3]; 2],
+}
+
+impl Planet {
+    pub fn climate(&self) -> Climate {
+        let h = hash3(self.gx, self.gy, 0xC11A);
+        let jig = 0.85 + ((h & 0xFF) as f32 / 255.0) * 0.3;
+        let (o2, heat, atmo) = match self.kind {
+            Kind::Earth => (1.0, 0, 480.0),
+            Kind::Dune => (0.8, 1, 420.0),
+            Kind::Ice => (1.0, -1, 520.0),
+            Kind::Lava => (0.6, 1, 560.0),
+            Kind::Jungle => (1.35, 0, 600.0),
+            Kind::Toxic => (0.5, 0, 640.0),
+            Kind::Crystal => (0.25, -1, 300.0),
+            Kind::Moon => (0.0, -1, 0.0),
+            Kind::Ocean => (1.0, 0, 500.0),
+        };
+        let atmo = if self.is_earth() { atmo } else { atmo * jig };
+        Climate { o2, heat, atmo: atmo as i32 }
+    }
+
+    pub fn sky_scene(&self) -> SkyScene {
+        if self.is_earth() {
+            return SkyScene {
+                sun: [255, 244, 210],
+                sun_r: 7.0,
+                twin: None,
+                bodies: vec![
+                    Body { fx: 0.72, y: 10.0, r: 18.0, a: [196, 150, 110], b: [170, 120, 96], style: 0, ring: Some([210, 190, 160]), depth: 0.03 },
+                    Body { fx: 0.2, y: 34.0, r: 7.0, a: [200, 200, 206], b: [150, 150, 160], style: 1, ring: None, depth: 0.05 },
+                ],
+                nebula: [70, 60, 140],
+                nebula_amt: 0.18,
+                rim: [[90, 220, 200], [140, 120, 255]],
+            };
+        }
+        let h = |k: u32| hash3(self.gx, self.gy, 0x5C1E + k);
+        let f = |k: u32| (h(k) & 0xFFFF) as f32 / 65535.0;
+        let (sun, sun_r) = match self.kind {
+            Kind::Lava => ([255, 120, 70], 13.0),
+            Kind::Crystal => ([200, 220, 255], 4.0),
+            Kind::Dune => ([255, 220, 160], 9.0),
+            Kind::Ice => ([230, 240, 255], 5.0),
+            Kind::Toxic => ([240, 255, 170], 8.0),
+            _ => ([255, 240, 205], 6.0 + f(1) * 3.0),
+        };
+        let twin = (matches!(self.kind, Kind::Dune) || h(2) % 5 == 0).then(|| hue_rgb(f(3) * 0.15, 0.45, 1.0));
+        let mut bodies = Vec::new();
+        let n = 1 + h(4) % 3;
+        for k in 0..n {
+            let style = (h(10 + k) % 4) as u8;
+            let hue = f(20 + k);
+            let (a, b) = match style {
+                0 => (hue_rgb(hue, 0.45, 0.85), hue_rgb(hue + 0.05, 0.55, 0.65)),
+                1 => (hue_rgb(hue, 0.08, 0.8), hue_rgb(hue, 0.1, 0.55)),
+                2 => ([60, 120, 220], [240, 245, 255]),
+                _ => ([60, 30, 30], [255, 120, 40]),
+            };
+            let r = match style {
+                0 => 14.0 + f(30 + k) * 22.0,
+                _ => 4.0 + f(30 + k) * 10.0,
+            };
+            let ring = (style == 0 && h(40 + k) % 2 == 0).then(|| hue_rgb(hue + 0.1, 0.25, 0.9));
+            bodies.push(Body { fx: 0.12 + (k as f32 + f(50 + k) * 0.7) / n as f32 * 0.8, y: 6.0 + f(60 + k) * 60.0, r, a, b, style, ring, depth: 0.02 + f(70 + k) * 0.04 });
+        }
+        let rim_a = hue_rgb(self.hue + 0.05, 0.6, 1.0);
+        SkyScene {
+            sun,
+            sun_r,
+            twin,
+            bodies,
+            nebula: hue_rgb(f(80), 0.7, 0.55),
+            nebula_amt: 0.12 + f(81) * 0.3,
+            rim: [rim_a, [self.sky_horizon[0], self.sky_horizon[1], self.sky_horizon[2]]],
+        }
+    }
+}

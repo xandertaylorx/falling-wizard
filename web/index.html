@@ -4,424 +4,456 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Falling Wizard</title>
-<meta name="description" content="A falling-sand wizard game where every grain is alive. An infinite world, sixteen spells, and a galaxy of planets to warp to. For macOS.">
+<meta name="description" content="A falling-sand wizard game for the Mac. Every grain is simulated: oil floats and burns, lightning runs through water, volcanoes erupt, and every planet's air behaves differently.">
 <meta property="og:title" content="Falling Wizard">
-<meta property="og:description" content="Every grain is alive. An infinite world, sixteen spells, and a galaxy of planets.">
+<meta property="og:description" content="A falling-sand wizard game for the Mac where every grain is simulated.">
 <meta property="og:image" content="img/hero.jpg">
 <link rel="icon" type="image/png" href="img/favicon.png">
 <link rel="apple-touch-icon" href="img/icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Silkscreen&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
 <style>
   :root {
-    --ink: #0a090e;
-    --ink-2: #121018;
-    --line: rgba(239, 230, 214, 0.1);
-    --text: #efe6d6;
-    --muted: #9b9389;
-    --ember: #ff8a3d;
-    --ember-soft: rgba(255, 138, 61, 0.14);
-    --arcane: #a98bff;
-    --serif: "Instrument Serif", Georgia, serif;
-    --pixel: "Silkscreen", monospace;
-    --sans: "Bricolage Grotesque", sans-serif;
-    --mono: "JetBrains Mono", monospace;
+    --sky: #1e1c3d;
+    --dusk: #3a3466;
+    --stone: #2b2731;
+    --deep: #19161d;
+    --text: #ece8f6;
+    --muted: #aaa5c2;
+    --sand: #e0bf78;
+    --lava: #ff7a2a;
+    --water: #4f8ae8;
+    --pixel: "Pixelify Sans", ui-monospace, monospace;
+    --body: "Atkinson Hyperlegible", system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
-  body {
-    margin: 0;
-    background: var(--ink);
-    color: var(--text);
-    font-family: var(--sans);
-    font-size: 18px;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-  }
+  body { margin: 0; background: var(--stone); color: var(--text); font: 18px/1.6 var(--body); -webkit-font-smoothing: antialiased; }
+  a { color: var(--sand); text-underline-offset: 3px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--sand); outline-offset: 3px; }
   img { display: block; max-width: 100%; }
-  a { color: inherit; text-decoration: none; }
+  h1, h2, h3 { font-family: var(--pixel); font-weight: 600; line-height: 1.05; margin: 0; }
+  h2 { font-size: clamp(30px, 4vw, 44px); margin-bottom: 18px; }
+  .col { width: min(760px, 100% - 32px); margin: 0 auto; }
+  .wide { width: min(1180px, 100% - 32px); margin: 0 auto; }
+  section { padding: 88px 0; }
+  p { margin: 0 0 16px; }
+  .muted { color: var(--muted); }
 
-  /* Film grain over everything. */
-  body::after {
-    content: "";
-    position: fixed;
-    inset: -50%;
-    pointer-events: none;
-    z-index: 100;
-    opacity: 0.06;
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
-    animation: grain 1.2s steps(6) infinite;
+  /* ---------- the sandbox hero ---------- */
+  .hero { position: relative; background: linear-gradient(180deg, var(--sky) 0%, var(--dusk) 70%, #6b5a7c 100%); }
+  .hero canvas { display: block; width: 100%; height: min(82vh, 760px); image-rendering: pixelated; touch-action: none; cursor: crosshair; }
+  .intro { position: absolute; left: 0; right: 0; top: 0; padding: 28px 0; pointer-events: none; }
+  .intro .wide { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }
+  .intro > .wide > * { pointer-events: auto; }
+  h1 { font-size: clamp(56px, 10vw, 136px); letter-spacing: -0.02em; margin-top: 4vh; text-shadow: 0 4px 0 rgba(10, 8, 20, 0.45); }
+  .intro p { max-width: 34ch; font-size: 20px; color: #ded9ef; text-shadow: 0 1px 8px rgba(10, 8, 20, 0.6); }
+  .tools { position: absolute; left: 0; right: 0; bottom: 14px; }
+  .tools .wide { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .tools button {
+    font: 16px var(--pixel); color: var(--text); background: rgba(25, 22, 29, 0.78); border: 0; padding: 7px 12px 8px; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 8px; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.08);
   }
-  @keyframes grain {
-    0% { transform: translate(0, 0); }
-    25% { transform: translate(-3%, 2%); }
-    50% { transform: translate(2%, -3%); }
-    75% { transform: translate(-2%, -1%); }
-    100% { transform: translate(1%, 3%); }
-  }
+  .tools button i { width: 12px; height: 12px; display: inline-block; }
+  .tools button[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--sand); }
+  .tools .hint { margin-left: auto; font-size: 15px; color: #d0cbe0; }
 
-  .wrap { width: min(1200px, 100% - 48px); margin: 0 auto; }
-  .label { font-family: var(--pixel); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ember); }
+  /* ---------- install ---------- */
+  .install { display: flex; flex-wrap: wrap; gap: 0; background: var(--deep); box-shadow: 4px 4px 0 #0f0d12; max-width: 100%; }
+  .install code { font: 15px/1.4 ui-monospace, Menlo, monospace; padding: 15px 16px; overflow-x: auto; white-space: nowrap; flex: 1 1 320px; color: #f4efe2; }
+  .install button { font: 16px var(--pixel); background: var(--sand); color: #241a0b; border: 0; padding: 0 22px; cursor: pointer; min-height: 50px; }
+  .install button:hover { background: #ecd197; }
+  .first { padding-top: 56px; }
+  .first p { margin-top: 18px; }
 
-  /* ---------- nav ---------- */
-  nav {
-    position: fixed; inset: 0 0 auto 0; z-index: 50;
-    transition: background 0.4s, border-color 0.4s;
-    border-bottom: 1px solid transparent;
-  }
-  nav.solid { background: rgba(10, 9, 14, 0.82); backdrop-filter: blur(14px); border-color: var(--line); }
-  nav .wrap { display: flex; align-items: center; height: 72px; gap: 36px; }
-  .logo { font-family: var(--pixel); font-size: 15px; letter-spacing: 0.08em; margin-right: auto; display: flex; align-items: center; gap: 10px; }
-  .logo i { width: 10px; height: 10px; background: var(--ember); box-shadow: 0 0 18px var(--ember); display: inline-block; }
-  nav a.link { color: var(--muted); font-size: 15px; transition: color 0.2s; }
-  nav a.link:hover { color: var(--text); }
-  .btn {
-    display: inline-flex; align-items: center; gap: 10px;
-    font-family: var(--pixel); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
-    padding: 12px 18px; background: var(--ember); color: #170c04; border: 0; cursor: pointer;
-    transition: transform 0.2s, box-shadow 0.2s;
-  }
-  .btn:hover { transform: translateY(-2px); box-shadow: 0 10px 30px -10px var(--ember); }
-  .btn.ghost { background: transparent; color: var(--text); box-shadow: inset 0 0 0 1px var(--line); }
-  .btn.ghost:hover { box-shadow: inset 0 0 0 1px rgba(239, 230, 214, 0.35); }
+  /* ---------- reactions ---------- */
+  .reactions { list-style: none; padding: 0; margin: 26px 0 0; }
+  .reactions li { display: grid; grid-template-columns: 96px 1fr; gap: 18px; padding: 16px 0; border-top: 2px solid rgba(255, 255, 255, 0.06); }
+  .mix { display: flex; align-items: flex-start; gap: 4px; padding-top: 5px; font-family: var(--pixel); color: var(--muted); }
+  .mix i { width: 22px; height: 22px; display: inline-block; box-shadow: inset -3px -3px 0 rgba(0, 0, 0, 0.25); }
+  .reactions b { font-weight: 700; }
 
-  /* ---------- hero ---------- */
-  .hero { position: relative; min-height: 100vh; display: flex; align-items: flex-end; overflow: hidden; }
-  .hero .bg {
-    position: absolute; inset: -6%;
-    background: url("img/hero.jpg") center 55% / cover no-repeat;
-    image-rendering: pixelated;
-    animation: drift 40s ease-in-out infinite alternate;
-    filter: saturate(1.1);
-  }
-  @keyframes drift {
-    from { transform: scale(1.05) translate(-1.5%, 1%); }
-    to { transform: scale(1.18) translate(2%, -2%); }
-  }
-  .hero::before {
-    content: ""; position: absolute; inset: 0; z-index: 1;
-    background:
-      linear-gradient(180deg, rgba(10, 9, 14, 0.75) 0%, rgba(10, 9, 14, 0.15) 30%, rgba(10, 9, 14, 0.45) 62%, var(--ink) 100%),
-      radial-gradient(ellipse at 20% 80%, rgba(10, 9, 14, 0.85), transparent 60%);
-  }
-  .hero .content { position: relative; z-index: 2; padding: 0 0 12vh; }
-  .hero h1 {
-    font-family: var(--pixel); font-weight: 400;
-    font-size: clamp(54px, 11vw, 168px); line-height: 0.92; letter-spacing: -0.01em;
-    margin: 18px 0 22px;
-    text-shadow: 0 0 60px rgba(255, 138, 61, 0.25), 0 8px 0 rgba(0, 0, 0, 0.35);
-  }
-  .hero h1 span { display: block; }
-  .hero h1 .two { color: var(--ember); padding-left: 0.6em; }
-  .hero p.lede { font-family: var(--serif); font-size: clamp(26px, 3.2vw, 40px); line-height: 1.15; max-width: 640px; margin: 0 0 36px; color: #f6eee1; }
-  .hero p.lede em { color: var(--ember); }
-  .hero .actions { display: flex; flex-wrap: wrap; gap: 14px; align-items: stretch; }
-  .scroll-hint { position: absolute; right: 24px; bottom: 32px; z-index: 2; font-family: var(--pixel); font-size: 11px; color: var(--muted); writing-mode: vertical-rl; letter-spacing: 0.2em; }
-
-  /* ---------- install command ---------- */
-  .cmd {
-    display: flex; align-items: center; gap: 0; max-width: 100%;
-    background: rgba(18, 16, 24, 0.78); backdrop-filter: blur(10px);
-    box-shadow: inset 0 0 0 1px var(--line);
-  }
-  .cmd code {
-    font-family: var(--mono); font-size: 14px; color: #f3e9da; padding: 14px 16px; white-space: nowrap; overflow-x: auto; scrollbar-width: none;
-  }
-  .cmd code::-webkit-scrollbar { display: none; }
-  .cmd code b { color: var(--ember); font-weight: 400; margin-right: 10px; }
-  .cmd button {
-    flex: none; align-self: stretch; padding: 0 18px; border: 0; cursor: pointer;
-    font-family: var(--pixel); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
-    background: rgba(255, 138, 61, 0.12); color: var(--ember); transition: background 0.2s;
-  }
-  .cmd button:hover { background: rgba(255, 138, 61, 0.24); }
-
-  /* ---------- numbers ---------- */
-  .numbers { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-  .numbers .wrap { display: grid; grid-template-columns: repeat(4, 1fr); }
-  .numbers div.n { padding: 34px 0 30px; border-left: 1px solid var(--line); padding-left: 28px; }
-  .numbers div.n:first-child { border-left: 0; padding-left: 0; }
-  .numbers strong { display: block; font-family: var(--pixel); font-weight: 400; font-size: clamp(30px, 4vw, 48px); line-height: 1; color: var(--text); }
-  .numbers span { color: var(--muted); font-size: 15px; }
-
-  /* ---------- chapters ---------- */
-  section { padding: 140px 0 0; }
-  .chapter { display: grid; grid-template-columns: 5fr 7fr; gap: 64px; align-items: center; }
-  .chapter.flip { grid-template-columns: 7fr 5fr; }
-  .chapter.flip .text { order: 2; }
-  .chapter h2 {
-    font-family: var(--serif); font-weight: 400; font-size: clamp(42px, 5.4vw, 76px); line-height: 0.98; margin: 16px 0 24px; letter-spacing: -0.01em;
-  }
-  .chapter h2 em { color: var(--ember); }
-  .chapter p { color: var(--muted); margin: 0 0 16px; max-width: 460px; }
-  .chapter p strong { color: var(--text); font-weight: 500; }
-  .num { font-family: var(--pixel); font-size: 12px; color: var(--muted); letter-spacing: 0.12em; }
-  .num b { color: var(--ember); font-weight: 400; margin-right: 12px; }
-
-  .shot { position: relative; overflow: hidden; box-shadow: 0 40px 80px -40px rgba(0, 0, 0, 0.9), 0 0 0 1px var(--line); }
-  .shot img { width: 100%; image-rendering: pixelated; transition: transform 1.6s cubic-bezier(.2, .7, .2, 1); }
-  .shot:hover img { transform: scale(1.05); }
-  .shot figcaption {
-    position: absolute; left: 0; bottom: 0; padding: 10px 14px; font-family: var(--pixel); font-size: 10px; letter-spacing: 0.1em;
-    color: var(--text); background: linear-gradient(90deg, rgba(10, 9, 14, 0.85), transparent);
-  }
-  .bullets { list-style: none; padding: 0; margin: 26px 0 0; display: grid; gap: 10px; }
-  .bullets li { display: flex; gap: 12px; color: var(--text); font-size: 16px; }
-  .bullets li::before { content: ""; flex: none; width: 6px; height: 6px; margin-top: 10px; background: var(--ember); }
+  /* ---------- pictures ---------- */
+  .pics { display: grid; grid-template-columns: 3fr 2fr; gap: 14px; margin-top: 30px; }
+  .pics figure { margin: 0; }
+  .pics img { width: 100%; image-rendering: pixelated; }
+  .pics figcaption { font-size: 15px; color: var(--muted); padding-top: 8px; }
+  .pics .tall { grid-row: span 2; }
+  .pics .tall img { height: calc(100% - 34px); object-fit: cover; }
 
   /* ---------- spells ---------- */
-  .spells-head { display: flex; align-items: end; justify-content: space-between; gap: 40px; margin-bottom: 40px; }
-  .spells-head h2 { font-family: var(--serif); font-weight: 400; font-size: clamp(42px, 5.4vw, 76px); line-height: 0.98; margin: 16px 0 0; }
-  .spells-head h2 em { color: var(--ember); }
-  .spells-head p { color: var(--muted); max-width: 380px; margin: 0; }
-  .spellbook { display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
-  .spell { padding: 22px 22px 24px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); transition: background 0.3s; }
-  .spell:hover { background: var(--ember-soft); }
-  .spell canvas { width: 35px; height: 35px; image-rendering: pixelated; display: block; margin-bottom: 18px; }
-  .spell h3 { font-family: var(--pixel); font-weight: 400; font-size: 12px; letter-spacing: 0.06em; margin: 0 0 4px; }
-  .spell p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.45; }
-  .spell .key { float: right; font-family: var(--mono); font-size: 12px; color: var(--muted); border: 1px solid var(--line); padding: 1px 7px; }
+  .deeper { background: #231f28; }
+  table { width: 100%; border-collapse: collapse; margin-top: 26px; }
+  td { padding: 10px 10px 10px 0; vertical-align: top; border-top: 2px solid rgba(255, 255, 255, 0.05); }
+  td.k { width: 44px; }
+  td.k kbd { font: 15px var(--pixel); display: inline-block; min-width: 30px; text-align: center; padding: 2px 6px 4px; background: var(--stone); box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.35); }
+  td.i { width: 44px; }
+  td.i canvas { width: 28px; height: 28px; image-rendering: pixelated; display: block; margin-top: 2px; }
+  td.n { font-family: var(--pixel); font-size: 18px; width: 30%; white-space: nowrap; }
+  td.d { color: var(--muted); }
+  .note { margin-top: 18px; color: var(--muted); font-size: 16px; }
 
-  /* ---------- galaxy ---------- */
-  .galaxy { position: relative; padding: 160px 0 140px; margin-top: 140px; overflow: hidden; }
-  .galaxy .bg { position: absolute; inset: 0; background: url("img/warp.jpg") center / cover; opacity: 0.35; image-rendering: pixelated; }
-  .galaxy::before { content: ""; position: absolute; inset: 0; z-index: 1; background: linear-gradient(180deg, var(--ink), rgba(10, 9, 14, 0.4) 30%, rgba(10, 9, 14, 0.4) 70%, var(--ink)); }
-  .galaxy .wrap { position: relative; z-index: 2; }
-  .galaxy h2 { font-family: var(--serif); font-weight: 400; font-size: clamp(52px, 8vw, 120px); line-height: 0.92; margin: 18px 0 26px; max-width: 900px; }
-  .galaxy h2 em { color: var(--arcane); }
-  .galaxy p.big { font-size: 20px; color: #cfc6b8; max-width: 620px; margin: 0 0 60px; }
-  .collage { display: grid; grid-template-columns: 1.2fr 1fr; grid-template-rows: auto auto; gap: 22px; }
-  .collage .shot:first-child { grid-row: span 2; }
-  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; margin-top: 70px; }
-  .steps div { border-top: 1px solid var(--line); padding-top: 22px; }
-  .steps b { font-family: var(--pixel); font-weight: 400; font-size: 12px; color: var(--arcane); letter-spacing: 0.1em; }
-  .steps p { margin: 10px 0 0; color: var(--muted); font-size: 16px; }
-  .steps p strong { color: var(--text); font-weight: 500; }
+  /* ---------- planets ---------- */
+  .space { background: var(--deep); }
+  .planets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 30px; }
+  .planets figure { margin: 0; }
+  .planets img { width: 100%; aspect-ratio: 16 / 10; object-fit: cover; image-rendering: pixelated; }
+  .planets figcaption { font-size: 15px; color: var(--muted); padding-top: 8px; }
 
-  /* ---------- final ---------- */
-  .final { text-align: center; padding: 160px 0 120px; }
-  .final h2 { font-family: var(--serif); font-weight: 400; font-size: clamp(46px, 7vw, 104px); line-height: 0.95; margin: 18px auto 40px; max-width: 900px; }
-  .final h2 em { color: var(--ember); }
-  .final .cmd { display: inline-flex; max-width: min(820px, 100%); text-align: left; }
-  .final .req { color: var(--muted); font-size: 15px; margin-top: 22px; }
+  .get { background: #110f14; padding-bottom: 64px; }
+  .get .install { margin: 22px 0; }
+  footer { background: #110f14; color: var(--muted); font-size: 15px; padding: 0 0 40px; }
+  footer .wide { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; border-top: 2px solid rgba(255, 255, 255, 0.05); padding-top: 22px; }
 
-  footer { border-top: 1px solid var(--line); padding: 34px 0 44px; color: var(--muted); font-size: 14px; }
-  footer .wrap { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
-
-  /* ---------- motion ---------- */
-  .rise { opacity: 0; transform: translateY(26px); animation: rise 1s cubic-bezier(.2, .7, .2, 1) forwards; }
-  .d1 { animation-delay: 0.15s; } .d2 { animation-delay: 0.35s; } .d3 { animation-delay: 0.55s; } .d4 { animation-delay: 0.75s; }
-  @keyframes rise { to { opacity: 1; transform: none; } }
-  .reveal { opacity: 0; transform: translateY(40px); transition: opacity 1s cubic-bezier(.2, .7, .2, 1), transform 1s cubic-bezier(.2, .7, .2, 1); }
-  .reveal.in { opacity: 1; transform: none; }
-  @media (prefers-reduced-motion: reduce) {
-    .hero .bg, body::after { animation: none; }
-    .rise, .reveal { opacity: 1; transform: none; animation: none; transition: none; }
-  }
-
-  @media (max-width: 900px) {
-    nav a.link { display: none; }
-    .chapter, .chapter.flip { grid-template-columns: 1fr; gap: 36px; }
-    .chapter.flip .text { order: 0; }
-    .numbers .wrap { grid-template-columns: repeat(2, 1fr); }
-    .numbers div.n:nth-child(3) { border-left: 0; padding-left: 0; }
-    .spellbook { grid-template-columns: repeat(2, 1fr); }
-    .spells-head { flex-direction: column; align-items: start; }
-    .collage { grid-template-columns: 1fr; }
-    .collage .shot:first-child { grid-row: auto; }
-    .steps { grid-template-columns: 1fr; }
-    section { padding-top: 100px; }
-    .scroll-hint { display: none; }
+  @media (max-width: 760px) {
+    .hero canvas { height: 92vh; }
+    .tools .hint { display: none; }
+    .pics, .planets { grid-template-columns: 1fr; }
+    .pics .tall { grid-row: auto; }
+    .reactions li { grid-template-columns: 1fr; gap: 6px; }
+    td.n { white-space: normal; width: auto; }
   }
 </style>
 </head>
 <body>
 
-<nav id="nav">
-  <div class="wrap">
-    <a class="logo" href="#"><img src="img/favicon.png" alt="" width="26" height="26" style="image-rendering:pixelated">FALLING WIZARD</a>
-    <a class="link" href="#world">The world</a>
-    <a class="link" href="#spells">Spells</a>
-    <a class="link" href="#galaxy">Galaxy</a>
-    <a class="btn" href="#get">Get the game</a>
-  </div>
-</nav>
-
 <header class="hero">
-  <div class="bg" role="img" aria-label="A forest at dawn with an ancient portal and a geyser erupting"></div>
-  <div class="wrap content">
-    <div class="label rise">A falling-sand adventure &nbsp;/&nbsp; macOS</div>
-    <h1 class="rise d1"><span>Falling</span><span class="two">Wizard</span></h1>
-    <p class="lede rise d2">Every grain of sand, drop of water and lick of flame is <em>alive</em>. Bend it to your will.</p>
-    <div class="actions rise d3">
-      <div class="cmd">
-        <code><b>$</b><span class="install">curl -fsSL https://fw.crooli.com/install.sh | bash</span></code>
-        <button class="copy" type="button">Copy</button>
-      </div>
+  <canvas id="sand" aria-label="A falling-sand sandbox. Pick a material below and draw in it."></canvas>
+  <div class="intro">
+    <div class="wide">
+      <h1>Falling Wizard</h1>
+      <p>A wizard game for the Mac where everything is made of simulated grains. This box runs the same rules. Draw in it.</p>
     </div>
   </div>
-  <div class="scroll-hint">Scroll</div>
+  <div class="tools">
+    <div class="wide" id="tools">
+      <span class="hint">Try oil on water, then fire</span>
+    </div>
+  </div>
 </header>
 
-<div class="numbers">
-  <div class="wrap">
-    <div class="n reveal"><strong>16</strong><span>spells, from sparks to black holes</span></div>
-    <div class="n reveal"><strong>24</strong><span>creatures that die how they're killed</span></div>
-    <div class="n reveal"><strong>&infin;</strong><span>world, in every direction</span></div>
-    <div class="n reveal"><strong>&infin;</strong><span>planets across the galaxy</span></div>
-  </div>
-</div>
-
-<section id="world">
-  <div class="wrap chapter">
-    <div class="text reveal">
-      <div class="num"><b>01</b>A living world</div>
-      <h2>Nothing here is <em>painted on.</em></h2>
-      <p>Sand slides into dunes. Water finds its level. Oil floats, burns, and if you've pooled enough of it, <strong>explodes</strong>. Lava boils lakes into steam and cools into basalt.</p>
-      <p>Light is ray-traced through the world, so lava lights up caverns and sunlight pours into cave mouths with real shadows.</p>
-    </div>
-    <figure class="shot reveal" style="margin:0"><img src="img/caves.jpg" alt="Lava caverns lit by ray-traced light" loading="lazy"><figcaption>THE LAVA CAVERNS</figcaption></figure>
-  </div>
-</section>
-
-<section>
-  <div class="wrap chapter flip">
-    <div class="text reveal">
-      <div class="num"><b>02</b>An endless Earth</div>
-      <h2>Walk forever. <em>Dig</em> forever.</h2>
-      <p>The world is generated as you explore: oceans and beaches, plains, forests and jungles, deserts and tundra. Below lie caves, ruins and lava caverns. Above, cloud platforms and sky isles.</p>
-      <ul class="bullets">
-        <li>Volcanoes that erupt, geysers that blast</li>
-        <li>Rain, fog, snowfall, sandstorms and lightning that hunts trees</li>
-        <li>A day and night cycle, with fireflies after dark</li>
-      </ul>
-    </div>
-    <figure class="shot reveal" style="margin:0"><img src="img/jungle.jpg" alt="A jungle at the edge of a desert, with ruins underground" loading="lazy"><figcaption>WHERE JUNGLE MEETS DESERT</figcaption></figure>
-  </div>
-</section>
-
-<section>
-  <div class="wrap chapter">
-    <div class="text reveal">
-      <div class="num"><b>03</b>Creatures</div>
-      <h2>They die <em>how you kill them.</em></h2>
-      <p>Lions pounce, demon eyes stare you down, skeletons lob bones, dragons breathe fire and the Devourer tunnels through rock.</p>
-      <p>Burn one and it crumbles to ash. Strike it with lightning and its skeleton flashes. Freeze it and it shatters. Tame your favourites and they'll fight at your side.</p>
-    </div>
-    <figure class="shot reveal" style="margin:0"><img src="img/creatures.jpg" alt="Lions, tigers, slimes and demon eyes around a volcano" loading="lazy"><figcaption>A WARM WELCOME</figcaption></figure>
-  </div>
-</section>
-
-<section id="spells">
-  <div class="wrap">
-    <div class="spells-head reveal">
-      <div>
-        <div class="num"><b>04</b>The spellbook</div>
-        <h2>Sixteen ways to <em>ruin a landscape.</em></h2>
-      </div>
-      <p>Every spell talks to the simulation. A fireball sets a forest alight. A tornado rips up the topsoil. Frost turns a lava lake to stone.</p>
-    </div>
-    <div class="spellbook reveal" id="spellbook"></div>
-  </div>
-</section>
-
-<div class="galaxy" id="galaxy">
-  <div class="bg"></div>
-  <div class="wrap">
-    <div class="num reveal"><b style="color:var(--arcane)">05</b>Beyond the sky</div>
-    <h2 class="reveal">Then leave <em>the planet.</em></h2>
-    <p class="big reveal">Fly high enough and the sky gives way to stars. Find a portal structure, tune your wand, and warp at lightspeed to any of an endless galaxy of worlds, each with its own ground, seas, gravity, sky and creatures.</p>
-    <div class="collage">
-      <figure class="shot reveal" style="margin:0"><img src="img/toxic.jpg" alt="A toxic planet with giant glowing mushrooms and an open portal" loading="lazy"><figcaption>ISHVELRY, TOXIC WORLD</figcaption></figure>
-      <figure class="shot reveal" style="margin:0"><img src="img/galaxy.jpg" alt="Choosing a destination planet" loading="lazy"><figcaption>THIRTY NEAREST WORLDS</figcaption></figure>
-      <figure class="shot reveal" style="margin:0"><img src="img/ice.jpg" alt="An ice planet with snowy hills and a glowing portal" loading="lazy"><figcaption>VENAE MINOR, ICE WORLD</figcaption></figure>
-    </div>
-    <div class="steps">
-      <div class="reveal"><b>I &nbsp;TUNE</b><p>Right-click with the <strong>Portal Wand</strong> to choose from the thirty nearest planets. Earth is always on the list.</p></div>
-      <div class="reveal"><b>II &nbsp;OPEN</b><p>Shoot an ancient <strong>portal structure</strong>: stone arches, crystal rings, basalt monoliths, brick temples.</p></div>
-      <div class="reveal"><b>III &nbsp;WARP</b><p>Step through and cross the galaxy at <strong>lightspeed</strong>. A gate home is waiting when you land.</p></div>
-    </div>
-  </div>
-</div>
-
-<section class="final" id="get">
-  <div class="wrap">
-    <div class="label reveal">Get the game</div>
-    <h2 class="reveal">Your first spell is <em>one command</em> away.</h2>
-    <div class="cmd reveal">
-      <code><b>$</b><span class="install">curl -fsSL https://fw.crooli.com/install.sh | bash</span></code>
+<section class="first">
+  <div class="col">
+    <div class="install">
+      <code>curl -fsSL https://fw.crooli.com/install.sh | bash</code>
       <button class="copy" type="button">Copy</button>
     </div>
-    <p class="req reveal">Paste into Terminal on a Mac. It builds the game on your machine (a couple of minutes the first time),<br>adds Falling Wizard to your Applications, and running it again updates the game.</p>
+    <p class="muted">Paste it into Terminal. It builds the game on your Mac, puts it in Applications, and running it again updates it.</p>
+  </div>
+</section>
+
+<section>
+  <div class="col">
+    <h2>What reacts with what</h2>
+    <p>Nothing is scripted. Each grain follows a few rules, and they add up.</p>
+    <ul class="reactions">
+      <li><span class="mix"><i style="background:#ff8c1e"></i>+<i style="background:#2662c8"></i></span><div>Water puts out an ordinary fire and boils to steam doing it. The steam rises, cools and rains back down.</div></li>
+      <li><span class="mix"><i style="background:#3a282c"></i>+<i style="background:#ff8c1e"></i></span><div>Oil floats on water and burns on top of it. Throw water on a <b>grease fire</b> and it flashes to steam and spits the flames higher. Smother it with sand instead. A big enough pool of oil goes up in one bang.</div></li>
+      <li><span class="mix"><i style="background:#fffa8c"></i>+<i style="background:#2662c8"></i></span><div>Lightning that hits water runs through the whole connected pool and shocks whatever is swimming in it. It also splits the water, and <b>hydrogen bubbles</b> rise to the surface and wait for a spark. Metal and gold conduct too.</div></li>
+      <li><span class="mix"><i style="background:#ff6e14"></i>+<i style="background:#2662c8"></i></span><div>Lava meeting the sea throws off steam explosions. It cools into basalt, or glassy <b>obsidian</b> where water quenches it from above.</div></li>
+      <li><span class="mix"><i style="background:#6c482c"></i>+<i style="background:#ff8c1e"></i></span><div>Wood burns down to ash, which is light enough to float on water. Sand and dirt dropped on a flame put it out.</div></li>
+      <li><span class="mix"><i style="background:#bcd7ff"></i></span><div>Fire needs air. It races through jungle worlds with thick, rich atmospheres, sputters on toxic ones, and dies at once on airless moons or above the atmosphere. Open water freezes on ice worlds and boils away on hot ones.</div></li>
+      <li><span class="mix"><i style="background:#36323e"></i>+<i style="background:#ff6e14"></i></span><div>Volcanoes rumble for a few seconds, blow out their plug, then fountain lava and lava bombs. Magma spills over the rim and runs down the slopes, ash rains out of the plume, and lightning flickers inside it. On ice worlds they erupt water and snow.</div></li>
+    </ul>
+    <div class="pics">
+      <figure class="tall"><img src="img/volcano.jpg" alt="A volcano erupting lava over a jungle, with its magma chamber visible underground" loading="lazy"><figcaption>A volcano mid-eruption, magma chamber below.</figcaption></figure>
+      <figure><img src="img/caves.jpg" alt="Lava caverns lit by their own glow" loading="lazy"><figcaption>Light is traced through the world, so lava lights the caves.</figcaption></figure>
+      <figure><img src="img/creatures.jpg" alt="Lions, tigers, slimes and demon eyes near a volcano" loading="lazy"><figcaption>Creatures burn to ash, shatter when frozen, and can be tamed.</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section class="deeper">
+  <div class="col">
+    <h2>Spells</h2>
+    <p>Nineteen of them, one per key. Lightning, Fireball and Frost do one thing when you tap and another when you hold.</p>
+    <table id="spells"></table>
+    <p class="note">Creative mode gives you unlimited mana, so the beams never run dry. There's also a sandbox brush (B) with every material in the game.</p>
+  </div>
+</section>
+
+<section class="space">
+  <div class="col">
+    <h2>Other planets</h2>
+    <p>Fly high enough and the sky turns to stars. Every planet has its own atmosphere height and colour, its own suns, and its own neighbours hanging in space. Find a portal structure, tune the Portal Wand with a right click, and warp to any of an endless galaxy of worlds, each with different ground, seas, gravity, air and creatures.</p>
+  </div>
+  <div class="wide planets">
+    <figure><img src="img/orbit.jpg" alt="Floating crystal islands in space with a banded pink gas giant and a molten moon" loading="lazy"><figcaption>Above the atmosphere of a crystal world.</figcaption></figure>
+    <figure><img src="img/toxic.jpg" alt="A toxic planet with giant glowing mushrooms and an open portal" loading="lazy"><figcaption>A toxic world. Fire barely catches here.</figcaption></figure>
+    <figure><img src="img/ice.jpg" alt="An ice planet with snowy hills and a glowing portal" loading="lazy"><figcaption>An ice world, where puddles freeze over.</figcaption></figure>
+  </div>
+</section>
+
+<section class="get" id="get">
+  <div class="col">
+    <h2>Get the game</h2>
+    <p>It runs on macOS. Rust gets installed if you don't have it, and the first build takes a couple of minutes.</p>
+    <div class="install">
+      <code>curl -fsSL https://fw.crooli.com/install.sh | bash</code>
+      <button class="copy" type="button">Copy</button>
+    </div>
+    <p class="muted">Then open Falling Wizard from Applications, or type <code>falling-wizard</code> in Terminal.</p>
   </div>
 </section>
 
 <footer>
-  <div class="wrap">
-    <span class="logo" style="font-size:12px"><i></i>FALLING WIZARD</span>
-    <span>&copy; 2026 Falling Wizard. All rights reserved.</span>
+  <div class="wide">
+    <span>Falling Wizard</span>
+    <span>&copy; 2026. All rights reserved.</span>
   </div>
 </footer>
 
 <script>
-  // Solid nav once you leave the hero.
-  const nav = document.getElementById("nav");
-  const onScroll = () => nav.classList.toggle("solid", window.scrollY > 40);
-  addEventListener("scroll", onScroll, { passive: true });
-  onScroll();
-
-  // Copy buttons.
   document.querySelectorAll(".copy").forEach((b) => b.addEventListener("click", () => {
-    const text = b.parentElement.querySelector(".install").textContent;
-    navigator.clipboard.writeText(text).then(() => {
+    navigator.clipboard.writeText(b.parentElement.querySelector("code").textContent).then(() => {
       b.textContent = "Copied";
       setTimeout(() => (b.textContent = "Copy"), 1600);
     });
   }));
 
-  // Reveal on scroll.
-  const io = new IntersectionObserver((entries) => entries.forEach((e) => {
-    if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
-  }), { threshold: 0.15 });
-  document.querySelectorAll(".reveal").forEach((el, i) => {
-    el.style.transitionDelay = (i % 4) * 0.08 + "s";
-    io.observe(el);
-  });
-
-  // The spellbook, drawn with the game's own 7x7 icons.
+  // ---------- spell table, drawn with the game's own 7x7 icons ----------
   const spells = [
     ["1", "Spark Bolt", "A quick bolt that bursts on impact.", ["...+...", "..+#+..", ".+###+.", "+#####+", ".+###+.", "..+#+..", "...+..."], "#fff0aa", "#ffaa3c"],
-    ["2", "Fireball", "Arcs through the air and sets everything alight.", ["....+..", "..+#+..", ".+###+.", "+##+##+", "+#+++#+", ".+###+.", "..+++.."], "#ff821e", "#ffdc5a"],
+    ["2", "Fireball", "Tap to throw a fireball. Hold for a flamethrower that sets fields alight and boils water.", ["....+..", "..+#+..", ".+###+.", "+##+##+", "+#+++#+", ".+###+.", "..+++.."], "#ff821e", "#ffdc5a"],
     ["3", "Bomb", "Bounces, ticks, then levels the area.", ["....++.", "...+...", "..###..", ".#####.", ".##+##.", ".#####.", "..###.."], "#6a6674", "#ffbe50"],
-    ["4", "Lightning", "Forks, chains between foes, fuses sand to glass.", ["....##.", "...##..", "..##...", ".#####.", "...##..", "..##...", ".##...."], "#fffa8c", "#ffffff"],
-    ["5", "Frost", "Freezes water and turns lava to stone.", ["#..#..#", ".#.#.#.", "..#+#..", "##+++##", "..#+#..", ".#.#.#.", "#..#..#"], "#a0dcff", "#ffffff"],
+    ["4", "Lightning", "Tap for a strike. Hold for an endless stream that bends towards water and metal and jumps between creatures.", ["....##.", "...##..", "..##...", ".#####.", "...##..", "..##...", ".##...."], "#fffa8c", "#ffffff"],
+    ["5", "Frost", "Tap for a frost bolt. Hold to breathe ice: water freezes, lava turns to obsidian.", ["#..#..#", ".#.#.#.", "..#+#..", "##+++##", "..#+#..", ".#.#.#.", "#..#..#"], "#a0dcff", "#ffffff"],
     ["6", "Acid Ball", "Splashes acid that eats through almost anything.", ["..###..", ".##+##.", "##+####", "#######", "#######", ".#####.", "#.#.#.."], "#6ee840", "#dcffb4"],
     ["7", "Torrent", "A steady spray of water.", ["...#...", "..###..", ".##+##.", ".#+###.", ".#####.", "..###..", "......."], "#3c82e6", "#b4dcff"],
     ["8", "Seeds of Life", "Grows plants, and tames creatures.", ["...#...", ".##.##.", "..###..", "...#...", "...#...", "..+++..", ".+++++."], "#6ec850", "#825c38"],
     ["9", "Teleport", "Blink to wherever the bolt lands.", ["..###..", ".#...#.", "#..+..#", "#.+++.#", "#..+..#", ".#...#.", "..###.."], "#b478ff", "#f0d2ff"],
     ["0", "Digging Beam", "Bores tunnels straight through rock.", [".......", "##.....", "####...", "###++++", "####...", "##.....", "......."], "#78dcf0", "#e6ffff"],
     ["-", "Oil Spray", "Lay down fuel. Add a spark.", ["...#...", "..###..", ".##+##.", ".#+###.", ".#####.", "..###..", "......."], "#5a4044", "#a6826a"],
-    ["=", "Black Hole", "Bends light and swallows everything nearby.", ["..+++..", ".+###+.", "+##.##+", "+#...#+", "+##.##+", ".+###+.", "..+++.."], "#2a1a3a", "#be6eff"],
+    ["=", "Black Hole", "Bends light and swallows everything nearby. Two that collide tear a rift.", ["..+++..", ".+###+.", "+##.##+", "+#...#+", "+##.##+", ".+###+.", "..+++.."], "#2a1a3a", "#be6eff"],
     ["Q", "Wind", "Hold to blow a gale across the land.", ["#####..", "......#", "####..#", "....##.", "######.", "......#", "..####."], "#c8e4f0", "#ffffff"],
     ["R", "Hurricane", "A blast that flings the ground into the sky.", ["..###..", ".#...#.", "#..+..#", "#.+.#.#", "#..#..#", ".#...#.", "..##..."], "#aad2ff", "#ffffff"],
     ["G", "Tornado", "A twister that wanders, lifting all it touches.", ["#######", ".#####.", "..###..", "..##...", "...##..", "...#...", "..+...."], "#b0b0bc", "#e6e6f0"],
     ["P", "Portal Wand", "Opens gates to other planets.", ["..+#+..", ".#...#.", "+..#..+", "#.#+#.#", "+..#..+", ".#...#.", "..+#+.."], "#78e6ff", "#ff78dc"],
+    ["V", "Gravity Gun", "Hold to pull sand, water, rock and creatures into a spinning ball. Flick the mouse and let go to throw it.", ["+#...#+", "+#...#+", ".#...#.", ".#...#.", ".##.##.", "..###..", "......."], "#e64650", "#ebebf5"],
+    ["C", "Heat Ray", "Hold to melt rock into lava, sand into glass and water into steam.", ["#......", ".#.....", "..#....", "...#...", "....+++", "....+#+", "....+++"], "#ff7828", "#ffe678"],
+    ["H", "Storm Cloud", "Summons a cloud that rains and throws lightning. It rains acid on toxic worlds, snows on cold ones, and can't form in a vacuum.", [".......", "..###..", ".#####.", "#######", "...+...", "..+....", ".+....."], "#787c8c", "#fffa8c"],
   ];
-  const book = document.getElementById("spellbook");
+  const table = document.getElementById("spells");
   for (const [key, name, desc, rows, main, acc] of spells) {
-    const el = document.createElement("div");
-    el.className = "spell";
-    const c = document.createElement("canvas");
-    c.width = 7; c.height = 7;
+    const tr = table.insertRow();
+    tr.insertCell().outerHTML = `<td class="k"><kbd>${key}</kbd></td>`;
+    const ic = tr.insertCell(); ic.className = "i";
+    const c = document.createElement("canvas"); c.width = 7; c.height = 7;
     const x = c.getContext("2d");
-    rows.forEach((r, j) => [...r].forEach((ch, i) => {
-      if (ch !== ".") { x.fillStyle = ch === "#" ? main : acc; x.fillRect(i, j, 1, 1); }
-    }));
-    el.appendChild(c);
-    el.insertAdjacentHTML("beforeend", `<h3><span class="key">${key}</span>${name.toUpperCase()}</h3><p>${desc}</p>`);
-    book.appendChild(el);
+    rows.forEach((r, j) => [...r].forEach((ch, i) => { if (ch !== ".") { x.fillStyle = ch === "#" ? main : acc; x.fillRect(i, j, 1, 1); } }));
+    ic.appendChild(c);
+    const n = tr.insertCell(); n.className = "n"; n.textContent = name;
+    const d = tr.insertCell(); d.className = "d"; d.textContent = desc;
   }
+
+  // ---------- the sandbox ----------
+  const E = 0, STONE = 1, SAND = 2, WATER = 3, OIL = 4, FIRE = 5, LAVA = 6, STEAM = 7, SMOKE = 8, OBSIDIAN = 9, GLASS = 10, WOOD = 11, ASH = 12;
+  const COL = {
+    [STONE]: [86, 80, 96], [SAND]: [216, 184, 114], [WATER]: [38, 98, 200], [OIL]: [58, 40, 44], [FIRE]: [255, 140, 30],
+    [LAVA]: [255, 110, 20], [STEAM]: [214, 220, 230], [SMOKE]: [120, 116, 126], [OBSIDIAN]: [40, 28, 54], [GLASS]: [190, 225, 236],
+    [WOOD]: [108, 72, 44], [ASH]: [104, 100, 104],
+  };
+  const DENS = { [WATER]: 10, [OIL]: 8, [LAVA]: 15, [SAND]: 20, [ASH]: 9 };
+  const liquid = (m) => m === WATER || m === OIL || m === LAVA;
+  const powder = (m) => m === SAND || m === ASH;
+  const gas = (m) => m === STEAM || m === SMOKE || m === FIRE;
+
+  const cv = document.getElementById("sand");
+  const ctx = cv.getContext("2d");
+  let W, H, cell, life, shade, img, stamp, tick = 0;
+  const S = 4; // screen pixels per grain
+
+  function build() {
+    W = Math.max(80, Math.floor(cv.clientWidth / S));
+    H = Math.max(60, Math.floor(cv.clientHeight / S));
+    cv.width = W; cv.height = H;
+    cell = new Uint8Array(W * H); life = new Uint8Array(W * H); shade = new Uint8Array(W * H); stamp = new Uint8Array(W * H);
+    for (let i = 0; i < shade.length; i++) shade[i] = (Math.random() * 255) | 0;
+    img = ctx.createImageData(W, H);
+    // Ground: rolling stone, a pond with an oil slick on it, and a little wooden hut to burn.
+    const pondL = Math.floor(W * 0.52), pondR = Math.floor(W * 0.82);
+    for (let x = 0; x < W; x++) {
+      let g = Math.floor(H * 0.8 + Math.sin(x * 0.05) * 3 + Math.sin(x * 0.013) * 5);
+      if (x > pondL && x < pondR) g += Math.floor(Math.sin(((x - pondL) / (pondR - pondL)) * Math.PI) * H * 0.11);
+      for (let y = g; y < H; y++) cell[y * W + x] = STONE;
+    }
+    const lvl = Math.floor(H * 0.8) + 2;
+    for (let x = pondL; x < pondR; x++) for (let y = lvl; y < H; y++) if (cell[y * W + x] === E) cell[y * W + x] = y < lvl + 2 ? OIL : WATER;
+    const hx = Math.floor(W * 0.3);
+    let base = H - 1; while (base > 0 && cell[base * W + hx] === STONE) base--;
+    for (let y = base - 8; y <= base; y++) for (let x = hx; x < hx + 12; x++) if (y === base - 8 || x === hx || x === hx + 11) cell[y * W + x] = WOOD;
+  }
+
+  const at = (x, y) => (x < 0 || y < 0 || x >= W || y >= H ? STONE : cell[y * W + x]);
+  function set(x, y, m, l = 0) { const i = y * W + x; cell[i] = m; life[i] = l; stamp[i] = tick; }
+  function swap(a, b) {
+    const m = cell[a], l = life[a], s = shade[a];
+    cell[a] = cell[b]; life[a] = life[b]; shade[a] = shade[b];
+    cell[b] = m; life[b] = l; shade[b] = s; stamp[a] = stamp[b] = tick;
+  }
+  const rnd = Math.random;
+  const ignitable = (m) => m === OIL || m === WOOD;
+
+  function step() {
+    tick = (tick + 1) & 255;
+    const ltr = tick & 1;
+    for (let y = H - 1; y >= 0; y--) {
+      for (let k = 0; k < W; k++) {
+        const x = ltr ? k : W - 1 - k;
+        const i = y * W + x, m = cell[i];
+        if (m === E || m === STONE || m === OBSIDIAN || m === GLASS || stamp[i] === tick) continue;
+        if (powder(m)) {
+          if (canEnter(x, y + 1, m)) { swap(i, i + W); continue; }
+          const d = rnd() < 0.5 ? -1 : 1;
+          if (canEnter(x + d, y + 1, m)) swap(i, i + W + d); else if (canEnter(x - d, y + 1, m)) swap(i, i + W - d);
+        } else if (liquid(m)) {
+          if (m === LAVA && lava(x, y, i)) continue;
+          if (m === LAVA && rnd() < 0.5) continue;
+          if (m === OIL || m === WATER) heatFrom(x, y, i, m);
+          if (cell[i] !== m) continue;
+          if (canEnter(x, y + 1, m)) { swap(i, i + W); continue; }
+          const d = rnd() < 0.5 ? -1 : 1;
+          if (canEnter(x + d, y + 1, m)) { swap(i, i + W + d); continue; }
+          const reach = m === WATER ? 4 : m === OIL ? 3 : 1;
+          for (const dir of [d, -d]) {
+            let tx = x;
+            for (let s = 1; s <= reach; s++) { const n = at(x + dir * s, y); if (n !== E && !gas(n)) break; tx = x + dir * s; }
+            if (tx !== x) { swap(i, y * W + tx); break; }
+          }
+        } else if (m === FIRE) fire(x, y, i);
+        else if (m === STEAM || m === SMOKE) {
+          if (--life[i] === 0) { cell[i] = m === STEAM && rnd() < 0.2 ? WATER : E; continue; }
+          const d = rnd() < 0.5 ? -1 : 1;
+          if (at(x, y - 1) === E || (liquid(at(x, y - 1)) && rnd() < 0.3)) swap(i, i - W);
+          else if (at(x + d, y - 1) === E) swap(i, i - W + d);
+          else if (at(x + d, y) === E) swap(i, i + d);
+        }
+      }
+    }
+  }
+  function canEnter(x, y, m) {
+    const n = at(x, y);
+    if (n === E || gas(n)) return true;
+    return liquid(n) && DENS[n] < DENS[m] && rnd() < 0.4;
+  }
+  // Oil catches from fire and lava; water touching a free flame quenches it.
+  function heatFrom(x, y, i, m) {
+    for (const [dx, dy] of [[0, -1], [1, 0], [-1, 0], [0, 1]]) {
+      const n = at(x + dx, y + dy);
+      if (m === OIL && (n === FIRE || n === LAVA) && rnd() < 0.08) { set(x, y, FIRE, 120 + rnd() * 80); shade[i] = 255; return; }
+    }
+  }
+  function fire(x, y, i) {
+    const fuel = shade[i] === 255;
+    if (powder(at(x, y - 1)) && rnd() < 0.3) { set(x, y, SMOKE, 30); return; }
+    for (const [dx, dy] of [[0, 1], [1, 0], [-1, 0], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+      const nx = x + dx, ny = y + dy, n = at(nx, ny);
+      if (n === WATER) {
+        if (fuel && dy === 1) continue; // burning oil floats
+        if (fuel) { if (rnd() < 0.05) { set(nx, ny, STEAM, 60 + rnd() * 60); if (at(x, y - 1) === E) set(x, y - 1, FIRE, 10 + rnd() * 10); } }
+        else if (rnd() < 0.5) { set(x, y, STEAM, 40 + rnd() * 50); return; }
+      } else if (ignitable(n) && rnd() < (n === OIL ? 0.06 : 0.012)) {
+        set(nx, ny, FIRE, n === OIL ? 120 + rnd() * 80 : 200 + rnd() * 50); shade[ny * W + nx] = 255;
+      }
+    }
+    if (life[i] > 0) life[i]--;
+    if (rnd() < 0.3) life[i] = Math.max(0, life[i] - 1);
+    if (life[i] === 0) { set(x, y, fuel && rnd() < 0.25 ? ASH : rnd() < 0.5 ? SMOKE : E, 60 + rnd() * 80); return; }
+    if (fuel) {
+      if (at(x, y - 1) === E && rnd() < 0.35) set(x, y - 1, FIRE, 6 + rnd() * 14);
+      if (at(x, y + 1) === E) swap(i, i + W);
+    } else if (rnd() < 0.6) {
+      const d = ((rnd() * 3) | 0) - 1;
+      if (at(x + d, y - 1) === E) swap(i, i - W + d);
+    }
+  }
+  function lava(x, y, i) {
+    for (const [dx, dy] of [[0, -1], [1, 0], [-1, 0], [0, 1]]) {
+      const nx = x + dx, ny = y + dy, n = at(nx, ny);
+      if (n === WATER) {
+        set(nx, ny, STEAM, 50 + rnd() * 60);
+        if (rnd() < 0.5) { set(x, y, dy < 0 ? OBSIDIAN : STONE); return true; }
+      } else if (n === SAND && rnd() < 0.01) set(nx, ny, GLASS);
+      else if (ignitable(n) && rnd() < 0.1) { set(nx, ny, FIRE, 150); shade[ny * W + nx] = 255; }
+    }
+    if (rnd() < 0.003 && at(x, y - 1) === E) set(x, y - 1, FIRE, 8 + rnd() * 10);
+    return false;
+  }
+
+  function draw() {
+    const d = img.data;
+    for (let i = 0, o = 0; i < cell.length; i++, o += 4) {
+      const m = cell[i];
+      if (m === E) { d[o + 3] = 0; continue; }
+      let c = COL[m], k = 1 + ((shade[i] & 127) / 127 - 0.5) * (m === STONE ? 0.35 : 0.18);
+      if (m === FIRE) { const t = Math.min(1, life[i] / 40); c = [255, 90 + 150 * t, 20 + 80 * t * t]; k = 1; }
+      else if (m === LAVA) k = 0.9 + 0.2 * Math.sin(tick * 0.1 + (shade[i] & 31));
+      d[o] = Math.min(255, c[0] * k); d[o + 1] = Math.min(255, c[1] * k); d[o + 2] = Math.min(255, c[2] * k);
+      d[o + 3] = m === STEAM || m === SMOKE ? 150 : 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  // Tools.
+  const tools = [["Sand", SAND], ["Water", WATER], ["Oil", OIL], ["Fire", FIRE], ["Lava", LAVA], ["Wood", WOOD], ["Erase", E]];
+  let tool = OIL;
+  const bar = document.getElementById("tools"), hint = bar.querySelector(".hint");
+  for (const [name, m] of tools) {
+    const b = document.createElement("button");
+    b.type = "button";
+    const c = m === E ? [30, 26, 34] : COL[m];
+    b.innerHTML = `<i style="background:rgb(${c})"></i>${name}`;
+    b.setAttribute("aria-pressed", m === tool);
+    b.onclick = () => { tool = m; bar.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", x === b)); };
+    bar.insertBefore(b, hint);
+  }
+  const reset = document.createElement("button");
+  reset.type = "button"; reset.textContent = "Reset";
+  reset.onclick = build;
+  bar.insertBefore(reset, hint);
+
+  let down = false, px = 0, py = 0;
+  const pos = (e) => { const r = cv.getBoundingClientRect(); return [Math.floor((e.clientX - r.left) / r.width * W), Math.floor((e.clientY - r.top) / r.height * H)]; };
+  function paint(x, y) {
+    const r = tool === E ? 4 : 3;
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (dx * dx + dy * dy > r * r || nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      const i = ny * W + nx;
+      if (tool === E) { cell[i] = E; continue; }
+      if (tool === FIRE) {
+        if (ignitable(cell[i])) { set(nx, ny, FIRE, 150); shade[i] = 255; }
+        else if (cell[i] === E && rnd() < 0.3) set(nx, ny, FIRE, 10 + rnd() * 20);
+      } else if (cell[i] === E && (tool === WOOD || rnd() < 0.45)) set(nx, ny, tool);
+    }
+  }
+  cv.addEventListener("pointerdown", (e) => { down = true; cv.setPointerCapture(e.pointerId); [px, py] = pos(e); paint(px, py); });
+  cv.addEventListener("pointermove", (e) => {
+    if (!down) return;
+    const [x, y] = pos(e), n = Math.max(Math.abs(x - px), Math.abs(y - py), 1);
+    for (let k = 1; k <= n; k++) paint(Math.round(px + (x - px) * k / n), Math.round(py + (y - py) * k / n));
+    px = x; py = y;
+  });
+  addEventListener("pointerup", () => (down = false));
+
+  // On load, a little lava pours into the oily pond so the first thing you see is a reaction.
+  const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let pour = still ? 0 : 200;
+  build();
+  let rw = cv.clientWidth;
+  addEventListener("resize", () => { if (Math.abs(cv.clientWidth - rw) > 40) { rw = cv.clientWidth; build(); } });
+  function frame() {
+    if (pour > 0) {
+      pour--;
+      const x = Math.floor(W * 0.6) + ((rnd() * 3) | 0);
+      if (cell[2 * W + x] === E) set(x, 2, LAVA);
+    }
+    step();
+    draw();
+    requestAnimationFrame(frame);
+  }
+  if (still) { for (let k = 0; k < 60; k++) step(); draw(); cv.addEventListener("pointerdown", function go() { cv.removeEventListener("pointerdown", go); frame(); }); }
+  else frame();
 </script>
 </body>
 </html>

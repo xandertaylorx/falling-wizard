@@ -28,9 +28,12 @@ pub enum Card {
     Hurricane,
     Tornado,
     PortalWand,
+    GravityGun,
+    HeatRay,
+    StormCloud,
 }
 
-pub const SPELL_BAR: [Card; 16] = [
+pub const SPELL_BAR: [Card; 19] = [
     Card::Spark,
     Card::Fireball,
     Card::Bomb,
@@ -47,6 +50,9 @@ pub const SPELL_BAR: [Card; 16] = [
     Card::Hurricane,
     Card::Tornado,
     Card::PortalWand,
+    Card::GravityGun,
+    Card::HeatRay,
+    Card::StormCloud,
 ];
 
 impl Card {
@@ -68,18 +74,21 @@ impl Card {
             Card::Seeds => "Seeds of Life",
             Card::Torrent => "Torrent",
             Card::DigBeam => "Digging Beam",
+            Card::GravityGun => "Gravity Gun",
+            Card::HeatRay => "Heat Ray",
+            Card::StormCloud => "Storm Cloud",
         }
     }
 
     pub fn desc(self) -> &'static str {
         match self {
             Card::Spark => "Fast bolt, small blast",
-            Card::Fireball => "Arcing ball of fire",
+            Card::Fireball => "Tap: fireball. Hold: flamethrower",
             Card::Bomb => "Bounces, then a huge blast",
-            Card::Frost => "Freezes water and lava",
+            Card::Frost => "Tap: frost bolt. Hold: freezing breath",
             Card::Teleport => "Blink to where it lands",
             Card::AcidBall => "Splashes corrosive acid",
-            Card::Lightning => "Instant strike in a line",
+            Card::Lightning => "Tap: strike. Hold: endless arcing stream",
             Card::OilSpray => "Spray of flammable oil",
             Card::BlackHole => "Swallows everything nearby",
             Card::Wind => "Hold to blow a gale",
@@ -89,6 +98,9 @@ impl Card {
             Card::Seeds => "Scatter seeds that grow",
             Card::Torrent => "Spray of water",
             Card::DigBeam => "Hold to bore through rock",
+            Card::GravityGun => "Hold to grab matter and creatures, flick and release to throw",
+            Card::HeatRay => "Hold: melts rock to lava, sand to glass, boils water",
+            Card::StormCloud => "Summon a storm that rains and throws lightning",
         }
     }
 
@@ -110,6 +122,30 @@ impl Card {
             Card::Seeds => 8.0,
             Card::Torrent => 0.5,
             Card::DigBeam => 0.5,
+            Card::GravityGun => 1.0,
+            Card::HeatRay => 2.0,
+            Card::StormCloud => 35.0,
+        }
+    }
+
+    /// Spells that become a continuous beam once the button is held this long.
+    pub fn beam_after(self) -> Option<f32> {
+        match self {
+            Card::Lightning | Card::Fireball | Card::Frost => Some(0.22),
+            Card::HeatRay | Card::GravityGun => Some(0.0),
+            _ => None,
+        }
+    }
+
+    /// Mana per second while beaming.
+    pub fn beam_mana(self) -> f32 {
+        match self {
+            Card::Lightning => 30.0,
+            Card::Fireball => 24.0,
+            Card::Frost => 22.0,
+            Card::HeatRay => 26.0,
+            Card::GravityGun => 6.0,
+            _ => 0.0,
         }
     }
 
@@ -131,6 +167,8 @@ impl Card {
             Card::Seeds => 0.3,
             Card::Torrent => 0.02,
             Card::DigBeam => 0.0,
+            Card::GravityGun | Card::HeatRay => 0.0,
+            Card::StormCloud => 1.0,
         }
     }
 
@@ -153,6 +191,9 @@ impl Card {
             Card::Seeds => (["...#...", ".##.##.", "..###..", "...#...", "...#...", "..+++..", ".+++++."], [110, 200, 80], [130, 92, 56]),
             Card::Torrent => (["...#...", "..###..", ".##+##.", ".#+###.", ".#####.", "..###..", "......."], [60, 130, 230], [180, 220, 255]),
             Card::DigBeam => ([".......", "##.....", "####...", "###++++", "####...", "##.....", "......."], [120, 220, 240], [230, 255, 255]),
+            Card::GravityGun => (["+#...#+", "+#...#+", ".#...#.", ".#...#.", ".##.##.", "..###..", "......."], [230, 70, 80], [235, 235, 245]),
+            Card::HeatRay => (["#......", ".#.....", "..#....", "...#...", "....+++", "....+#+", "....+++"], [255, 120, 40], [255, 230, 120]),
+            Card::StormCloud => ([".......", "..###..", ".#####.", "#######", "...+...", "..+....", ".+....."], [120, 124, 140], [255, 250, 140]),
         }
     }
 }
@@ -253,8 +294,34 @@ impl Hole {
     }
 }
 
+/// A storm cloud summoned by the Storm Cloud spell.
+pub struct Storm {
+    pub x: f32,
+    pub y: f32,
+    pub age: f32,
+    strike_t: f32,
+    seed: f32,
+}
+
+pub const STORM_LIFE: f32 = 20.0;
+
 pub struct Spells {
     projs: Vec<Proj>,
+    /// Where the wizard is aiming (set by the game each frame).
+    pub aim: (f32, f32),
+    /// The live lightning stream this frame.
+    stream: Vec<Vec<(f32, f32)>>,
+    /// Breath cone this frame: (x0, y0, x1, y1, frost).
+    flame: Option<(f32, f32, f32, f32, bool)>,
+    /// Heat ray this frame.
+    ray: Option<(f32, f32, f32, f32)>,
+    zap_t: f32,
+    elec_t: f32,
+    /// Matter held by the Gravity Gun, and where.
+    pub held: Vec<(M, u8)>,
+    grab_at: Option<(f32, f32)>,
+    pub storms: Vec<Storm>,
+    time: f32,
     /// Where a teleport bolt landed, consumed by the game.
     pub teleport: Option<(f32, f32)>,
     beam: Option<(f32, f32, f32, f32)>,
@@ -278,13 +345,16 @@ pub struct Spells {
 
 impl Spells {
     pub fn new() -> Self {
-        Self { projs: Vec::new(), teleport: None, beam: None, bolts: Vec::new(), holes: Vec::new(), rifts_born: Vec::new(), rift_zones: Vec::new(), rift_hits: Vec::new(), zaps: Vec::new(), tornadoes: Vec::new(), portal_hue: 0.58, portal_hits: Vec::new(), sounds: Vec::new() }
+        Self { projs: Vec::new(), aim: (0.0, 0.0), stream: Vec::new(), flame: None, ray: None, zap_t: 0.0, elec_t: 0.0, held: Vec::new(), grab_at: None, storms: Vec::new(), time: 0.0, teleport: None, beam: None, bolts: Vec::new(), holes: Vec::new(), rifts_born: Vec::new(), rift_zones: Vec::new(), rift_hits: Vec::new(), zaps: Vec::new(), tornadoes: Vec::new(), portal_hue: 0.58, portal_hits: Vec::new(), sounds: Vec::new() }
     }
 
     pub fn clear(&mut self) {
         self.projs.clear();
         self.holes.clear();
         self.tornadoes.clear();
+        self.storms.clear();
+        self.held.clear();
+        self.grab_at = None;
         self.beam = None;
         self.teleport = None;
     }
@@ -355,6 +425,18 @@ impl Spells {
                 return 0;
             }
             Card::BlackHole => (90.0, 0.9, 0.0, Sfx::Zap),
+            Card::GravityGun | Card::HeatRay => return 0,
+            Card::StormCloud => {
+                if self.storms.len() >= 4 {
+                    self.storms.remove(0);
+                }
+                let (ax, ay) = self.aim;
+                let seed = fx.rng.rangef(0.0, 100.0);
+                self.storms.push(Storm { x: ax, y: ay, age: 0.0, strike_t: 1.2, seed });
+                fx.burst(ax, ay, 30, 60.0, [200, 205, 220]);
+                self.sounds.push(Sfx::Thunder);
+                return 0;
+            }
             Card::PortalWand => (260.0, 1.4, 0.0, Sfx::Zap),
             Card::Wind => {
                 self.gust((x, y), (ux, uy), false, world, fx, mobs);
@@ -479,6 +561,8 @@ impl Spells {
         self.bolts.retain(|b| b.1 > 0.0);
         self.step_holes(world, fx, mobs, dt);
         self.step_twisters(world, fx, mobs, dt);
+        self.step_storms(world, fx, mobs, dt);
+        self.time += dt;
         let mut projs = std::mem::take(&mut self.projs);
         let zones = std::mem::take(&mut self.rift_zones);
         let mut rift_hits = Vec::new();
@@ -947,6 +1031,7 @@ impl Spells {
                 cv.put(x as i32, y as i32, [230, 255, 255]);
             }
         }
+        self.draw_beams(cv, time);
         for t in &self.tornadoes {
             let h = t.height() as i32;
             for k in 0..h {
@@ -975,8 +1060,19 @@ impl Spells {
         }
     }
 
+    /// A jagged arc of lightning from a to b, purely visual.
+    pub fn arc(&mut self, a: (f32, f32), b: (f32, f32), fx: &mut Fx, life: f32) {
+        self.bolts.push((jagged(a, b, fx, 3.0), life));
+    }
+
     pub fn end_frame(&mut self) {
         self.beam = None;
+        self.stream.clear();
+        self.flame = None;
+        self.ray = None;
+        if self.held.is_empty() {
+            self.grab_at = None;
+        }
     }
 
     pub fn lights(&self, add: &mut impl FnMut(f32, f32, [f32; 3])) {
@@ -1010,7 +1106,42 @@ impl Spells {
                 add(p.0, p.1, [4.0 * t * 5.0, 4.0 * t * 5.0, 3.0 * t * 5.0]);
             }
         }
+        for pts in &self.stream {
+            for p in pts.iter().step_by(2) {
+                add(p.0, p.1, [2.2, 2.6, 3.4]);
+            }
+        }
+        if let Some((x0, y0, x1, y1, frost)) = self.flame {
+            for k in 0..8 {
+                let t = k as f32 / 7.0;
+                add(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, if frost { [0.8, 1.6, 2.4] } else { [3.2, 1.5, 0.4] });
+            }
+        }
+        if let Some((x0, y0, x1, y1)) = self.ray {
+            for k in 0..8 {
+                let t = k as f32 / 7.0;
+                add(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t, [2.0, 0.6, 0.2]);
+            }
+            add(x1, y1, [5.0, 2.0, 0.6]);
+        }
     }
+}
+
+/// A lightning-like polyline from a to b that wanders off the straight line.
+fn jagged(a: (f32, f32), b: (f32, f32), fx: &mut Fx, wander: f32) -> Vec<(f32, f32)> {
+    let len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+    let n = ((len / 5.0) as usize).clamp(2, 60);
+    let (nx, ny) = (-(b.1 - a.1) / len.max(0.01), (b.0 - a.0) / len.max(0.01));
+    let mut pts = vec![a];
+    let mut off = 0.0f32;
+    for k in 1..n {
+        let t = k as f32 / n as f32;
+        off = (off + fx.rng.rangef(-wander, wander)) * 0.8;
+        let taper = (t * (1.0 - t) * 4.0).min(1.0);
+        pts.push((a.0 + (b.0 - a.0) * t + nx * off * taper, a.1 + (b.1 - a.1) * t + ny * off * taper));
+    }
+    pts.push(b);
+    pts
 }
 
 fn trail(p: &Proj, cx: i32, cy: i32, m: M, world: &mut World, fx: &mut Fx) {
@@ -1051,4 +1182,482 @@ fn trail(p: &Proj, cx: i32, cy: i32, m: M, world: &mut World, fx: &mut Fx) {
         }
         _ => {}
     }
+}
+
+/// March from (x, y) along (ux, uy) until something solid, a liquid or a creature.
+/// Returns the end point and whether it hit anything.
+fn trace(world: &World, mobs: &Mobs, (x, y): (f32, f32), (ux, uy): (f32, f32), max: f32, pad: f32) -> (f32, f32, bool) {
+    let (mut bx, mut by) = (x, y);
+    let mut t = 0.0;
+    while t < max {
+        bx += ux * 0.5;
+        by += uy * 0.5;
+        t += 0.5;
+        let m = world.mat(bx.floor() as i32, by.floor() as i32);
+        if !m.passable() || mobs.hit_test(bx, by, pad).is_some() {
+            return (bx, by, true);
+        }
+    }
+    (bx, by, false)
+}
+
+fn conductive(m: M) -> bool {
+    matches!(m, M::Water | M::Metal | M::Gold | M::Acid | M::Blood | M::Lava)
+}
+
+/// What a heat ray turns a material into, and how quickly.
+fn melts(m: M) -> Option<(M, f32)> {
+    Some(match m {
+        M::Stone | M::Basalt | M::Rubble | M::Gravel | M::MoonRock | M::Brick | M::Dirt | M::Grass | M::Bone | M::VoidRock | M::VoidDust | M::Ash => (M::Lava, 0.22),
+        M::Obsidian | M::Glass => (M::Lava, 0.14),
+        M::Crystal | M::VoidCrystal => (M::Lava, 0.1),
+        M::Metal | M::Gold => (M::Lava, 0.07),
+        M::Sand | M::Quicksand => (M::Glass, 0.3),
+        M::Ice | M::Snow => (M::Water, 0.6),
+        M::Water | M::Blood => (M::Steam, 0.35),
+        M::Acid | M::Goo => (M::Gas, 0.25),
+        _ => return None,
+    })
+}
+
+impl Spells {
+    /// One frame of a held beam spell, aimed from the staff tip at the cursor.
+    #[allow(clippy::too_many_arguments)]
+    pub fn beam_tick(&mut self, card: Card, tip: (f32, f32), aim: (f32, f32), dt: f32, world: &mut World, fx: &mut Fx, mobs: &mut Mobs) -> u32 {
+        let (dx, dy) = (aim.0 - tip.0, aim.1 - tip.1);
+        let d = (dx * dx + dy * dy).sqrt().max(0.01);
+        let u = (dx / d, dy / d);
+        self.zap_t -= dt;
+        self.elec_t -= dt;
+        match card {
+            Card::Lightning => self.lightning_stream(tip, u, world, fx, mobs),
+            Card::Fireball => {
+                self.breath(tip, u, false, world, fx, mobs);
+                0
+            }
+            Card::Frost => {
+                self.breath(tip, u, true, world, fx, mobs);
+                0
+            }
+            Card::HeatRay => {
+                self.heat_ray(tip, u, world, fx, mobs);
+                0
+            }
+            Card::GravityGun => {
+                self.grab(aim, dt, world, fx, mobs);
+                0
+            }
+            _ => 0,
+        }
+    }
+
+    /// Lightning that never stops: a crackling stream that jumps to creatures and
+    /// conductors near where it lands, bores into rock, fuses sand and sets things alight.
+    fn lightning_stream(&mut self, (x, y): (f32, f32), (ux, uy): (f32, f32), world: &mut World, fx: &mut Fx, mobs: &mut Mobs) -> u32 {
+        let (mut bx, mut by, mut hit) = trace(world, mobs, (x, y), (ux, uy), 150.0, 1.0);
+        // Lightning takes the easy path: bend towards water or metal close to the end.
+        'seek: for r in [3.0f32, 6.0, 10.0, 14.0] {
+            for k in 0..10 {
+                let a = k as f32 * 0.628;
+                let (sx, sy) = (bx + a.cos() * r, by + a.sin() * r);
+                if conductive(world.mat(sx as i32, sy as i32)) && ((sx - x) * ux + (sy - y) * uy) > 0.0 {
+                    bx = sx;
+                    by = sy;
+                    hit = true;
+                    break 'seek;
+                }
+            }
+        }
+        let main = jagged((x, y), (bx, by), fx, 3.5);
+        for _ in 0..3 {
+            let p = main[fx.rng.range(1, main.len() as i32) as usize];
+            let a = uy.atan2(ux) + fx.rng.rangef(-1.3, 1.3);
+            let len = fx.rng.rangef(6.0, 22.0);
+            let fork = jagged(p, (p.0 + a.cos() * len, p.1 + a.sin() * len), fx, 2.0);
+            self.stream.push(fork);
+        }
+        self.stream.push(main);
+        let targets = mobs.near_list(bx, by, 40.0, 3);
+        for &(_, mx, my) in &targets {
+            let arc = jagged((bx, by), (mx, my), fx, 3.0);
+            self.stream.push(arc);
+        }
+        let mut gold = 0;
+        if self.zap_t <= 0.0 {
+            self.zap_t = 0.06;
+            mobs.damage_line(x, y, bx, by, 2.0, 7.0, fx);
+            for &(i, _, _) in &targets {
+                mobs.hurt_by(i, 5.0, (fx.rng.rangef(-30.0, 30.0), -25.0), crate::mobs::Dmg::Lightning, fx);
+            }
+            if hit {
+                world.scorch(bx as i32, by as i32, 3, 1.0);
+                for _ in 0..5 {
+                    let (px, py) = ((bx + fx.rng.rangef(-2.5, 2.5)) as i32, (by + fx.rng.rangef(-2.5, 2.5)) as i32);
+                    match world.mat(px, py) {
+                        m if m.flammable() => world.ignite_at(px, py),
+                        M::Ice | M::Snow => world.place(px, py, M::Water),
+                        M::Water if fx.rng.chance(0.15) => {
+                            let s = Cell::gas(M::Steam, &mut world.rng, 30, 60);
+                            world.set(px, py, s);
+                        }
+                        _ => {}
+                    }
+                }
+                gold += fx.dissolve(world, bx, by, 1, 0.3);
+            }
+            fx.burst(bx, by, 6, 110.0, [210, 235, 255]);
+        }
+        if hit && self.elec_t <= 0.0 {
+            self.elec_t = 0.3;
+            self.zaps.push((bx, by));
+        }
+        fx.flash = fx.flash.max(fx.rng.rangef(0.0, 0.1));
+        fx.shake = fx.shake.max(1.2);
+        self.sounds.push(Sfx::Zap);
+        gold
+    }
+
+    /// Flamethrower or freezing breath: a cone that sets the world alight (if there's
+    /// air to burn) or freezes it solid.
+    fn breath(&mut self, (x, y): (f32, f32), (ux, uy): (f32, f32), frost: bool, world: &mut World, fx: &mut Fx, mobs: &mut Mobs) {
+        use crate::mobs::Dmg;
+        let o2 = world.oxygen(y as i32);
+        let len = if frost { 70.0 } else { 18.0 + 52.0 * o2.min(1.3) };
+        let (ex, ey, _) = trace(world, mobs, (x, y), (ux, uy), len, 1.0);
+        self.flame = Some((x, y, ex, ey, frost));
+        let ang = uy.atan2(ux);
+        let reach = ((ex - x).powi(2) + (ey - y).powi(2)).sqrt();
+        for _ in 0..7 {
+            let a = ang + fx.rng.rangef(-0.2, 0.2);
+            let sp = fx.rng.rangef(110.0, 190.0);
+            let life = fx.rng.rangef(0.12, 0.3) * (reach / 60.0).max(0.3);
+            let col = if frost {
+                if fx.rng.chance(0.4) { [255, 255, 255] } else { [160, 220, 255] }
+            } else {
+                [[255, 240, 150], [255, 188, 48], [255, 122, 20], [222, 58, 12]][fx.rng.range(0, 4) as usize]
+            };
+            fx.mote(x, y, a.cos() * sp, a.sin() * sp, life, col, if frost { 0.6 } else { 1.4 }, if frost { 60.0 } else { -90.0 }, 0.0);
+        }
+        for _ in 0..3 {
+            let a = ang + fx.rng.rangef(-0.16, 0.16);
+            let (cs, sn) = (a.cos(), a.sin());
+            let mut t = 2.0;
+            while t < reach + 2.0 {
+                let (cx, cy) = ((x + cs * t).floor() as i32, (y + sn * t).floor() as i32);
+                let m = world.mat(cx, cy);
+                if frost {
+                    match m {
+                        M::Water if fx.rng.chance(0.5) => world.place(cx, cy, M::Ice),
+                        M::Lava if fx.rng.chance(0.4) => world.place(cx, cy, M::Obsidian),
+                        M::Fire => world.set(cx, cy, Cell::EMPTY),
+                        M::Steam => world.place(cx, cy, M::Snow),
+                        M::Acid if fx.rng.chance(0.1) => world.place(cx, cy, M::Ice),
+                        M::Empty if fx.rng.chance(0.05) && world.mat(cx, cy + 1).solid() => world.place(cx, cy, M::Snow),
+                        _ => {}
+                    }
+                } else {
+                    match m {
+                        M::Empty if o2 > 0.1 && fx.rng.chance(0.035 * o2) => {
+                            let f = Cell::fire(&mut world.rng);
+                            world.set(cx, cy, f);
+                        }
+                        M::Water | M::Blood if fx.rng.chance(0.25) => {
+                            let s = Cell::gas(M::Steam, &mut world.rng, 30, 70);
+                            world.set(cx, cy, s);
+                        }
+                        M::Ice | M::Snow if fx.rng.chance(0.3) => world.place(cx, cy, M::Water),
+                        M::Sand if fx.rng.chance(0.01) => world.place(cx, cy, M::Glass),
+                        m if m.flammable() && o2 > 0.05 => world.ignite_at(cx, cy),
+                        _ => {}
+                    }
+                    if world.back(cx, cy).flammable() && o2 > 0.05 && fx.rng.chance(0.05) {
+                        world.ignite_at(cx, cy);
+                    }
+                }
+                if !m.passable() {
+                    break;
+                }
+                t += 1.0;
+            }
+        }
+        if self.zap_t <= 0.0 {
+            self.zap_t = 0.1;
+            for k in 1..=4 {
+                let t = k as f32 / 4.0;
+                let (px, py) = (x + (ex - x) * t, y + (ey - y) * t);
+                mobs.damage_area(px, py, 4.0 + 3.0 * t, 3.0, if frost { Dmg::Frost } else { Dmg::Fire }, fx);
+                if frost {
+                    if let Some(i) = mobs.hit_test(px, py, 3.0) {
+                        mobs.freeze(i, 1.0);
+                    }
+                }
+            }
+        }
+        self.sounds.push(if frost { Sfx::Freeze } else { Sfx::Fireball });
+    }
+
+    /// A thin, searing ray that melts what it touches: rock into lava, sand into glass,
+    /// ice into water and water into steam.
+    fn heat_ray(&mut self, (x, y): (f32, f32), (ux, uy): (f32, f32), world: &mut World, fx: &mut Fx, mobs: &mut Mobs) {
+        let (ex, ey, hit) = trace(world, mobs, (x, y), (ux, uy), 180.0, 0.5);
+        self.ray = Some((x, y, ex, ey));
+        if self.zap_t <= 0.0 {
+            self.zap_t = 0.05;
+            mobs.damage_area(ex, ey, 3.0, 4.0, crate::mobs::Dmg::Fire, fx);
+            if hit {
+                for _ in 0..10 {
+                    let (px, py) = ((ex + fx.rng.rangef(-2.5, 2.5)) as i32, (ey + fx.rng.rangef(-2.5, 2.5)) as i32);
+                    let m = world.mat(px, py);
+                    if m.indestructible() {
+                        continue;
+                    }
+                    if m.flammable() {
+                        world.ignite_at(px, py);
+                    } else if let Some((to, p)) = melts(m) {
+                        if fx.rng.chance(p) {
+                            match to {
+                                M::Steam | M::Gas => {
+                                    let c = Cell::gas(to, &mut world.rng, 40, 90);
+                                    world.set(px, py, c);
+                                }
+                                _ => world.place(px, py, to),
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if hit {
+            for _ in 0..3 {
+                let (vx, vy) = (fx.rng.rangef(-50.0, 50.0) - ux * 40.0, fx.rng.rangef(-90.0, -10.0) - uy * 40.0);
+                let life = fx.rng.rangef(0.2, 0.5);
+                fx.spark(ex, ey, vx, vy, life, [255, 190, 90]);
+            }
+            if fx.rng.chance(0.1) && world.mat(ex as i32, ey as i32 - 2) == M::Empty {
+                let s = Cell::gas(M::Smoke, &mut world.rng, 40, 90);
+                world.set(ex as i32, ey as i32 - 2, s);
+            }
+        }
+        self.sounds.push(Sfx::Dig);
+    }
+
+    /// Pull loose matter (and creatures) into a ball at the cursor.
+    fn grab(&mut self, (ax, ay): (f32, f32), dt: f32, world: &mut World, fx: &mut Fx, mobs: &mut Mobs) {
+        use crate::materials::Kind as K;
+        self.grab_at = Some((ax, ay));
+        let r = 9.0;
+        for _ in 0..70 {
+            if self.held.len() >= 900 {
+                break;
+            }
+            let a = fx.rng.rangef(0.0, std::f32::consts::TAU);
+            let d = fx.rng.f32().sqrt() * r;
+            let (cx, cy) = ((ax + a.cos() * d).floor() as i32, (ay + a.sin() * d).floor() as i32);
+            let Some(c) = world.get(cx, cy) else { continue };
+            let ok = match c.mat.kind() {
+                K::Powder | K::Liquid => true,
+                K::Static => !c.mat.indestructible() && !matches!(c.mat, M::Chest | M::Altar | M::Cloud) && fx.rng.chance(0.03),
+                _ => false,
+            };
+            if ok {
+                world.set(cx, cy, Cell::EMPTY);
+                let m = match c.mat {
+                    M::Grass => M::Dirt,
+                    M::Stone | M::Basalt | M::Brick | M::MoonRock => M::Rubble,
+                    M::Ice => M::Snow,
+                    M::Wood | M::Leaves | M::Plant => M::Ash,
+                    other => other,
+                };
+                self.held.push((m, c.shade));
+            }
+        }
+        mobs.carry(ax, ay, 14.0, dt);
+        if fx.rng.chance(0.3) {
+            let a = fx.rng.rangef(0.0, std::f32::consts::TAU);
+            fx.mote(ax + a.cos() * 14.0, ay + a.sin() * 14.0, -a.cos() * 50.0, -a.sin() * 50.0, 0.25, [255, 140, 150], 1.0, 0.0, 0.0);
+        }
+    }
+
+    /// Let go of the Gravity Gun: everything held flies off with `vel`.
+    pub fn release_grab(&mut self, vel: (f32, f32), fx: &mut Fx, mobs: &mut Mobs) {
+        let Some((ax, ay)) = self.grab_at.take() else {
+            self.held.clear();
+            return;
+        };
+        mobs.fling(ax, ay, 14.0, vel);
+        let n = self.held.len();
+        for (k, (m, sh)) in std::mem::take(&mut self.held).into_iter().enumerate() {
+            let (px, py) = ball_pos(k, n, self.time);
+            let (vx, vy) = (vel.0 + fx.rng.rangef(-25.0, 25.0), vel.1 + fx.rng.rangef(-25.0, 25.0));
+            fx.debris(ax + px, ay + py, vx, vy, m, sh);
+        }
+        if n > 0 {
+            self.sounds.push(Sfx::Throw);
+        }
+    }
+
+    fn step_storms(&mut self, world: &mut World, fx: &mut Fx, mobs: &mut Mobs, dt: f32) {
+        let clim = world.climate;
+        let precip = if world.gen.planet.sea == Some(M::Acid) {
+            M::Acid
+        } else if clim.heat < 0 {
+            M::Snow
+        } else {
+            M::Water
+        };
+        let mut strikes = Vec::new();
+        for s in self.storms.iter_mut() {
+            s.age += dt;
+            // No air, no cloud: in a vacuum it boils away almost at once.
+            if world.oxygen(s.y as i32) <= 0.0 {
+                s.age += dt * 5.0;
+            }
+            s.x += (world.wind * 0.25 + (s.age * 0.4 + s.seed).sin() * 5.0) * dt;
+            if s.age < 0.8 {
+                continue;
+            }
+            for _ in 0..4 {
+                let x = s.x + fx.rng.rangef(-17.0, 17.0);
+                if precip == M::Snow {
+                    fx.snow_flake(x, s.y + 4.0, world.wind);
+                } else {
+                    fx.rain_drop(x, s.y + 4.0, world.wind);
+                }
+            }
+            // Real rain that pools and fills things up.
+            if fx.rng.chance(0.6) {
+                let sh = fx.rng.next_u32() as u8;
+                let x = s.x + fx.rng.rangef(-15.0, 15.0);
+                fx.debris(x, s.y + 5.0, world.wind * 0.5, 90.0, precip, sh);
+            }
+            s.strike_t -= dt;
+            if s.strike_t <= 0.0 {
+                s.strike_t = fx.rng.rangef(0.8, 2.8);
+                strikes.push(s.x + fx.rng.rangef(-12.0, 12.0));
+                strikes.push(s.y + 4.0);
+            }
+        }
+        self.storms.retain(|s| s.age < STORM_LIFE);
+        for w in strikes.chunks(2) {
+            let (sx, sy) = (w[0], w[1]);
+            let (bx, by, hit) = trace(world, mobs, (sx, sy), (0.0, 1.0), 260.0, 1.0);
+            let bolt = jagged((sx, sy), (bx, by), fx, 5.0);
+            for _ in 0..2 {
+                let p = bolt[fx.rng.range(1, bolt.len() as i32) as usize];
+                let a = std::f32::consts::FRAC_PI_2 + fx.rng.rangef(-1.0, 1.0);
+                let len = fx.rng.rangef(8.0, 26.0);
+                let fork = jagged(p, (p.0 + a.cos() * len, p.1 + a.sin() * len), fx, 2.5);
+                self.bolts.push((fork, 0.3));
+            }
+            self.bolts.push((bolt, 0.35));
+            mobs.damage_line(sx, sy, bx, by, 2.0, 22.0, fx);
+            if hit {
+                world.scorch(bx as i32, by as i32, 5, 0.8);
+                fx.explode(world, bx, by, 2, 0.6);
+                self.zaps.push((bx, by));
+            }
+            fx.flash = fx.flash.max(0.5);
+            fx.shake = (fx.shake + 4.0).min(14.0);
+            self.sounds.push(Sfx::Thunder);
+            self.sounds.push(Sfx::Zap);
+        }
+    }
+
+    fn draw_beams(&self, cv: &mut Canvas, time: f32) {
+        // The lightning stream: a white-hot core with a blue glow either side.
+        for (j, pts) in self.stream.iter().enumerate() {
+            let main = j == self.stream.len() - 1 || pts.len() > 10;
+            for w in pts.windows(2) {
+                let (a, b) = (w[0], w[1]);
+                let n = ((b.0 - a.0).abs().max((b.1 - a.1).abs()) as i32).max(1);
+                for k in 0..=n {
+                    let t = k as f32 / n as f32;
+                    let (x, y) = ((a.0 + (b.0 - a.0) * t) as i32, (a.1 + (b.1 - a.1) * t) as i32);
+                    if main {
+                        cv.blend(x + 1, y, [140, 190, 255], 0.5);
+                        cv.blend(x, y + 1, [140, 190, 255], 0.5);
+                    }
+                    cv.put(x, y, [250, 252, 255]);
+                }
+            }
+        }
+        if let Some((x0, y0, x1, y1, frost)) = self.flame {
+            let len = ((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt();
+            let (ux, uy) = ((x1 - x0) / len.max(0.01), (y1 - y0) / len.max(0.01));
+            let n = (len as i32).max(1);
+            for k in 0..n {
+                let t = k as f32 / n as f32;
+                let w = 1.0 + t * len * 0.18;
+                let (cx, cy) = (x0 + ux * k as f32, y0 + uy * k as f32);
+                let wi = w.ceil() as i32;
+                for s in -wi..=wi {
+                    let f = 1.0 - (s.abs() as f32 / (w + 0.5));
+                    let flick = ((k as f32 * 0.9 + s as f32 * 1.7 - time * 30.0).sin() * 0.5 + 0.5) * f;
+                    let col = if frost {
+                        crate::render::lerp3([120, 190, 255], [250, 255, 255], flick)
+                    } else {
+                        let heat = (flick * (1.0 - t * 0.6)).clamp(0.0, 1.0);
+                        crate::render::lerp3([200, 40, 10], [255, 236, 150], heat)
+                    };
+                    cv.blend((cx - uy * s as f32) as i32, (cy + ux * s as f32) as i32, col, (f * (1.0 - t * 0.5)).clamp(0.0, 0.9));
+                }
+            }
+        }
+        if let Some((x0, y0, x1, y1)) = self.ray {
+            let len = ((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt();
+            let n = (len * 1.5) as i32;
+            for k in 0..=n {
+                let t = k as f32 / n.max(1) as f32;
+                let (x, y) = (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+                let pulse = ((k as f32 * 0.4 - time * 50.0).sin() * 0.5 + 0.5) * 0.4;
+                cv.blend(x as i32, y as i32 + 1, [255, 80, 30], 0.35 + pulse);
+                cv.blend(x as i32, y as i32 - 1, [255, 80, 30], 0.35 + pulse);
+                cv.put(x as i32, y as i32, [255, 220, 170]);
+            }
+            for s in 0..6 {
+                let a = s as f32 * 1.047 + time * 9.0;
+                cv.blend((x1 + a.cos() * 2.0) as i32, (y1 + a.sin() * 2.0) as i32, [255, 200, 120], 0.8);
+            }
+        }
+        if let Some((ax, ay)) = self.grab_at {
+            let n = self.held.len();
+            for (k, (m, sh)) in self.held.iter().enumerate() {
+                let (px, py) = ball_pos(k, n, self.time);
+                cv.put((ax + px) as i32, (ay + py) as i32, crate::render::shade(m.base_color(), *sh, m.variation()));
+            }
+            let r = 4.0 + (n as f32).sqrt() * 0.62 + 3.0;
+            for s in 0..40 {
+                let a = s as f32 / 40.0 * std::f32::consts::TAU + time * 2.0;
+                let wob = (a * 3.0 - time * 6.0).sin() * 1.2;
+                cv.blend((ax + a.cos() * (r + wob)) as i32, (ay + a.sin() * (r + wob)) as i32, [255, 110, 130], 0.45);
+            }
+        }
+        for s in &self.storms {
+            let fade = (s.age / 0.8).min(1.0) * ((STORM_LIFE - s.age) / 2.0).clamp(0.0, 1.0);
+            let blobs: [(f32, f32, f32); 7] = [(-14.0, 1.0, 6.0), (-7.0, -3.0, 8.0), (0.0, -5.0, 9.0), (8.0, -2.0, 8.0), (15.0, 1.0, 6.0), (-3.0, 2.0, 7.0), (5.0, 2.0, 7.0)];
+            for dy in -14..=9 {
+                for dx in -22..=22 {
+                    let mut dens = 0.0f32;
+                    for (k, &(bx, by, r)) in blobs.iter().enumerate() {
+                        let wob = (s.age * 0.8 + k as f32 + s.seed).sin() * 1.2;
+                        let d = ((dx as f32 - bx - wob).powi(2) + (dy as f32 - by).powi(2) * 1.6).sqrt();
+                        dens = dens.max(1.0 - d / r);
+                    }
+                    if dens <= 0.0 {
+                        continue;
+                    }
+                    let top = ((-dy as f32 + 9.0) / 23.0).clamp(0.0, 1.0);
+                    let col = crate::render::lerp3([52, 54, 66], [150, 154, 168], top * dens);
+                    cv.blend((s.x + dx as f32) as i32, (s.y + dy as f32) as i32, col, (dens * 2.5).min(0.92) * fade);
+                }
+            }
+        }
+    }
+}
+
+/// Where the k-th of n held cells sits in the Gravity Gun's spinning ball.
+fn ball_pos(k: usize, n: usize, time: f32) -> (f32, f32) {
+    let r = (k as f32).sqrt() * 0.62;
+    let a = k as f32 * 2.399_963 + time * (2.0 + 6.0 / (n as f32 + 4.0).sqrt());
+    (a.cos() * r, a.sin() * r)
 }

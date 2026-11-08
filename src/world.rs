@@ -63,6 +63,8 @@ pub struct World {
     pub explosions: Vec<(i32, i32, i32)>,
     /// Current wind, nudges gases sideways.
     pub wind: f32,
+    /// This planet's air: oxygen for fire, ambient heat, and where the atmosphere ends.
+    pub climate: crate::planets::Climate,
 }
 
 impl World {
@@ -97,7 +99,9 @@ impl World {
             active_chunks: 0,
             explosions: Vec::new(),
             wind: 0.0,
+            climate: crate::planets::Climate { o2: 1.0, heat: 0, atmo: 480 },
         };
+        w.climate = w.gen.planet.climate();
         for (key, cells, wall) in saved {
             w.store.insert(key, Stored { cells, wall, dirty: true });
         }
@@ -520,6 +524,23 @@ impl World {
         }
     }
 
+    /// Oxygen at local row y: the planet's air, thinning to nothing at the atmosphere's edge.
+    #[inline]
+    fn o2_at(&self, y: i32) -> f32 {
+        let c = self.climate;
+        if c.atmo <= 0 {
+            return 0.0;
+        }
+        let gy = y + self.oy;
+        let thin = ((-gy - c.atmo + 60) as f32 / 80.0).clamp(0.0, 1.0);
+        c.o2 * (1.0 - thin)
+    }
+
+    /// Oxygen at a global row (for spells and effects).
+    pub fn oxygen(&self, gy: i32) -> f32 {
+        self.o2_at(gy - self.oy)
+    }
+
     /// Oil cells within radius 5 of (x, y).
     fn oil_density(&self, x: i32, y: i32) -> i32 {
         let mut n = 0;
@@ -801,6 +822,11 @@ impl World {
         if c.mat == M::Gas {
             // Cave gas lingers and drifts slowly; it only goes away by burning.
             let r = self.rng.f32();
+            // Bubbles (hydrogen from electrolysis, swamp gas) rise through liquids.
+            if self.lm(x, y - 1).kind() == Kind::Liquid && self.rng.chance(0.7) {
+                self.swap(x, y, x, y - 1);
+                return;
+            }
             let (dx, dy) = if r < 0.25 { (0, -1) } else if r < 0.5 { (self.rng.sign(), 0) } else if r < 0.6 { (0, 1) } else { return };
             if self.lm(x + dx, y + dy) == M::Empty {
                 self.swap(x, y, x + dx, y + dy);
@@ -811,7 +837,12 @@ impl World {
         let decay = if self.rng.chance(if steam { 0.8 } else { 0.6 }) { 1 } else { 0 };
         let life = c.life.saturating_sub(decay);
         if life == 0 {
-            if steam && self.rng.chance(0.25) {
+            let rain = match self.climate.heat {
+                1 => 0.0,
+                -1 => 0.45,
+                _ => 0.25,
+            };
+            if steam && self.rng.chance(rain) {
                 let w = Cell::new(M::Water, &mut self.rng);
                 self.lset(x, y, w);
             } else {
@@ -848,9 +879,29 @@ impl World {
         let falls = c.temp == FIRE_FLOWING;
         let fuel = c.temp >= FIRE_FUEL;
 
+        // Smothered: sand, dirt, snow or ash dropped on a flame puts it out.
+        let above = self.lm(x, y - 1);
+        if above.kind() == Kind::Powder && !above.flammable() && self.rng.chance(if falls { 0.08 } else { 0.3 }) {
+            let s = Cell::gas(M::Smoke, &mut self.rng, 20, 60);
+            self.lset(x, y, s);
+            return;
+        }
         for (dx, dy) in N4 {
             if falls && dy == 1 {
                 continue; // burning oil floats on water
+            }
+            if falls && self.lm(x + dx, y + dy) == M::Water {
+                // A grease fire: water doesn't put it out, it flashes to steam and spits the
+                // flames upwards.
+                if self.rng.chance(0.2) {
+                    let s = Cell::gas(M::Steam, &mut self.rng, 30, 70);
+                    self.lset(x + dx, y + dy, s);
+                    if self.lm(x, y - 1) == M::Empty {
+                        let f = Cell::fire(&mut self.rng);
+                        self.lset(x, y - 1, f);
+                    }
+                }
+                continue;
             }
             if self.lm(x + dx, y + dy) == M::Water && self.rng.chance(if fuel { 0.3 } else { 0.8 }) {
                 let s = Cell::gas(M::Steam, &mut self.rng, 30, 70);
@@ -863,7 +914,10 @@ impl World {
             }
         }
 
+        // Fire needs air: it spreads faster in rich atmospheres and chokes in thin ones.
+        let o2 = self.o2_at(y);
         let (hmin, hmax) = if fuel { (10, 45) } else { (25, 70) };
+        let (hmin, hmax) = ((hmin as f32 * o2.min(1.6)) as i32, ((hmax as f32 * o2.min(1.6)) as i32).max(1));
         if self.cells[Self::li(x, y)].back.flammable() && self.rng.chance(0.08) {
             let b = self.cells[Self::li(x, y)].back;
             self.cells[Self::li(x, y)].back = M::Empty;
@@ -914,8 +968,15 @@ impl World {
         if self.rng.chance(0.75) {
             life = life.saturating_sub(1);
         }
+        if o2 < 1.0 && self.rng.chance(1.0 - o2) {
+            life = life.saturating_sub(4);
+        }
         if life == 0 {
-            if self.rng.chance(if fuel { 0.6 } else { 0.2 }) {
+            if fuel && !falls && self.rng.chance(0.3) {
+                // Burnt wood crumbles into ash.
+                let a = Cell::new(M::Ash, &mut self.rng);
+                self.lset(x, y, a);
+            } else if self.rng.chance(if fuel { 0.6 } else { 0.2 }) {
                 let s = Cell::gas(M::Smoke, &mut self.rng, 60, 140);
                 self.lset(x, y, s);
             } else {
@@ -964,10 +1025,22 @@ impl World {
                 M::Water => {
                     let s = Cell::gas(M::Steam, &mut self.rng, 40, 90);
                     self.lset(nx, ny, s);
+                    // Trapped steam blasts out: lava meeting the sea is violent.
+                    if self.rng.chance(0.004) && self.explosions.len() < 200 {
+                        self.explosions.push((nx + self.ox, ny + self.oy, 2));
+                    }
                     if self.rng.chance(0.5) {
-                        let b = Cell::new(M::Basalt, &mut self.rng);
+                        // Quenched from above it freezes to glassy obsidian, otherwise basalt.
+                        let m = if dy < 0 && self.rng.chance(0.6) { M::Obsidian } else { M::Basalt };
+                        let b = Cell::new(m, &mut self.rng);
                         self.lset(x, y, b);
                         return true;
+                    }
+                }
+                M::Acid => {
+                    if self.rng.chance(0.1) {
+                        let g = Cell::gas(M::Gas, &mut self.rng, 200, 255);
+                        self.lset(nx, ny, g);
                     }
                 }
                 M::Ice | M::Snow => {
@@ -1047,6 +1120,33 @@ impl World {
         false
     }
 
+    /// The planet's climate working on exposed water, lava and ice: open water freezes on
+    /// cold worlds and in space, boils away on hot ones; lava crusts over in the cold.
+    fn weather_tick(&mut self, x: i32, y: i32, m: M) {
+        let open = self.lm(x, y - 1) == M::Empty;
+        let vacuum = self.o2_at(y) <= 0.0;
+        let heat = self.climate.heat;
+        match m {
+            M::Water if open && (heat < 0 || vacuum) && self.rng.chance(0.6) => {
+                let c = Cell::new(M::Ice, &mut self.rng);
+                self.lset(x, y, c);
+            }
+            M::Water if open && heat > 0 && self.rng.chance(0.5) => {
+                let c = Cell::gas(M::Steam, &mut self.rng, 30, 70);
+                self.lset(x, y, c);
+            }
+            M::Lava if open && (heat < 0 || vacuum) && self.rng.chance(0.5) => {
+                let c = Cell::new(M::Basalt, &mut self.rng);
+                self.lset(x, y, c);
+            }
+            M::Ice | M::Snow if heat > 0 && !vacuum && self.rng.chance(0.7) => {
+                let c = Cell::new(M::Water, &mut self.rng);
+                self.lset(x, y, c);
+            }
+            _ => {}
+        }
+    }
+
     /// Slow background processes on random cells, like Minecraft's random ticks.
     fn random_ticks(&mut self, n: usize) {
         for _ in 0..n {
@@ -1065,6 +1165,7 @@ impl World {
                         self.lset(x, y, g);
                     }
                 }
+                M::Water | M::Lava | M::Ice | M::Snow => self.weather_tick(x, y, c.mat),
                 M::Grass => {
                     if self.lm(x, y - 1).solid() {
                         let mut d = Cell::new(M::Dirt, &mut self.rng);
