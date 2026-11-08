@@ -41,12 +41,45 @@ pub struct Blight {
     pub grown: f32,
     pub planet: (i32, i32),
     pub seed: u32,
+    /// The ragged edge, sampled around the circle.
+    table: Vec<f32>,
 }
 
+/// How big a void wasteland gets.
+pub const BLIGHT_RADIUS: f32 = 475.0;
+/// Inside this fraction of the radius the blast left an open crater.
+pub const CRATER: f32 = 0.12;
+const EDGE_SAMPLES: usize = 512;
+
 impl Blight {
+    pub fn new(x: f32, y: f32, r: f32, grown: f32, planet: (i32, i32), seed: u32) -> Blight {
+        let table = (0..EDGE_SAMPLES)
+            .map(|k| {
+                let a = k as f32 / EDGE_SAMPLES as f32 * std::f32::consts::TAU;
+                0.72 + 0.4 * fbm(a.cos() * 2.4 + 5.0, a.sin() * 2.4 + 5.0, 4, seed)
+            })
+            .collect();
+        Blight { x, y, r, grown, planet, seed, table }
+    }
+
     /// Ragged edge: how far the void reaches in direction `a`, as a fraction of `r`.
     pub fn reach(&self, a: f32) -> f32 {
-        0.72 + 0.4 * crate::noise::fbm(a.cos() * 1.8 + 5.0, a.sin() * 1.8 + 5.0, 3, self.seed)
+        let f = a.rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU * EDGE_SAMPLES as f32;
+        let i = f as usize % EDGE_SAMPLES;
+        let j = (i + 1) % EDGE_SAMPLES;
+        let t = f.fract();
+        self.table[i] * (1.0 - t) + self.table[j] * t
+    }
+
+    /// How deep into the wasteland (gx, gy) is: 0 at the blast, 1 at the edge, None outside.
+    pub fn depth(&self, gx: f32, gy: f32) -> Option<f32> {
+        let (dx, dy) = (gx - self.x, gy - self.y);
+        let d2 = dx * dx + dy * dy;
+        if d2 > (self.r * 1.13).powi(2) {
+            return None;
+        }
+        let deep = d2.sqrt() / (self.reach(dy.atan2(dx)) * self.r);
+        (deep < 1.0).then_some(deep)
     }
 
     /// 0 outside .. 1 deep inside (what's spread so far).
@@ -182,4 +215,36 @@ pub fn void_sky(gx: i32, gy: i32, t: f32) -> [f32; 3] {
         c = [230.0 * tw, 210.0 * tw, 255.0 * tw];
     }
     c
+}
+
+/// What a cell turns into inside the void, if anything. `deep` is 0 at the blast centre.
+pub fn void_material(m: crate::materials::Material, x: i32, y: i32, deep: f32, seed: u32) -> Option<crate::materials::Material> {
+    use crate::materials::{Kind, Material as M};
+    if m.indestructible() {
+        return None;
+    }
+    let new = if deep < CRATER {
+        // The crater: open space with chunks of void rock floating in it.
+        if m != M::Empty && fbm(x as f32 * 0.07, y as f32 * 0.07, 3, seed) > 0.6 { M::VoidRock } else { M::Empty }
+    } else {
+        match m.kind() {
+            Kind::Static => {
+                if fbm(x as f32 * 0.16, y as f32 * 0.16, 2, seed ^ 3) > 0.7 {
+                    M::VoidCrystal
+                } else {
+                    M::VoidRock
+                }
+            }
+            Kind::Powder => M::VoidDust,
+            Kind::Liquid if m != M::Lava => M::Empty,
+            Kind::Life => M::Empty,
+            _ => return None,
+        }
+    };
+    (new != m).then_some(new)
+}
+
+/// Height of the crystal spire growing from void ground at (x, y), if one grows there.
+pub fn spire(x: i32, y: i32, seed: u32) -> Option<i32> {
+    (hash3(x, y, seed) % 11 == 0).then(|| 2 + (hash3(x, y, seed ^ 9) % 6) as i32)
 }

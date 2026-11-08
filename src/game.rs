@@ -10,7 +10,7 @@ use crate::spells::{Card, Mods, Shot, Spells, SPELL_BAR};
 use crate::weather::Weather;
 use crate::planets::Planet;
 use crate::world::World;
-use crate::rift::{Blight, Rift, CLOSE_TIME, SHATTER_TIME};
+use crate::rift::{Blight, Rift, BLIGHT_RADIUS, CLOSE_TIME, CRATER, SHATTER_TIME};
 use crate::worldgen::{Generator, PORTAL_HOME};
 
 pub const STEP: f32 = 1.0 / 60.0;
@@ -944,7 +944,7 @@ impl Game {
         self.sounds.push(Sfx::Thunder);
         self.sounds.push(Sfx::Boom);
         let seed = self.fx.rng.next_u32();
-        self.blights.push(Blight { x, y, r: 95.0, grown: 0.0, planet: self.here(), seed });
+        self.blights.push(Blight::new(x, y, BLIGHT_RADIUS, 0.0, self.here(), seed));
         self.toast("THE RIFT SHATTERED", [255, 120, 220]);
         self.toast("THE VOID SPREADS", [170, 110, 255]);
         let _ = dt;
@@ -954,6 +954,10 @@ impl Game {
     /// under an open starry sky, and breathe glowing spores.
     fn step_blights(&mut self, dt: f32) {
         let here = self.here();
+        let n = self.blights.iter().filter(|b| b.planet == here).count();
+        if n != self.world.voids.len() {
+            self.world.voids = self.blights.iter().filter(|b| b.planet == here).cloned().collect();
+        }
         let (px, py) = self.player.center();
         for bi in 0..self.blights.len() {
             if self.blights[bi].planet != here {
@@ -962,20 +966,19 @@ impl Game {
             let b = self.blights[bi].clone();
             if b.grown < b.r {
                 let prev = b.grown;
-                let cur = (b.grown + dt * 42.0).min(b.r);
+                let cur = (b.grown + dt * 130.0).min(b.r);
                 self.blights[bi].grown = cur;
-                let ext = (cur * 1.15) as i32 + 2;
-                for dy in -ext..=ext {
-                    for dx in -ext..=ext {
-                        let d = ((dx * dx + dy * dy) as f32).sqrt();
-                        if d < prev * 0.7 || d > cur * 1.15 {
-                            continue;
-                        }
-                        let de = d / b.reach((dy as f32).atan2(dx as f32));
-                        if de < prev || de >= cur {
-                            continue;
-                        }
-                        self.voidify(b.x as i32 + dx, b.y as i32 + dy, de / b.r, &b);
+                // Rays out from the blast, converting the band the edge swept over this step.
+                let rays = (std::f32::consts::TAU * cur * 1.6).ceil().max(64.0) as usize;
+                for k in 0..rays {
+                    let a = k as f32 / rays as f32 * std::f32::consts::TAU;
+                    let (ux, uy) = (a.cos(), a.sin());
+                    let rr = b.reach(a);
+                    let mut d = prev * rr;
+                    while d < cur * rr {
+                        let (x, y) = ((b.x + ux * d).floor() as i32, (b.y + uy * d).floor() as i32);
+                        self.voidify(x, y, d / (rr * b.r), &b);
+                        d += 0.5;
                     }
                 }
                 // The spreading edge crackles.
@@ -1014,36 +1017,15 @@ impl Game {
         if deep < 0.88 {
             self.world.set_wall(x, y, 0);
         }
-        let n = crate::noise::fbm(x as f32 * 0.07, y as f32 * 0.07, 3, b.seed);
-        let new = if deep < 0.3 {
-            // The crater: open space with chunks of void rock left floating in it.
-            if c.mat != M::Empty && n > 0.6 { M::VoidRock } else { M::Empty }
-        } else {
-            match c.mat.kind() {
-                crate::materials::Kind::Static => {
-                    if crate::noise::fbm(x as f32 * 0.16, y as f32 * 0.16, 2, b.seed ^ 3) > 0.7 {
-                        M::VoidCrystal
-                    } else {
-                        M::VoidRock
-                    }
-                }
-                crate::materials::Kind::Powder => M::VoidDust,
-                crate::materials::Kind::Liquid if c.mat != M::Lava => M::Empty,
-                crate::materials::Kind::Life => M::Empty,
-                _ => return,
-            }
-        };
-        if new == c.mat {
-            return;
-        }
+        let Some(new) = crate::rift::void_material(c.mat, x, y, deep, b.seed) else { return };
         if new == M::Empty {
             self.world.set(x, y, Cell::EMPTY);
         } else {
             self.world.place(x, y, new);
         }
         // Crystal spires grow up from the new ground.
-        if new == M::VoidRock && deep > 0.3 && self.world.mat(x, y - 1) == M::Empty && crate::noise::hash3(x, y, b.seed) % 11 == 0 {
-            let h = 2 + (crate::noise::hash3(x, y, b.seed ^ 9) % 6) as i32;
+        if new == M::VoidRock && deep > CRATER && self.world.mat(x, y - 1) == M::Empty {
+            let Some(h) = crate::rift::spire(x, y, b.seed) else { return };
             for k in 1..=h {
                 if self.world.mat(x, y - k) != M::Empty {
                     break;
@@ -1129,7 +1111,11 @@ impl Game {
             Some(dir) => crate::saves::read_chunks(dir, self.planet.gx, self.planet.gy),
             None => Vec::new(),
         };
-        World::with_saved(gen, self.seed, at.0, at.1, saved)
+        let mut w = World::with_saved(gen, self.seed, at.0, at.1, saved);
+        let here = (self.planet.gx, self.planet.gy);
+        w.voids = self.blights.iter().filter(|b| b.planet == here).cloned().collect();
+        w.void_all();
+        w
     }
 
     fn save_chunks(&self) {
@@ -1212,7 +1198,7 @@ impl Game {
         for (_, v) in meta.iter().filter(|(k, _)| k == "blight") {
             let n: Vec<f32> = v.split(',').filter_map(|x| x.parse().ok()).collect();
             if n.len() == 6 {
-                g.blights.push(Blight { x: n[2], y: n[3], r: n[4], grown: n[4], planet: (n[0] as i32, n[1] as i32), seed: n[5] as u32 });
+                g.blights.push(Blight::new(n[2], n[3], n[4], n[4], (n[0] as i32, n[1] as i32), n[5] as u32));
             }
         }
         for (_, v) in meta.iter().filter(|(k, _)| k == "rift") {

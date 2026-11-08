@@ -42,6 +42,8 @@ pub struct World {
     pub cells: Vec<Cell>,
     /// Background wall shade per cell; 0 means open sky.
     pub wall: Vec<u8>,
+    /// Void wastelands on this planet: chunks entering the window inside one are voided.
+    pub voids: Vec<crate::rift::Blight>,
     /// Global coordinate of the window's top-left cell.
     pub ox: i32,
     pub oy: i32,
@@ -79,6 +81,7 @@ impl World {
         let mut w = World {
             cells: vec![Cell::EMPTY; WW * WH],
             wall: vec![0; WW * WH],
+            voids: Vec::new(),
             ox: (pcx - 5) * CHUNK,
             oy: (pcy - 4) * CHUNK,
             surf: vec![0; WW],
@@ -237,9 +240,11 @@ impl World {
                             }
                         }
                     }
+                    self.void_chunk(i, j);
                 } else {
                     let (c, w) = self.gen.chunk(gcx, gcy);
                     self.blit(i, j, &c, &w);
+                    self.void_chunk(i, j);
                 }
             }
         }
@@ -400,6 +405,74 @@ impl World {
         } else {
             M::Empty
         }
+    }
+
+    /// Turn the parts of window chunk (i, j) that lie in a void wasteland into void.
+    fn void_chunk(&mut self, i: i32, j: i32) {
+        if self.voids.is_empty() {
+            return;
+        }
+        let voids = std::mem::take(&mut self.voids);
+        let (lx0, ly0) = (i * CHUNK, j * CHUNK);
+        let (gx0, gy0) = (self.ox + lx0, self.oy + ly0);
+        for b in &voids {
+            let reach = b.r * 1.13;
+            if b.x + reach < gx0 as f32 || b.x - reach > (gx0 + CHUNK) as f32 || b.y + reach < gy0 as f32 || b.y - reach > (gy0 + CHUNK) as f32 {
+                continue;
+            }
+            for y in 0..CHUNK {
+                for x in 0..CHUNK {
+                    let (gx, gy) = (gx0 + x, gy0 + y);
+                    let Some(deep) = b.depth(gx as f32 + 0.5, gy as f32 + 0.5) else { continue };
+                    let li = Self::li(lx0 + x, ly0 + y);
+                    let c = self.cells[li];
+                    if c.mat.indestructible() {
+                        continue;
+                    }
+                    self.cells[li].back = M::Empty;
+                    if deep < 0.88 {
+                        self.wall[li] = 0;
+                    }
+                    if let Some(m) = crate::rift::void_material(c.mat, gx, gy, deep, b.seed) {
+                        let cell = if m == M::Empty { Cell::EMPTY } else { Cell::new(m, &mut self.rng) };
+                        self.lset(lx0 + x, ly0 + y, cell);
+                    }
+                }
+            }
+            // Spires on the new ground.
+            for y in 1..CHUNK {
+                for x in 0..CHUNK {
+                    let (gx, gy) = (gx0 + x, gy0 + y);
+                    if self.cells[Self::li(lx0 + x, ly0 + y)].mat != M::VoidRock || self.cells[Self::li(lx0 + x, ly0 + y - 1)].mat != M::Empty {
+                        continue;
+                    }
+                    let Some(deep) = b.depth(gx as f32, gy as f32) else { continue };
+                    if deep < crate::rift::CRATER {
+                        continue;
+                    }
+                    if let Some(h) = crate::rift::spire(gx, gy, b.seed) {
+                        for k in 1..=h.min(y) {
+                            if self.cells[Self::li(lx0 + x, ly0 + y - k)].mat != M::Empty {
+                                break;
+                            }
+                            let c = Cell::new(M::VoidCrystal, &mut self.rng);
+                            self.lset(lx0 + x, ly0 + y - k, c);
+                        }
+                    }
+                }
+            }
+        }
+        self.voids = voids;
+    }
+
+    /// Void every chunk in the window (after building a world inside a wasteland).
+    pub fn void_all(&mut self) {
+        for j in 0..WCY {
+            for i in 0..WCX {
+                self.void_chunk(i, j);
+            }
+        }
+        self.update_surf();
     }
 
     /// Change the background wall (0 = open sky behind).
