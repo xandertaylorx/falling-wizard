@@ -218,7 +218,15 @@ struct Proj {
     vy: f32,
     life: f32,
     bounces: u32,
+    /// Spark Bolt combo: blast power multiplier (1.0 = standard, capped at SPARK_MAX_BOOST).
+    boost: f32,
 }
+
+/// Spark Bolts fired within this many seconds of each other build up a stronger blast.
+const SPARK_COMBO_WINDOW: f32 = 0.7;
+/// Extra blast power per chained Spark Bolt, and the cap (3.5x the standard blast).
+const SPARK_BOOST_STEP: f32 = 0.5;
+const SPARK_MAX_BOOST: f32 = 3.5;
 
 impl Proj {
     fn radius(&self) -> i32 {
@@ -229,7 +237,8 @@ impl Proj {
             Card::AcidBall => 4,
             _ => 3,
         };
-        (base as f32 * (1.0 + 0.5 * self.mods.heavy as f32)) as i32
+        // Blast area grows with the boost, so the radius grows with its square root.
+        (base as f32 * (1.0 + 0.5 * self.mods.heavy as f32) * self.boost.sqrt()) as i32
     }
     fn damage(&self) -> f32 {
         let base = match self.card {
@@ -240,7 +249,7 @@ impl Proj {
             Card::AcidBall => 14.0,
             _ => 4.0,
         };
-        base * (1.0 + 0.6 * self.mods.heavy as f32)
+        base * (1.0 + 0.6 * self.mods.heavy as f32) * self.boost
     }
 }
 
@@ -316,6 +325,9 @@ pub struct Spells {
     grab_at: Option<(f32, f32)>,
     pub storms: Vec<Storm>,
     time: f32,
+    /// Spark Bolt combo: the current blast multiplier and when the last bolt was fired.
+    spark_boost: f32,
+    spark_at: f32,
     /// Where a teleport bolt landed, consumed by the game.
     pub teleport: Option<(f32, f32)>,
     beam: Option<(f32, f32, f32, f32)>,
@@ -339,7 +351,7 @@ pub struct Spells {
 
 impl Spells {
     pub fn new() -> Self {
-        Self { projs: Vec::new(), aim: (0.0, 0.0), stream: Vec::new(), ray: None, charge: 0.0, charge_at: (0.0, 0.0), zap_t: 0.0, elec_t: 0.0, held: Vec::new(), grab_at: None, storms: Vec::new(), time: 0.0, teleport: None, beam: None, bolts: Vec::new(), holes: Vec::new(), rifts_born: Vec::new(), rift_zones: Vec::new(), rift_hits: Vec::new(), zaps: Vec::new(), tornadoes: Vec::new(), portal_hue: 0.58, portal_hits: Vec::new(), sounds: Vec::new() }
+        Self { projs: Vec::new(), aim: (0.0, 0.0), stream: Vec::new(), ray: None, charge: 0.0, charge_at: (0.0, 0.0), zap_t: 0.0, elec_t: 0.0, held: Vec::new(), grab_at: None, storms: Vec::new(), time: 0.0, spark_boost: 1.0, spark_at: -10.0, teleport: None, beam: None, bolts: Vec::new(), holes: Vec::new(), rifts_born: Vec::new(), rift_zones: Vec::new(), rift_hits: Vec::new(), zaps: Vec::new(), tornadoes: Vec::new(), portal_hue: 0.58, portal_hits: Vec::new(), sounds: Vec::new() }
     }
 
     pub fn clear(&mut self) {
@@ -534,6 +546,18 @@ impl Spells {
         };
         self.sounds.push(sfx);
         let speed = speed * speed_mul;
+        let mut boost = 1.0;
+        if shot.card == Card::Spark {
+            if self.time == self.spark_at {
+                // Same cast (multishot): every bolt shares one boost.
+            } else if self.time - self.spark_at < SPARK_COMBO_WINDOW {
+                self.spark_boost = (self.spark_boost + SPARK_BOOST_STEP).min(SPARK_MAX_BOOST);
+            } else {
+                self.spark_boost = 1.0;
+            }
+            self.spark_at = self.time;
+            boost = self.spark_boost;
+        }
         self.projs.push(Proj {
             card: shot.card,
             mods: shot.mods.clone(),
@@ -544,6 +568,7 @@ impl Spells {
             vy: uy * speed - lift,
             life,
             bounces: shot.mods.bounces + if shot.card == Card::Bomb { 99 } else { 0 },
+            boost,
         });
         0
     }
