@@ -27,7 +27,16 @@ pub const SCH: usize = WH / SC;
 const SPC: usize = CU / SC;
 
 const N4: [(i32, i32); 4] = [(0, 1), (-1, 0), (1, 0), (0, -1)];
-const N8: [(i32, i32); 8] = [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)];
+const N8: [(i32, i32); 8] = [
+    (-1, -1),
+    (0, -1),
+    (1, -1),
+    (-1, 0),
+    (1, 0),
+    (-1, 1),
+    (0, 1),
+    (1, 1),
+];
 
 /// A chunk as saved to disk: position, cells and background wall.
 pub type SavedChunk = ((i32, i32), Vec<Cell>, Vec<u8>);
@@ -99,11 +108,22 @@ impl World {
             active_chunks: 0,
             explosions: Vec::new(),
             wind: 0.0,
-            climate: crate::planets::Climate { o2: 1.0, heat: 0, atmo: 480 },
+            climate: crate::planets::Climate {
+                o2: 1.0,
+                heat: 0,
+                atmo: 480,
+            },
         };
         w.climate = w.gen.planet.climate();
         for (key, cells, wall) in saved {
-            w.store.insert(key, Stored { cells, wall, dirty: true });
+            w.store.insert(
+                key,
+                Stored {
+                    cells,
+                    wall,
+                    dirty: true,
+                },
+            );
         }
         for j in 0..WCY {
             for i in 0..WCX {
@@ -128,7 +148,12 @@ impl World {
 
     /// Every chunk that differs from freshly generated terrain, for saving.
     pub fn export(&self) -> Vec<SavedChunk> {
-        let mut out: Vec<SavedChunk> = self.store.iter().filter(|(_, s)| s.dirty).map(|(k, s)| (*k, s.cells.clone(), s.wall.clone())).collect();
+        let mut out: Vec<SavedChunk> = self
+            .store
+            .iter()
+            .filter(|(_, s)| s.dirty)
+            .map(|(k, s)| (*k, s.cells.clone(), s.wall.clone()))
+            .collect();
         let (cx0, cy0) = (self.ox.div_euclid(CHUNK), self.oy.div_euclid(CHUNK));
         for j in 0..WCY {
             for i in 0..WCX {
@@ -180,8 +205,20 @@ impl World {
         let pcy = (gy.floor() as i32).div_euclid(CHUNK);
         let (cx0, cy0) = (self.ox.div_euclid(CHUNK), self.oy.div_euclid(CHUNK));
         let (ix, iy) = (pcx - cx0, pcy - cy0);
-        let ncx0 = if ix < 4 { pcx - 4 } else if ix > 5 { pcx - 5 } else { cx0 };
-        let ncy0 = if iy < 3 { pcy - 3 } else if iy > 4 { pcy - 4 } else { cy0 };
+        let ncx0 = if ix < 4 {
+            pcx - 4
+        } else if ix > 5 {
+            pcx - 5
+        } else {
+            cx0
+        };
+        let ncy0 = if iy < 3 {
+            pcy - 3
+        } else if iy > 4 {
+            pcy - 4
+        } else {
+            cy0
+        };
         if (ncx0, ncy0) != (cx0, cy0) {
             self.shift_to(ncx0, ncy0);
         }
@@ -209,7 +246,14 @@ impl World {
                     cells.extend_from_slice(&old_cells[src..src + CU]);
                     wall.extend_from_slice(&old_wall[src..src + CU]);
                 }
-                self.store.insert((gcx, gcy), Stored { cells, wall, dirty: true });
+                self.store.insert(
+                    (gcx, gcy),
+                    Stored {
+                        cells,
+                        wall,
+                        dirty: true,
+                    },
+                );
             }
         }
 
@@ -240,7 +284,8 @@ impl World {
                     if s.dirty {
                         for sy in 0..SPC {
                             for sx in 0..SPC {
-                                self.next[(j as usize * SPC + sy) * SCW + i as usize * SPC + sx] = true;
+                                self.next[(j as usize * SPC + sy) * SCW + i as usize * SPC + sx] =
+                                    true;
                             }
                         }
                     }
@@ -254,7 +299,8 @@ impl World {
         }
         self.update_surf();
         self.store.retain(|&(cx, cy), s| {
-            s.dirty || (cx >= ncx0 - 3 && cx < ncx0 + WCX + 3 && cy >= ncy0 - 3 && cy < ncy0 + WCY + 3)
+            s.dirty
+                || (cx >= ncx0 - 3 && cx < ncx0 + WCX + 3 && cy >= ncy0 - 3 && cy < ncy0 + WCY + 3)
         });
     }
 
@@ -272,7 +318,14 @@ impl World {
                     continue;
                 }
                 let (cells, wall) = self.gen.chunk(k.0, k.1);
-                self.store.insert(k, Stored { cells, wall, dirty: false });
+                self.store.insert(
+                    k,
+                    Stored {
+                        cells,
+                        wall,
+                        dirty: false,
+                    },
+                );
                 done += 1;
                 if done >= budget {
                     return;
@@ -421,13 +474,19 @@ impl World {
         let (gx0, gy0) = (self.ox + lx0, self.oy + ly0);
         for b in &voids {
             let reach = b.r * 1.13;
-            if b.x + reach < gx0 as f32 || b.x - reach > (gx0 + CHUNK) as f32 || b.y + reach < gy0 as f32 || b.y - reach > (gy0 + CHUNK) as f32 {
+            if b.x + reach < gx0 as f32
+                || b.x - reach > (gx0 + CHUNK) as f32
+                || b.y + reach < gy0 as f32
+                || b.y - reach > (gy0 + CHUNK) as f32
+            {
                 continue;
             }
             for y in 0..CHUNK {
                 for x in 0..CHUNK {
                     let (gx, gy) = (gx0 + x, gy0 + y);
-                    let Some(deep) = b.depth(gx as f32 + 0.5, gy as f32 + 0.5) else { continue };
+                    let Some(deep) = b.depth(gx as f32 + 0.5, gy as f32 + 0.5) else {
+                        continue;
+                    };
                     let li = Self::li(lx0 + x, ly0 + y);
                     let c = self.cells[li];
                     if c.mat.indestructible() {
@@ -438,7 +497,11 @@ impl World {
                         self.wall[li] = 0;
                     }
                     if let Some(m) = crate::rift::void_material(c.mat, gx, gy, deep, b.seed) {
-                        let cell = if m == M::Empty { Cell::EMPTY } else { Cell::new(m, &mut self.rng) };
+                        let cell = if m == M::Empty {
+                            Cell::EMPTY
+                        } else {
+                            Cell::new(m, &mut self.rng)
+                        };
                         self.lset(lx0 + x, ly0 + y, cell);
                     }
                 }
@@ -447,10 +510,14 @@ impl World {
             for y in 1..CHUNK {
                 for x in 0..CHUNK {
                     let (gx, gy) = (gx0 + x, gy0 + y);
-                    if self.cells[Self::li(lx0 + x, ly0 + y)].mat != M::VoidRock || self.cells[Self::li(lx0 + x, ly0 + y - 1)].mat != M::Empty {
+                    if self.cells[Self::li(lx0 + x, ly0 + y)].mat != M::VoidRock
+                        || self.cells[Self::li(lx0 + x, ly0 + y - 1)].mat != M::Empty
+                    {
                         continue;
                     }
-                    let Some(deep) = b.depth(gx as f32, gy as f32) else { continue };
+                    let Some(deep) = b.depth(gx as f32, gy as f32) else {
+                        continue;
+                    };
                     if deep < crate::rift::CRATER {
                         continue;
                     }
@@ -583,7 +650,8 @@ impl World {
                 if self.rng.chance(0.12) && self.explosions.len() < 200 {
                     let n = self.oil_density(x, y);
                     if n >= 55 {
-                        self.explosions.push((x + self.ox, y + self.oy, (n / 11).clamp(5, 11)));
+                        self.explosions
+                            .push((x + self.ox, y + self.oy, (n / 11).clamp(5, 11)));
                     }
                 }
                 let f = Cell::burning(m, &mut self.rng);
@@ -741,7 +809,11 @@ impl World {
             for dy in -2i32..=1 {
                 for dx in -2i32..=2 {
                     let (lx, ly) = (x + dx, y + dy);
-                    if dx * dx + dy * dy <= 5 && Self::inb(lx, ly) && self.cells[Self::li(lx, ly)].back == M::Empty && self.rng.chance(0.8) {
+                    if dx * dx + dy * dy <= 5
+                        && Self::inb(lx, ly)
+                        && self.cells[Self::li(lx, ly)].back == M::Empty
+                        && self.rng.chance(0.8)
+                    {
                         self.cells[Self::li(lx, ly)].back = M::Leaves;
                     }
                 }
@@ -751,7 +823,13 @@ impl World {
             return;
         }
         let r = self.rng.f32();
-        let dx = if r < 0.6 { 0 } else if r < 0.8 { -1 } else { 1 };
+        let dx = if r < 0.6 {
+            0
+        } else if r < 0.8 {
+            -1
+        } else {
+            1
+        };
         if self.lm(x + dx, y - 1) == M::Empty {
             self.lset(x, y, Cell::EMPTY);
             self.cells[Self::li(x, y)].back = M::Plant;
@@ -827,14 +905,26 @@ impl World {
                 self.swap(x, y, x, y - 1);
                 return;
             }
-            let (dx, dy) = if r < 0.25 { (0, -1) } else if r < 0.5 { (self.rng.sign(), 0) } else if r < 0.6 { (0, 1) } else { return };
+            let (dx, dy) = if r < 0.25 {
+                (0, -1)
+            } else if r < 0.5 {
+                (self.rng.sign(), 0)
+            } else if r < 0.6 {
+                (0, 1)
+            } else {
+                return;
+            };
             if self.lm(x + dx, y + dy) == M::Empty {
                 self.swap(x, y, x + dx, y + dy);
             }
             return;
         }
         let steam = c.mat == M::Steam;
-        let decay = if self.rng.chance(if steam { 0.8 } else { 0.6 }) { 1 } else { 0 };
+        let decay = if self.rng.chance(if steam { 0.8 } else { 0.6 }) {
+            1
+        } else {
+            0
+        };
         let life = c.life.saturating_sub(decay);
         if life == 0 {
             let rain = match self.climate.heat {
@@ -861,7 +951,11 @@ impl World {
             }
         }
         let w = self.wind;
-        let dir = if self.rng.chance((w.abs() / 60.0).min(0.85)) { w.signum() as i32 } else { self.rng.sign() };
+        let dir = if self.rng.chance((w.abs() / 60.0).min(0.85)) {
+            w.signum() as i32
+        } else {
+            self.rng.sign()
+        };
         for dx in [dir, -dir] {
             if self.lm(x + dx, y - 1) == M::Empty {
                 self.swap(x, y, x + dx, y - 1);
@@ -881,7 +975,10 @@ impl World {
 
         // Smothered: sand, dirt, snow or ash dropped on a flame puts it out.
         let above = self.lm(x, y - 1);
-        if above.kind() == Kind::Powder && !above.flammable() && self.rng.chance(if falls { 0.08 } else { 0.3 }) {
+        if above.kind() == Kind::Powder
+            && !above.flammable()
+            && self.rng.chance(if falls { 0.08 } else { 0.3 })
+        {
             let s = Cell::gas(M::Smoke, &mut self.rng, 20, 60);
             self.lset(x, y, s);
             return;
@@ -903,7 +1000,8 @@ impl World {
                 }
                 continue;
             }
-            if self.lm(x + dx, y + dy) == M::Water && self.rng.chance(if fuel { 0.3 } else { 0.8 }) {
+            if self.lm(x + dx, y + dy) == M::Water && self.rng.chance(if fuel { 0.3 } else { 0.8 })
+            {
                 let s = Cell::gas(M::Steam, &mut self.rng, 30, 70);
                 self.lset(x, y, s);
                 if self.rng.chance(0.15) {
@@ -917,7 +1015,10 @@ impl World {
         // Fire needs air: it spreads faster in rich atmospheres and chokes in thin ones.
         let o2 = self.o2_at(y);
         let (hmin, hmax) = if fuel { (10, 45) } else { (25, 70) };
-        let (hmin, hmax) = ((hmin as f32 * o2.min(1.6)) as i32, ((hmax as f32 * o2.min(1.6)) as i32).max(1));
+        let (hmin, hmax) = (
+            (hmin as f32 * o2.min(1.6)) as i32,
+            ((hmax as f32 * o2.min(1.6)) as i32).max(1),
+        );
         if self.cells[Self::li(x, y)].back.flammable() && self.rng.chance(0.08) {
             let b = self.cells[Self::li(x, y)].back;
             self.cells[Self::li(x, y)].back = M::Empty;
@@ -953,7 +1054,9 @@ impl World {
                 }
                 _ => {
                     if let Some(b) = m.burn() {
-                        let t = self.cells[ni].temp.saturating_add(self.rng.range(hmin, hmax) as u8);
+                        let t = self.cells[ni]
+                            .temp
+                            .saturating_add(self.rng.range(hmin, hmax) as u8);
                         if t >= b.ignite {
                             self.ignite(nx, ny, m);
                         } else {
@@ -1031,7 +1134,11 @@ impl World {
                     }
                     if self.rng.chance(0.5) {
                         // Quenched from above it freezes to glassy obsidian, otherwise basalt.
-                        let m = if dy < 0 && self.rng.chance(0.6) { M::Obsidian } else { M::Basalt };
+                        let m = if dy < 0 && self.rng.chance(0.6) {
+                            M::Obsidian
+                        } else {
+                            M::Basalt
+                        };
                         let b = Cell::new(m, &mut self.rng);
                         self.lset(x, y, b);
                         return true;
@@ -1057,7 +1164,9 @@ impl World {
                 _ => {
                     if let Some(b) = m.burn() {
                         busy = true;
-                        let t = self.cells[ni].temp.saturating_add(self.rng.range(30, 80) as u8);
+                        let t = self.cells[ni]
+                            .temp
+                            .saturating_add(self.rng.range(30, 80) as u8);
                         if t >= b.ignite {
                             self.ignite(nx, ny, m);
                         } else {
@@ -1069,7 +1178,10 @@ impl World {
         }
         for (dx, dy) in N8 {
             let (nx, ny) = (x + dx, y + dy);
-            if Self::inb(nx, ny) && self.cells[Self::li(nx, ny)].back.flammable() && self.rng.chance(0.05) {
+            if Self::inb(nx, ny)
+                && self.cells[Self::li(nx, ny)].back.flammable()
+                && self.rng.chance(0.05)
+            {
                 self.burn_back(nx, ny);
                 busy = true;
             }
