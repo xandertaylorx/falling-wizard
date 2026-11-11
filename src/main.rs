@@ -17,6 +17,8 @@ mod ui;
 mod updater;
 mod weather;
 mod world;
+mod voxel;
+mod play3d;
 mod worldgen;
 
 use std::time::Instant;
@@ -60,7 +62,15 @@ fn main() {
         bench();
         return;
     }
-    macroquad::Window::from_config(conf(), run(args));
+    // Big draw buffers so whole voxel chunk meshes go out in one call.
+    let cfg = macroquad::conf::Conf {
+        miniquad_conf: conf(),
+        update_on: None,
+        default_filter_mode: FilterMode::Linear,
+        draw_call_vertex_capacity: 70_000,
+        draw_call_index_capacity: 110_000,
+    };
+    macroquad::Window::from_config(cfg, run(args));
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -78,6 +88,8 @@ enum Screen {
     Worlds,
     /// Falling through a rift: the inside of a black hole.
     Rift,
+    /// Playing a 3D voxel world.
+    Play3D,
 }
 
 const RIFT_TRIP: f32 = 11.0;
@@ -254,6 +266,8 @@ struct App {
     world_scroll: usize,
     /// Esc pressed this frame and not yet handled (so one press can't open and close a menu).
     esc: bool,
+    /// The 3D world being played, if any.
+    w3: Option<play3d::Play3D>,
 }
 
 async fn run(args: Vec<String>) {
@@ -305,6 +319,7 @@ async fn run(args: Vec<String>) {
         world_del: false,
         world_scroll: 0,
         esc: false,
+        w3: None,
     };
 
     let t0 = get_time();
@@ -545,6 +560,10 @@ impl App {
     }
 
     fn frame(&mut self, dt: f32, script: Option<Controls>) {
+        if self.screen == Screen::Play3D {
+            self.frame3d(dt);
+            return;
+        }
         self.esc = is_key_pressed(KeyCode::Escape);
         let (sw, sh) = (screen_width(), screen_height());
         if let Some(a) = &mut self.audio {
@@ -765,7 +784,7 @@ impl App {
                     self.screen = Screen::Play;
                 }
             }
-            Screen::Warp | Screen::Rift => {}
+            Screen::Warp | Screen::Rift | Screen::Play3D => {}
             Screen::NewWorld => self.new_world_screen(),
             Screen::Worlds => self.worlds_screen(),
             Screen::Chat => {
@@ -1456,6 +1475,11 @@ impl App {
         if self.ui.segmented("START ON", x, y, w, &["EARTH", "RANDOM PLANET"], &mut v) {
             self.nw.alien_start = v == 1;
         }
+        y += 34.0;
+        let mut v = self.nw.three_d as usize;
+        if self.ui.segmented("WORLD", x, y, w, &["2D", "3D ISLAND"], &mut v) {
+            self.nw.three_d = v == 1;
+        }
         y += 56.0;
         draw_rectangle(x + w * 0.5 - 230.0, y, 220.0, 34.0, Color::new(1.0, 0.71, 0.29, 0.9));
         if self.ui.button("CREATE WORLD", x + w * 0.5 - 120.0, y, 220.0) || is_key_pressed(KeyCode::Enter) {
@@ -1465,6 +1489,14 @@ impl App {
                 opts.name = "New World".into();
             }
             let dir = saves::new_dir(&opts.name);
+            if opts.three_d {
+                let mut w = play3d::Play3D::new(opts.name.clone(), seed, opts.creative);
+                w.dir = Some(dir);
+                w.save();
+                self.w3 = Some(w);
+                self.screen = Screen::Play3D;
+                return;
+            }
             self.game = Game::with_options(opts);
             self.game.save_dir = Some(dir);
             self.game.save();
@@ -1494,8 +1526,40 @@ impl App {
         self.screen = Screen::NewWorld;
     }
 
+    /// One frame of a 3D world: its own update, drawing, pause menu and sound.
+    fn frame3d(&mut self, dt: f32) {
+        let Some(w) = &mut self.w3 else {
+            self.screen = Screen::Menu;
+            return;
+        };
+        w.update(dt, &mut self.ui);
+        w.draw(&mut self.ui);
+        let exit = w.pause_menu(&mut self.ui);
+        if let Some(a) = &mut self.audio {
+            a.master = self.settings.master;
+            a.effects = self.settings.effects;
+            a.ambience = self.settings.ambience;
+            for s in w.sounds.drain(..) {
+                a.play(s);
+            }
+            a.update(dt, w.vox.fires.len().min(400), 0);
+        } else {
+            w.sounds.clear();
+        }
+        if matches!(exit, play3d::Exit::Menu) {
+            self.w3 = None;
+            self.screen = Screen::Menu;
+        }
+    }
+
     fn play_world(&mut self, i: usize) {
         let Some(info) = self.worlds.get(i) else { return };
+        if let Some(w) = play3d::Play3D::load(&info.dir) {
+            self.w3 = Some(w);
+            self.menu_x = 0.0;
+            self.screen = Screen::Play3D;
+            return;
+        }
         match Game::load(&info.dir) {
             Some(g) => {
                 self.game = g;

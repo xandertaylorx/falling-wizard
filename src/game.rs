@@ -64,11 +64,13 @@ pub struct WorldOptions {
     pub weather: bool,
     /// Start on a random planet instead of Earth.
     pub alien_start: bool,
+    /// A 3D voxel island instead of the 2D world.
+    pub three_d: bool,
 }
 
 impl WorldOptions {
     pub fn new(seed: u64) -> Self {
-        Self { name: "New World".into(), seed, creative: true, commands: true, creatures: 1, weather: true, alien_start: false }
+        Self { name: "New World".into(), seed, creative: true, commands: true, creatures: 1, weather: true, alien_start: false, three_d: false }
     }
 }
 
@@ -1439,6 +1441,7 @@ impl Game {
             creatures: get("creatures").parse().unwrap_or(1),
             weather: get("weather") != "false",
             alien_start: false,
+            three_d: false,
         };
         let alien = get("alien_start") == "true";
         let mut g = Game::with_options(options);

@@ -114,6 +114,14 @@ Saving happens every 60 s, before warping, on Pause → Main Menu, and on Quit. 
 - **Animation state:** `Mob` fields `pose`, `walk`, `st` (a behaviour timer), `attack_t` and `angry`.
 - **Exceptions:** Worm and Dragon still use the segment drawing in `mobs.rs`.
 
+### 3D worlds (`voxel.rs`, `play3d.rs`)
+
+Choosing "3D ISLAND" on the Create World screen makes a voxel world instead (`WorldOptions::three_d`), played on `Screen::Play3D` through `App::frame3d`, which bypasses the 2D game entirely.
+- **`voxel.rs`:** a fixed 192x80x192 island of `Material` bytes. Generation covers caves, lava, beaches, snow peaks, oak, pine, blossom and giant trees, meadows and a ring of standing stones. Falling-sand rules run on an active list at 30 Hz: powders, flowing water and lava, lava+water to stone/obsidian, and spreading fire. 16^3 chunk meshes are rebuilt when dirty, with baked AO, sky light and traced sun shadows.
+- **`play3d.rs`:** third-person wizard with mouse look (cursor grabbed), walking, creative flight, broom (M), spells 1-6 (fireball/fire beam, lightning, frost, bomb, dig, build) and particles. A fog and grading shader is used for chunk meshes. Water uses a depth-writing pipeline because depth-write-off pipelines lose the depth test on this backend.
+- **Saves:** `world.txt` with `dim=3d` and `pos3=`, plus `voxels.bin` (RLE, magic `FWV1`). `play_world` tries `Play3D::load` first.
+- macroquad's draw buffers are raised in `main()` (`draw_call_vertex_capacity`) so whole chunk meshes fit in one draw call.
+
 ### Other modules
 
 - **`spells.rs`:** the 18 spells in `SPELL_BAR` (keys 1–0, -, =, Q, R, G, P, V, C), projectiles, black holes, tornadoes and the wind `gust`. Cards with `beam_after()` become held beams via `beam_tick` (lightning stream, `inferno` fire beam, `frost_ray`, Gravity Gun); holding a beam on one spot builds `charge`. `Storm` clouds rain and strike.
