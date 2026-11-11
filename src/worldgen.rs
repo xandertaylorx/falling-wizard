@@ -68,6 +68,10 @@ enum Style {
     Cactus,
     Shroom,
     Crystal,
+    /// Cherry blossom: a crooked trunk under a pink cloud.
+    Blossom,
+    /// A rare ancient giant with flared roots and a layered canopy.
+    Great,
     None,
 }
 
@@ -79,6 +83,10 @@ impl Generator {
     pub fn with_planet(seed: u64, planet: Planet) -> Self {
         let seed = planet.world_seed(seed);
         Self { s: (seed ^ (seed >> 32)) as u32, planet }
+    }
+
+    pub fn seed_u32(&self) -> u32 {
+        self.s
     }
 
     fn alien(&self) -> bool {
@@ -464,7 +472,9 @@ impl Generator {
                 let y = y0 + ly;
                 let i = ly as usize * CU + lx as usize;
                 let (m, w, shade) = self.base(x, y, surf, biome, topsoil, &mut rng);
-                if m == M::Plant {
+                if m == M::Mushroom || m == M::Flower {
+                    cells[i].back = m;
+                } else if m == M::Plant {
                     cells[i].back = M::Plant;
                     if y >= self.sea_level() && y < surf {
                         cells[i].mat = self.planet.sea.unwrap_or(M::Water);
@@ -483,6 +493,7 @@ impl Generator {
         self.stamp_vents(cx, cy, &mut cells, &mut rng);
         self.stamp_portals(cx, cy, &mut cells, &mut rng);
         self.stamp_ruins(cx, cy, &mut cells, &mut rng);
+        self.stamp_landmarks(cx, cy, &mut cells, &mut rng);
         self.stamp_trees(cx, cy, &mut cells, &mut rng);
         if y0 < -100 {
             self.stamp_sky(cx, cy, &mut cells, &mut rng);
@@ -506,11 +517,16 @@ impl Generator {
                 }
                 return (M::Water, 0, None);
             }
-            // Grass tufts and flowers just above grassy ground.
-            if biome.green() && d >= -2 {
-                let tall = h % 9 == 0;
-                let dense = if biome == Biome::Plains { h % 2 == 0 } else { h % 3 == 0 };
-                if (d == -1 && dense) || (d == -2 && tall) {
+            // Grass tufts and flowers just above grassy ground; meadows burst with colour.
+            if biome.green() && d >= -3 {
+                let meadow = fbm(x as f32 * 0.008, 3.0, 2, self.s.wrapping_add(50));
+                let bloom = meadow > 0.56 || biome == Biome::Plains && meadow > 0.48;
+                let tall = h % if bloom { 4 } else { 9 } == 0;
+                let dense = if biome == Biome::Plains || bloom { h % 5 != 0 } else { h % 3 == 0 };
+                if d == -1 && bloom && h % 3 == 0 || d == -2 && bloom && h % 7 == 0 {
+                    return (M::Flower, 0, None);
+                }
+                if (d == -1 && dense) || (d == -2 && tall) || (d == -3 && bloom && h % 13 == 0) {
                     return (M::Plant, 0, None);
                 }
             }
@@ -519,23 +535,48 @@ impl Generator {
         let (fx, fy) = (x as f32, y as f32);
         let s = self.s;
 
-        // Caves: none right under the surface, wider and more frequent with depth.
         let n = fbm(fx * 0.024, fy * 0.05, 4, s.wrapping_add(1));
         let wall = 1 + (n * 200.0) as u8;
-        let cave_thr = 0.71 - ((d - 12) as f32 / 500.0).clamp(0.0, 0.11);
-        let mut open = d > 12 && n > cave_thr;
-        if !open && d > 6 {
-            let worm = (fbm(fx * 0.012, fy * 0.022, 3, s.wrapping_add(2)) - 0.5).abs();
-            open = worm < 0.02 + (d as f32 / 3000.0).min(0.012);
-        }
-        if !open && d > 170 {
-            open = fbm(fx * 0.007, fy * 0.012, 3, s.wrapping_add(3)) > 0.62;
-        }
+        let open = self.cave_open(x, y, d, n);
+        // Deep below, caverns get a character of their own: crystal grottos and glowing
+        // mushroom groves, found by checking for open space just above or below.
+        let zone = if d > 190 { fbm(fx * 0.005, fy * 0.007, 2, s.wrapping_add(34)) } else { 0.5 };
+        let grotto = zone < 0.42;
+        let grove = zone > 0.6;
         if open {
-            if d > 60 && d < 280 && fbm(fx * 0.02, fy * 0.03, 2, s.wrapping_add(20)) > 0.69 {
+            if d > 60 && d < 280 && !grotto && !grove && fbm(fx * 0.02, fy * 0.03, 2, s.wrapping_add(20)) > 0.69 {
                 return (M::Gas, wall, None);
             }
+            if grotto || grove {
+                let h = hash3(x, 61, s);
+                let tall = 1 + (h >> 4) as i32 % if grotto { 6 } else { 2 };
+                let floor = (1..=tall).find(|&k| !self.cave_open(x, y + k, d + k, fbm(fx * 0.024, (fy + k as f32) * 0.05, 4, s.wrapping_add(1))));
+                if let Some(k) = floor {
+                    if grotto && h % 3 == 0 && k <= tall {
+                        return (M::Crystal, wall, None); // crystal spikes on the floor
+                    }
+                    if grove && k == 1 && h % 4 != 0 {
+                        return (M::Mushroom, wall, None); // glowing tufts
+                    }
+                    if grove && h % 9 == 0 && k <= 2 {
+                        return (M::Mushroom, wall, None);
+                    }
+                }
+                if grotto && h % 5 == 1 {
+                    // Crystals hanging from the roof.
+                    let drop = 1 + (h >> 8) as i32 % 4;
+                    if (1..=drop).any(|k| !self.cave_open(x, y - k, d - k, fbm(fx * 0.024, (fy - k as f32) * 0.05, 4, s.wrapping_add(1)))) {
+                        return (M::Crystal, wall, None);
+                    }
+                }
+            }
             return (M::Empty, wall, None);
+        }
+        if grove && self.cave_open(x, y - 1, d - 1, fbm(fx * 0.024, (fy - 1.0) * 0.05, 4, s.wrapping_add(1))) {
+            return (M::AlienGrass, wall, None); // glowing moss carpets the grove floor
+        }
+        if grotto && value_noise(fx * 0.09, fy * 0.09, s.wrapping_add(35)) > 0.84 {
+            return (M::Crystal, wall, None); // veins of crystal in the grotto walls
         }
 
         // Surface layers by biome.
@@ -602,6 +643,35 @@ impl Generator {
         } else {
             (M::Stone, wall, shade)
         }
+    }
+
+    /// Whether the cell at depth d below the surface is cave. Near the surface, caves come
+    /// in regions (some country is riddled, most is solid ground); deeper down every
+    /// region opens up, and far below there are always great halls.
+    fn cave_open(&self, x: i32, y: i32, d: i32, n: f32) -> bool {
+        if d <= 6 {
+            return false;
+        }
+        let (fx, fy) = (x as f32, y as f32);
+        let s = self.s;
+        let region = smooth(0.46, 0.62, fbm(fx * 0.0022, fy * 0.003 + 9.0, 2, s.wrapping_add(31)));
+        let deep = smooth(110.0, 260.0, d as f32);
+        let k = region.max(deep);
+        let thr = 0.71 - ((d - 12) as f32 / 500.0).clamp(0.0, 0.11) + (1.0 - k) * 0.14;
+        if d > 12 && n > thr {
+            return true;
+        }
+        if k > 0.3 {
+            let worm = (fbm(fx * 0.012, fy * 0.022, 3, s.wrapping_add(2)) - 0.5).abs();
+            if worm < (0.02 + (d as f32 / 3000.0).min(0.012)) * k {
+                return true;
+            }
+        }
+        if d > 170 && fbm(fx * 0.007, fy * 0.012, 3, s.wrapping_add(3)) > 0.62 - deep * 0.05 {
+            return true;
+        }
+        // Great halls far below.
+        d > 300 && fbm(fx * 0.004, fy * 0.009, 3, s.wrapping_add(33)) > 0.53
     }
 
     /// Liquid pools and sealed pockets on a coarse grid.
@@ -707,6 +777,160 @@ impl Generator {
                             c.shade = if y == ry - 2 || (x - rx).abs() == 2 { 60 } else { 170 };
                         }
                         cells[i] = c;
+                    }
+                }
+            }
+        }
+    }
+
+    /// A landmark in surface grid cell g: (x, ground y, kind, hash). Kinds: 0 ruined
+    /// watchtower, 1 stone arch, 2 hilltop shrine, 3 ring of standing stones.
+    pub fn landmark(&self, g: i32) -> Option<(i32, i32, u32, u32)> {
+        const LG: i32 = 340;
+        let h = hash3(g, 404, self.s);
+        if h % 100 >= 70 || self.planet.kind == PKind::Moon {
+            return None;
+        }
+        let x = g * LG + 60 + (h >> 8) as i32 % (LG - 120);
+        if x.abs() < 150 || self.volcano_near(x).is_some() || !self.portals_near(x - 30, x + 30).is_empty() || self.ocean(x) > 0.1 {
+            return None;
+        }
+        let ground = (x - 12..=x + 12).map(|c| self.surface(c)).max().unwrap_or(0);
+        if ground >= self.sea_level() {
+            return None;
+        }
+        Some((x, ground, (h >> 16) % 4, h))
+    }
+
+    /// Landmarks to find on the surface: they stand on foundations dug into the ground.
+    fn stamp_landmarks(&self, cx: i32, cy: i32, cells: &mut [Cell], rng: &mut Rng) {
+        const LG: i32 = 340;
+        let (x0, y0) = (cx * CHUNK, cy * CHUNK);
+        let put = |x: i32, y: i32, m: M, shade: u8, back: bool, cells: &mut [Cell], rng: &mut Rng| {
+            if x < x0 || y < y0 || x >= x0 + CHUNK || y >= y0 + CHUNK {
+                return;
+            }
+            let i = ((y - y0) as usize) * CU + (x - x0) as usize;
+            if back {
+                cells[i].back = m;
+                if cells[i].mat.foliage() || cells[i].mat == M::Plant {
+                    cells[i].mat = M::Empty;
+                }
+            } else {
+                let mut c = Cell::new(m, rng);
+                c.shade = shade;
+                c.back = cells[i].back;
+                cells[i] = c;
+            }
+        };
+        for g in (x0 - 40).div_euclid(LG)..=(x0 + CHUNK + 40).div_euclid(LG) {
+            let Some((lx, ground, kind, h)) = self.landmark(g) else { continue };
+            if ground - 60 > y0 + CHUNK || ground + 30 < y0 {
+                continue;
+            }
+            let brick = |x: i32, y: i32| if (y + (x.div_euclid(3)) * 2).rem_euclid(3) == 0 { 70 } else { 140 + (hash3(x, y, 9) % 70) as u8 };
+            // Foundations: fill down to the real ground under the footprint.
+            let half = match kind {
+                0 => 5,
+                1 => 13,
+                2 => 9,
+                _ => 12,
+            };
+            for x in lx - half..=lx + half {
+                for y in ground..self.surface(x).max(ground) + 3 {
+                    put(x, y, M::Stone, 90, false, cells, rng);
+                }
+                for y in self.surface(x)..ground {
+                    put(x, y, M::Stone, 90, false, cells, rng);
+                }
+            }
+            match kind {
+                0 => {
+                    // Ruined watchtower: hollow brick shaft, floors, windows, a broken crown.
+                    let hgt = 24 + (h >> 20) as i32 % 12;
+                    for y in ground - hgt..ground {
+                        for x in lx - 5..=lx + 5 {
+                            let edge = (x - lx).abs() == 5;
+                            let floor = (ground - y) % 9 == 0 && (x - lx).abs() < 5 && (ground - y) > 0 && (x - lx) != 3 && (x - lx) != 2;
+                            let window = edge && (ground - y) % 9 == 5 || edge && (ground - y) % 9 == 4;
+                            let crumble = y < ground - hgt + 4 && hash3(x, y, h) % 3 == 0;
+                            if (edge || floor) && !window && !crumble {
+                                put(x, y, M::Brick, brick(x, y), false, cells, rng);
+                            } else if !crumble {
+                                put(x, y, M::Brick, 0, true, cells, rng);
+                            }
+                        }
+                    }
+                    // A doorway, and a chest on the top floor.
+                    for y in ground - 4..ground {
+                        put(lx - 5, y, M::Empty, 0, false, cells, rng);
+                    }
+                    let top_floor = ground - ((hgt - 4) / 9) * 9;
+                    for dx in -1..=1 {
+                        for dy in 1..=2 {
+                            put(lx + dx, top_floor - dy, M::Chest, if dy == 2 || dx != 0 { 170 } else { 60 }, false, cells, rng);
+                        }
+                    }
+                }
+                1 => {
+                    // A natural stone arch, mossy on top.
+                    for x in lx - 13..=lx + 13 {
+                        let t = (x - lx) as f32 / 13.0;
+                        let inner = (1.0 - t * t).max(0.0).sqrt() * 16.0;
+                        let outer = inner + 5.0 + (hash3(x, 1, h) % 3) as f32;
+                        let leg = t.abs() > 0.72;
+                        let (from, to) = if leg { (ground - outer as i32, ground) } else { (ground - outer as i32, ground - inner as i32) };
+                        for y in from..to {
+                            let top = y == from;
+                            put(x, y, if top { M::Grass } else { M::Stone }, 60 + (hash3(x, y, 3) % 120) as u8, false, cells, rng);
+                        }
+                        if !leg && hash3(x, 2, h) % 3 == 0 {
+                            for k in 0..(2 + hash3(x, 3, h) % 6) as i32 {
+                                put(x, ground - inner as i32 + k, M::Plant, 0, true, cells, rng);
+                            }
+                        }
+                    }
+                }
+                2 => {
+                    // Shrine: a raised platform, pillars, a roof, an altar and glowing runes.
+                    for x in lx - 9..=lx + 9 {
+                        put(x, ground - 1, M::Brick, brick(x, ground), false, cells, rng);
+                    }
+                    for px in [lx - 7, lx - 3, lx + 3, lx + 7] {
+                        for y in ground - 12..ground - 1 {
+                            put(px, y, M::Stone, 170, false, cells, rng);
+                        }
+                    }
+                    for k in 0..4 {
+                        for x in lx - 9 + k..=lx + 9 - k {
+                            put(x, ground - 13 - k, M::Brick, brick(x, k), false, cells, rng);
+                        }
+                    }
+                    for x in lx - 6..=lx + 6 {
+                        for y in ground - 12..ground - 1 {
+                            if (x - lx).abs() != 3 {
+                                let rune = (x - lx).abs() == 5 && (y - ground) % 3 == 0;
+                                put(x, y, if rune { M::Rune } else { M::Brick }, 0, true, cells, rng);
+                            }
+                        }
+                    }
+                    for dx in -1..=1 {
+                        for y in ground - 4..ground - 1 {
+                            put(lx + dx, y, M::Altar, 0, false, cells, rng);
+                        }
+                    }
+                }
+                _ => {
+                    // A ring of standing stones, the tallest in the middle, runes carved in.
+                    for k in -2..=2i32 {
+                        let sx = lx + k * 5;
+                        let hgt = 8 + (2 - k.abs()) * 3 + (hash3(k, 7, h) % 3) as i32;
+                        for y in ground - hgt..ground {
+                            for dx in 0..2 {
+                                let rune = dx == 0 && (y - ground + hgt) % 4 == 2;
+                                put(sx + dx, y, if rune { M::Rune } else { M::Stone }, 120 + (hash3(sx + dx, y, h) % 80) as u8, false, cells, rng);
+                            }
+                        }
                     }
                 }
             }
@@ -878,7 +1102,7 @@ impl Generator {
                 cells[i].back = m;
             }
         };
-        for slot in (x0 - 12).div_euclid(SLOT)..=(x0 + CHUNK + 12).div_euclid(SLOT) {
+        for slot in (x0 - 26).div_euclid(SLOT)..=(x0 + CHUNK + 26).div_euclid(SLOT) {
             let h = hash3(slot, 77, self.s);
             let tx = slot * SLOT + ((h >> 8) % (SLOT as u32 - 3)) as i32;
             let biome = self.biome(tx);
@@ -892,11 +1116,15 @@ impl Generator {
                     Flora::None => Style::None,
                 }
             } else {
+                let grove = fbm(tx as f32 * 0.004, 8.0, 2, self.s.wrapping_add(51));
                 match biome {
+                    Biome::Jungle if h % 29 == 0 => Style::Great,
                     Biome::Jungle => Style::Jungle,
                     Biome::Snow => Style::Pine,
                     Biome::Desert => Style::Cactus,
                     Biome::Ocean => Style::None,
+                    _ if h % 31 == 0 => Style::Great,
+                    Biome::Forest | Biome::Plains if grove > 0.6 => Style::Blossom,
                     _ => Style::Oak,
                 }
             };
@@ -905,6 +1133,8 @@ impl Generator {
                 (Style::Oak, Biome::Plains) if !self.alien() => 12,
                 (Style::None, _) => 0,
                 (Style::Crystal, _) => 35,
+                (Style::Great, _) => 100,
+                (Style::Blossom, _) => 60,
                 _ => 55,
             };
             if h % 100 >= chance || self.surface(tx) >= self.sea_level() || !self.portals_near(tx - 16, tx + 16).is_empty() {
@@ -918,9 +1148,13 @@ impl Generator {
                 continue;
             }
             let base = s0.max(s1);
-            let height = if style == Style::Jungle { 16 + ((h >> 16) % 14) as i32 } else { 9 + ((h >> 16) % 11) as i32 };
+            let height = match style {
+                Style::Jungle => 16 + ((h >> 16) % 14) as i32,
+                Style::Great => 30 + ((h >> 16) % 12) as i32,
+                _ => 9 + ((h >> 16) % 11) as i32,
+            };
             let top = base - height;
-            if top - 10 > y0 + CHUNK || base < y0 {
+            if top - 22 > y0 + CHUNK || base + 4 < y0 {
                 continue;
             }
             let hv = |a: i32, b: i32| hash3(a, b, h);
@@ -990,6 +1224,68 @@ impl Generator {
                         let w = 1 + (k % 4 + k / 3) / 2;
                         for dx in -w..=w {
                             put(tx + dx, top - 2 + k, M::Leaves, (hv(dx, k) % 70) as u8, false, cells);
+                        }
+                    }
+                }
+                Style::Great => {
+                    // Trunk four wide, flaring into roots, leaning slightly.
+                    for y in top..base + 2 {
+                        let t = (base - y) as f32 / height as f32;
+                        let lean = (t * t * 3.0 * if h & 2 == 0 { 1.0 } else { -1.0 }) as i32;
+                        let flare = if y >= base - 4 { (base - y - 4).abs().min(4) / 2 + (4 - (base - y).min(4)) } else { 0 };
+                        for dx in -1 - flare..=2 + flare {
+                            put(tx + dx + lean, y, M::Wood, 0, true, cells);
+                        }
+                    }
+                    // Big boughs and a layered canopy of overlapping clouds of leaves.
+                    let lean_top = (3.0 * if h & 2 == 0 { 1.0 } else { -1.0 }) as i32;
+                    let lobes = [(0, -2, 13, 6), (-10, 4, 8, 5), (11, 3, 9, 5), (-4, -8, 9, 5), (6, -7, 8, 5)];
+                    for (k, (lx, ly, rx, ry)) in lobes.iter().enumerate() {
+                        let (cxl, cyl) = (tx + lean_top + lx, top + ly);
+                        // Bough from the trunk to the lobe.
+                        let steps = lx.abs().max(ly.abs()).max(1);
+                        for j in 0..=steps {
+                            let bx = tx + lean_top + lx * j / steps;
+                            let by = top + 6 + (ly - 6) * j / steps;
+                            put(bx, by, M::Wood, 0, true, cells);
+                        }
+                        for dy in -ry - 1..=*ry {
+                            for dx in -rx - 1..=*rx + 1 {
+                                let e = (dx as f32 / *rx as f32).powi(2) + (dy as f32 / *ry as f32).powi(2);
+                                let jag = (hv(dx + k as i32 * 40, dy) % 100) as f32 / 100.0 * 0.3;
+                                if e <= 1.0 + jag - 0.12 {
+                                    put(cxl + dx, cyl + dy, M::Leaves, 0, false, cells);
+                                }
+                            }
+                        }
+                    }
+                }
+                Style::Blossom => {
+                    // A crooked trunk that wanders as it climbs, under a pink cloud.
+                    let mut wx = tx;
+                    for y in (top..base).rev() {
+                        if hv(1, y) % 5 == 0 {
+                            wx += if hv(2, y) % 2 == 0 { 1 } else { -1 };
+                        }
+                        put(wx, y, M::Wood, 0, true, cells);
+                        put(wx + 1, y, M::Wood, 0, true, cells);
+                    }
+                    let (rx, ry) = (6 + (h >> 20) as i32 % 3, 4);
+                    for (lx, ly, sx, sy) in [(0, 0, rx, ry), (-rx + 2, 2, rx / 2 + 1, ry - 1), (rx - 1, 2, rx / 2 + 1, ry - 1)] {
+                        for dy in -sy - 1..=sy {
+                            for dx in -sx - 1..=sx + 1 {
+                                let e = (dx as f32 / sx as f32).powi(2) + (dy as f32 / sy as f32).powi(2);
+                                let jag = (hv(dx + lx * 7, dy) % 100) as f32 / 100.0 * 0.35;
+                                if e <= 1.0 + jag - 0.15 {
+                                    put(wx + lx + dx, top + ly + dy, M::Blossom, 0, false, cells);
+                                }
+                            }
+                        }
+                    }
+                    // A carpet of fallen petals.
+                    for dx in -rx..=rx {
+                        if hv(dx, 99) % 3 == 0 {
+                            put(tx + dx, self.surface(tx + dx) - 1, M::Blossom, 0, false, cells);
                         }
                     }
                 }

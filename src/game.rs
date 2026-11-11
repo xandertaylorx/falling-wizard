@@ -1532,7 +1532,7 @@ impl Game {
         match a(0) {
             "help" => {
                 for l in [
-                    "/tp <x> <y>  or  /tp spawn|volcano|geyser|ruin|island|space|caves|lava|ocean|beach|forest|plains|jungle|desert|tundra",
+                    "/tp <x> <y>  or  /tp spawn|landmark|tower|arch|shrine|stones|grotto|grove|volcano|geyser|ruin|island|space|caves|lava|ocean|beach|forest|plains|jungle|desert|tundra",
                     "/time set day|noon|night|midnight|<0-1>     /weather clear|cloudy|rain|storm|fog|windy",
                     "/summon <creature> [count]     /kill [pets]     /heal     /pos     /seed",
                     "/fly  (infinite flight)     /god  (can't be hurt)     /gold <n>     /clear",
@@ -1690,6 +1690,31 @@ impl Game {
                 let x = best.1 as f32 + if want { 70.0 } else { 8.0 };
                 Some((x, surf(x as i32) - 14.0, format!("the nearest {}", what)))
             }
+            "landmark" | "tower" | "arch" | "shrine" | "stones" | "grotto" | "grove" => {
+                if what == "grotto" || what == "grove" {
+                    // Search downwards for a deep cavern of that kind.
+                    for k in 0..400 {
+                        let x = pxi + (k / 20) * 37 * if k % 2 == 0 { 1 } else { -1 };
+                        let y = surf(x) as i32 + 240 + (k % 20) * 12;
+                        let z = crate::noise::fbm(x as f32 * 0.005, y as f32 * 0.007, 2, gen.seed_u32().wrapping_add(34));
+                        if (what == "grotto" && z < 0.38) || (what == "grove" && z > 0.64) {
+                            return Some((x as f32, y as f32, format!("a deep {}", what)));
+                        }
+                    }
+                    return None;
+                }
+                let want = match what {
+                    "tower" => Some(0),
+                    "arch" => Some(1),
+                    "shrine" => Some(2),
+                    "stones" => Some(3),
+                    _ => None,
+                };
+                let g0 = pxi.div_euclid(340);
+                let best = (0..60).flat_map(|r| [g0 + r, g0 - r]).filter_map(|g| gen.landmark(g)).find(|l| want.map_or(true, |k| l.2 == k))?;
+                let x = best.0 as f32 - 24.0;
+                Some((x, surf(x as i32) - 12.0, "a landmark".to_string()))
+            }
             "ruin" | "chest" | "altar" => {
                 let (gx0, gy0) = (pxi.div_euclid(130), pyi.div_euclid(130));
                 let mut best: Option<(i32, i32, i32)> = None;
@@ -1792,7 +1817,7 @@ impl Game {
 }
 
 const COMMANDS: [&str; 14] = ["help", "tp", "time", "weather", "summon", "rift", "kill", "heal", "fly", "god", "gold", "pos", "seed", "clear"];
-const PLACES: [&str; 18] = ["portal", "volcano", "geyser", "ruin", "altar", "island", "space", "caves", "lava", "ocean", "beach", "forest", "plains", "jungle", "desert", "tundra", "spawn", "~"];
+const PLACES: [&str; 25] = ["portal", "landmark", "tower", "arch", "shrine", "stones", "grotto", "grove", "volcano", "geyser", "ruin", "altar", "island", "space", "caves", "lava", "ocean", "beach", "forest", "plains", "jungle", "desert", "tundra", "spawn", "~"];
 
 /// Minecraft-style suggestions for a partly typed command: where the current word
 /// starts in `buf`, and the options that match it.

@@ -63,6 +63,7 @@ An infinite world streamed through a fixed **window** of `WCX`×`WCY` chunks (`C
 - **Generator:** `Generator::with_planet(seed, Planet)`. Earth is `Planet::earth()` at galaxy cell (0,0), and `Generator::new(seed)` is the same as Earth.
 - **Planets:** `Planet::at(gx, gy)` gives the procedural planet in a galaxy cell (about 55% of cells have one), and `Planet::nearest` lists the closest ones.
 - **Contents:** biomes, caves, ruins, volcanoes and geysers, sky isles and space.
+- **Caves:** `cave_open` clusters near-surface caves into regions; below ~110–260 cells every region opens up, with great halls past 300. Deep zones become crystal grottos or glowing mushroom groves. Surface landmarks (`landmark`/`stamp_landmarks`: watchtower, stone arch, shrine, standing stones), cherry blossom groves, rare giant trees and flower meadows add scenery; `/tp landmark|tower|arch|shrine|stones|grotto|grove` finds them.
 - **Climate:** `Planet::climate()` gives oxygen, heat and atmosphere height; it's copied into `world.climate` and drives fire, freezing/evaporation (`weather_tick`), the atmosphere edge in `game.rs` and the sky. `Planet::sky_scene()` gives suns, nebula colour and `neighbours()`: the real nearest planets drawn in space in their true galaxy directions.
 - **Portal structures:** `portals_near`, `portal_interior` and `portal_fill`. `PORTAL_HOME` is where the arrival portal on each planet sits.
 
@@ -99,7 +100,7 @@ Saving happens every 60 s, before warping, on Pause → Main Menu, and on Quit. 
 1. **CPU pass:** the CPU fills an albedo buffer and an emission buffer for the view, one pixel per cell, including sky, background walls, foliage, the void sky over blights, and lighting from emissive materials.
 2. **Moving things:** fx, weather, mobs, spells and the player are drawn into the albedo buffer through `Canvas`.
 3. **Post-effects:** black-hole lensing (`lens`) and rifts (`draw_rift`) are applied on top.
-4. **GPU pass:** the GPU ray-marches light from the emission buffer, blurs it, and composites the result.
+4. **GPU pass:** the GPU ray-marches light from the emission buffer, blurs it, and composites the result. The composite also casts sun shafts (`u_sun`, `u_sunk`) through gaps in the sky mask and grades colour warm/cool (`u_warm` for golden hour). The sky has a hazy treeline layer (`trees`) in front of the two mountain layers.
 5. **Fine effects:** `Fx::draw_fine` then draws effects finer than a pixel in screen space: hair-thin rain, soft embers and curling wind streams. They're particles with `fine != 0`.
 
 `View` maps world cells to screen space; `scale` is screen pixels per cell.
@@ -116,6 +117,7 @@ Saving happens every 60 s, before warping, on Pause → Main Menu, and on Quit. 
 ### Other modules
 
 - **`spells.rs`:** the 18 spells in `SPELL_BAR` (keys 1–0, -, =, Q, R, G, P, V, C), projectiles, black holes, tornadoes and the wind `gust`. Cards with `beam_after()` become held beams via `beam_tick` (lightning stream, `inferno` fire beam, `frost_ray`, Gravity Gun); holding a beam on one spot builds `charge`. `Storm` clouds rain and strike.
+- **Broom:** M toggles `Player::broom` (`ride`): free flight in any direction at about 3x walking speed, Shift boosts.
 - **Spell bar:** auto-hiding. It slides up (`Ui::bar`) for a moment after a spell change, while Tab is held, or with the mouse at the bottom edge; otherwise a small chip names the current spell.
 - **`weather.rs`:** the day clock (`daylight()`), sky states and particle spawning.
 - **`ui.rs`:** the pixel font, HUD, planet sphere, chat and the menu widgets.

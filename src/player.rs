@@ -24,6 +24,8 @@ pub struct Input {
     pub down: bool,
     pub dash: bool,
     pub grapple: bool,
+    /// Hop on or off the broom.
+    pub broom: bool,
     /// Aim point, for the grappling vine.
     pub aim: (f32, f32),
 }
@@ -53,6 +55,10 @@ pub struct Player {
     pub infinite_flight: bool,
     /// Wall the wizard is sliding on (-1 left, 1 right, 0 none).
     wall: f32,
+    /// Riding the broom: fast free flight in any direction.
+    pub broom: bool,
+    /// Broom tilt, following speed, for drawing.
+    tilt: f32,
 }
 
 // Drawn facing right. h hat, s star, f face, e eye, w beard, r robe, b boots.
@@ -82,6 +88,8 @@ impl Player {
             grav: 1.0,
             infinite_flight: false,
             wall: 0.0,
+            broom: false,
+            tilt: 0.0,
         }
     }
 
@@ -188,8 +196,10 @@ impl Player {
         self.dash_cd = (self.dash_cd - dt).max(0.0);
         if input.dash && self.dash_cd <= 0.0 {
             let d = if dir != 0.0 { dir } else { self.facing };
-            self.vx = d * 230.0;
-            self.vy = self.vy.min(0.0) * 0.2;
+            self.vx = d * if self.broom { 340.0 } else { 230.0 };
+            if !self.broom {
+                self.vy = self.vy.min(0.0) * 0.2;
+            }
             self.dash_t = 0.16;
             self.dash_cd = 0.55;
             self.grapple = None;
@@ -197,6 +207,16 @@ impl Player {
         if input.grapple {
             self.grapple = if self.grapple.is_some() { None } else { self.cast_vine(world, input.aim) };
         }
+        if input.broom {
+            self.broom = !self.broom;
+            self.grapple = None;
+            if self.broom {
+                self.vy = self.vy.min(-40.0);
+            }
+        }
+        if self.broom {
+            self.ride(input, dir, dt);
+        } else {
         let accel = if self.on_ground { 700.0 } else { 380.0 };
         if self.dash_t <= 0.0 {
             self.vx += (dir * WALK - self.vx).clamp(-accel * dt, accel * dt);
@@ -260,6 +280,7 @@ impl Player {
             // Recharges slowly while gliding or falling, so you can keep climbing.
             self.flight = (self.flight + 22.0 * dt).min(MAX_FLIGHT);
         }
+        }
         self.mana = (self.mana + 22.0 * dt).min(MAX_MANA);
         if !self.dead() {
             self.hp = (self.hp + 1.5 * dt).min(MAX_HP);
@@ -267,8 +288,10 @@ impl Player {
         if self.infinite_flight {
             self.flight = MAX_FLIGHT;
         }
-        self.vy = self.vy.min(190.0 * self.grav.max(0.4));
-        if self.dash_t <= 0.0 && self.grapple.is_none() {
+        if !self.broom {
+            self.vy = self.vy.min(190.0 * self.grav.max(0.4));
+        }
+        if self.dash_t <= 0.0 && self.grapple.is_none() && !self.broom {
             self.vx = self.vx.clamp(-120.0, 120.0);
         }
 
@@ -310,6 +333,24 @@ impl Player {
         }
     }
 
+    /// Broom flight: steer in any direction, no gravity to fight, a gentle hover when
+    /// you let go. It's three times faster than walking; SHIFT gives a burst.
+    fn ride(&mut self, input: &Input, dir: f32, dt: f32) {
+        const SPEED: f32 = 175.0;
+        let vert = (input.down as i32 - input.up as i32) as f32;
+        let hover = if vert == 0.0 { (self.walk_t * 3.0).sin() * 5.0 } else { 0.0 };
+        let (tx, ty) = (dir * SPEED, vert * SPEED * 0.8 + hover);
+        let k = (dt * if dir != 0.0 || vert != 0.0 { 3.5 } else { 2.0 }).min(1.0);
+        if self.dash_t <= 0.0 {
+            self.vx += (tx - self.vx) * k;
+            self.vy += (ty - self.vy) * k;
+        }
+        self.tilt += ((self.vx / SPEED) * 0.5 - self.tilt) * (dt * 6.0).min(1.0);
+        self.walk_t += dt;
+        self.flight = MAX_FLIGHT;
+        self.wall = 0.0;
+    }
+
     fn cast_vine(&self, world: &World, aim: (f32, f32)) -> Option<(f32, f32)> {
         let (hx, hy) = self.hand();
         let (dx, dy) = (aim.0 - hx, aim.1 - hy);
@@ -343,6 +384,36 @@ impl Player {
         }
     }
 
+    /// The broom: a wooden handle under the wizard, a straw bristle tail behind, and a
+    /// shimmer of sparks streaming off it at speed.
+    fn draw_broom(&self, cv: &mut Canvas) {
+        let back = -self.facing;
+        let (cx, y) = (self.x + PW * 0.5, self.y + PH - 1.0);
+        for k in -5..=6 {
+            let t = k as f32;
+            let px = cx - back * t;
+            let py = y + t * self.tilt * back * 0.25;
+            cv.put(px.round() as i32, py.round() as i32, if k % 3 == 0 { [120, 78, 40] } else { [150, 100, 52] });
+        }
+        for k in 0..5 {
+            let px = cx + back * (6.0 + k as f32);
+            let py = y - self.tilt * back * 1.5;
+            let spread = (k as f32 * 0.5).ceil() as i32;
+            for s in -spread..=spread {
+                let col = if (k + s) % 2 == 0 { [214, 176, 92] } else { [186, 146, 70] };
+                cv.put(px.round() as i32, py.round() as i32 + s, col);
+            }
+        }
+        if self.vx.abs() > 60.0 {
+            let n = (self.vx.abs() / 40.0) as i32;
+            for k in 0..n {
+                let px = cx + back * (11.0 + k as f32 * 2.0);
+                let wob = ((self.walk_t * 30.0 + k as f32 * 1.7).sin() * 1.2).round() as i32;
+                cv.blend(px as i32, y as i32 + wob, [255, 236, 160], 0.6 - k as f32 * 0.08);
+            }
+        }
+    }
+
     fn hand(&self) -> (f32, f32) {
         (self.x + PW * 0.5 + self.facing * 1.5, self.y + 4.5)
     }
@@ -364,7 +435,10 @@ impl Player {
         } else if ax > cx + 1.0 {
             self.facing = 1.0;
         }
-        let bob = if (self.walk_t as i32) % 2 == 1 { 1 } else { 0 };
+        let bob = if self.broom { 0 } else if (self.walk_t as i32) % 2 == 1 { 1 } else { 0 };
+        if self.broom {
+            self.draw_broom(cv);
+        }
         let ox = self.x.round() as i32 - 1;
         let oy = self.y.round() as i32 - 2 + bob;
         let hurt = self.hurt_flash > 0.0;

@@ -1569,7 +1569,7 @@ impl Spells {
                     M::Grass => M::Dirt,
                     M::Stone | M::Basalt | M::Brick | M::MoonRock => M::Rubble,
                     M::Ice => M::Snow,
-                    M::Wood | M::Leaves | M::Plant => M::Ash,
+                    M::Wood | M::Leaves | M::Plant | M::Blossom | M::Flower => M::Ash,
                     other => other,
                 };
                 self.held.push((m, c.shade));

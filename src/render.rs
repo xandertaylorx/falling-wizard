@@ -151,8 +151,30 @@ uniform vec2 u_player;
 uniform float u_flash;
 uniform float u_ambient;
 uniform float u_flip;
+uniform vec2 u_sun;
+uniform float u_sunk;
+uniform float u_warm;
 void main() {
     vec4 alb = texture2D(Texture, uv);
+    // Sun shafts: march towards the sun counting open sky; trees and terrain in the way
+    // carve the light into beams.
+    vec3 rays = vec3(0.0);
+    if (u_sunk > 0.01) {
+        vec2 dir = (u_sun - uv) / 32.0;
+        vec2 p = uv;
+        float acc = 0.0;
+        float w = 1.0;
+        for (int i = 0; i < 32; i++) {
+            p += dir;
+            vec4 e = texture2D(Emit, p);
+            acc += (abs(e.a - 0.5) < 0.03 ? 1.0 : 0.0) * w;
+            w *= 0.955;
+        }
+        acc /= 19.0;
+        vec2 dd = (uv - u_sun) * vec2(u_size.x / u_size.y, 1.0);
+        float fall = clamp(1.0 - length(dd) * 1.05, 0.0, 1.0);
+        rays = mix(vec3(1.0, 0.88, 0.62), vec3(1.0, 0.6, 0.32), u_warm) * acc * fall * fall * u_sunk * 0.34;
+    }
     vec4 em = texture2D(Emit, uv);
     vec2 luv = vec2(uv.x, mix(uv.y, 1.0 - uv.y, u_flip));
     vec3 L = texture2D(Light, luv).rgb * 8.0;
@@ -163,15 +185,26 @@ void main() {
     L += vec3(u_flash);
     L = max(L, vec3(u_ambient));
     vec3 col;
-    if (abs(em.a - 0.5) < 0.03) {
+    bool skypx = abs(em.a - 0.5) < 0.03;
+    if (skypx) {
         col = alb.rgb + max(L - 1.0, 0.0) * 0.15;
+        col += rays * 0.5;
     } else {
         col = alb.rgb * L * 1.5;
         col += em.rgb * 3.2 * (0.6 + 0.4 * alb.rgb);
         col += max(L - 1.1, 0.0) * 0.18;
+        col += rays * (0.15 + 0.35 * alb.a);
         col = 1.0 - exp(-col * 1.35);
-        col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, 1.12);
+        col = mix(vec3(dot(col, vec3(0.299, 0.587, 0.114))), col, 1.15);
     }
+    // Grading: warm, golden highlights and cool, blue shadows; warmer still at dawn and
+    // dusk. A gentle S-curve gives it punch.
+    float lum = dot(col, vec3(0.299, 0.587, 0.114));
+    vec3 warm = mix(vec3(1.05, 1.0, 0.9), vec3(1.14, 0.95, 0.8), u_warm);
+    vec3 cool = vec3(0.86, 0.93, 1.1);
+    col *= mix(cool, warm, smoothstep(0.12, 0.7, lum));
+    col = clamp(col, 0.0, 1.0);
+    col = mix(col, col * col * (3.0 - 2.0 * col), 0.5);
     vec2 q = uv * 2.0 - 1.0;
     float vig = 1.0 - 0.18 * pow(clamp(length(q * vec2(0.85, 1.0)), 0.0, 1.5), 2.6);
     gl_FragColor = vec4(col * vig, 1.0);
@@ -201,6 +234,7 @@ pub struct Renderer {
     comp: Material,
     far: Vec<f32>,
     near: Vec<f32>,
+    trees: Vec<f32>,
     w: usize,
     h: usize,
     pub fire_visible: usize,
@@ -230,11 +264,15 @@ impl Renderer {
                     ("u_flash", UniformType::Float1),
                     ("u_ambient", UniformType::Float1),
                     ("u_flip", UniformType::Float1),
+                    ("u_sun", UniformType::Float2),
+                    ("u_sunk", UniformType::Float1),
+                    ("u_warm", UniformType::Float1),
                 ],
                 &["Light", "Emit"],
             ),
             far: Vec::new(),
             near: Vec::new(),
+            trees: Vec::new(),
             w: 0,
             h: 0,
             fire_visible: 0,
@@ -263,6 +301,7 @@ impl Renderer {
         self.blur_rt.texture.set_filter(FilterMode::Linear);
         self.far = vec![0.0; w];
         self.near = vec![0.0; w];
+        self.trees = vec![0.0; w];
     }
 
     pub fn draw(&mut self, game: &mut Game, view: &View, shake: (f32, f32), time: f32) {
@@ -282,6 +321,15 @@ impl Renderer {
             let nx = view.left * 0.7 + (vx as i32 - MARGIN) as f32;
             self.far[vx] = -30.0 - fbm(fx * 0.006, 1.0, 3, 31) * 90.0;
             self.near[vx] = 12.0 - fbm(nx * 0.011, 2.0, 3, 37) * 70.0;
+            // A distant forest: rounded and pointed crowns along rolling hills.
+            let tx = view.left * 0.84 + (vx as i32 - MARGIN) as f32;
+            let ti = (tx / 6.0).floor();
+            let hh = hash3(ti as i32, 3, 91);
+            let local = (tx - ti * 6.0 - 3.0).abs();
+            let th = 5.0 + (hh % 9) as f32;
+            let crown = if hh % 3 == 0 { th * (1.0 - local / 3.2).max(0.0) } else { th * (1.0 - (local / 3.4).powi(2)).max(0.0).sqrt() };
+            let gap = if fbm(tx * 0.01, 9.0, 2, 47) < 0.35 { 0.0 } else { 1.0 };
+            self.trees[vx] = 22.0 - fbm(tx * 0.007, 4.0, 3, 43) * 34.0 - crown * gap;
         }
         let wind = game.weather.wind_now();
         let sway_amp = 0.55 + (wind.abs() / 45.0).min(1.2);
@@ -289,8 +337,16 @@ impl Renderer {
         let tint = planet.tint;
         let tinted = !planet.is_earth();
         let scene = planet.sky_scene();
+        let tree_col = if matches!(planet.flora, crate::planets::Flora::None | crate::planets::Flora::Crystals) {
+            [0, 0, 0]
+        } else if planet.is_earth() {
+            [46, 86, 62]
+        } else {
+            let b = planet.top.base_color();
+            [(b[0] as f32 * tint[0] * 0.55) as u8, (b[1] as f32 * tint[1] * 0.55) as u8, (b[2] as f32 * tint[2] * 0.55) as u8]
+        };
         let atmo = world.climate.atmo as f32;
-        let sky_ctx = SkyCtx { view: *view, day, tod, rain, clouds, top: planet.sky_top, horizon: planet.sky_horizon, time, far: &self.far, near: &self.near, atmo, scene: &scene };
+        let sky_ctx = SkyCtx { view: *view, day, tod, rain, clouds, top: planet.sky_top, horizon: planet.sky_horizon, time, far: &self.far, near: &self.near, trees: &self.trees, tree_col, atmo, scene: &scene };
         let sky_light = [0.92 * day + 0.04, 0.95 * day + 0.05, 1.0 * day + 0.09];
         // Void wastelands on screen: their sky turns to open space.
         let here = (game.planet.gx, game.planet.gy);
@@ -322,12 +378,12 @@ impl Renderer {
                 let wall = world.wall[i];
                 // Background foliage sways in the wind.
                 let mut back = c.back;
-                if matches!(back, M::Leaves | M::Plant) || (back == M::Empty && wall == 0) {
+                if matches!(back, M::Leaves | M::Plant | M::Blossom | M::Flower) || (back == M::Empty && wall == 0) {
                     let sw = ((time * 1.7 + gx as f32 * 0.05 + gy as f32 * 0.31).sin() * sway_amp).round() as i32;
                     let sx = wx + sw;
                     if sw != 0 && sx >= 0 && (sx as usize) < WW {
                         let b = world.cells[wy as usize * WW + sx as usize].back;
-                        if matches!(b, M::Leaves | M::Plant | M::Empty) && matches!(back, M::Leaves | M::Plant | M::Empty) {
+                        if matches!(b, M::Leaves | M::Plant | M::Blossom | M::Flower | M::Empty) && matches!(back, M::Leaves | M::Plant | M::Blossom | M::Flower | M::Empty) {
                             back = b;
                         }
                     }
@@ -338,10 +394,21 @@ impl Renderer {
                         M::Plant if hsh % 41 == 0 => [232, 84, 96],
                         M::Plant if hsh % 37 == 0 => [250, 220, 84],
                         M::Leaves if gy < -1000 => [60, 60, 60],
+                        // Meadow flowers come in a handful of colours.
+                        M::Flower => [[236, 84, 104], [250, 214, 80], [120, 150, 250], [246, 244, 236], [196, 110, 230], [250, 150, 70]][(hash3(gx, 0, 41) % 6) as usize],
+                        // Leaves catch the light: brighter towards the top of a canopy.
+                        M::Leaves | M::Blossom => {
+                            let b = back.base_color();
+                            let up = world.back(gx, gy - 2) == back;
+                            if up { b } else { [(b[0] as f32 * 1.18).min(255.0) as u8, (b[1] as f32 * 1.18).min(255.0) as u8, (b[2] as f32 * 1.12).min(255.0) as u8] }
+                        }
                         m => m.base_color(),
                     };
                     let col = shade(base, hsh as u8, back.variation());
-                    Some([(col[0] as f32 * 0.84) as u8, (col[1] as f32 * 0.84) as u8, (col[2] as f32 * 0.84) as u8])
+                    // Plants sit just behind the action; built walls (tower and shrine
+                    // interiors) recede into shadow.
+                    let k = if back.foliage() || back == M::Rune { 0.84 } else { 0.5 };
+                    Some([(col[0] as f32 * k) as u8, (col[1] as f32 * k) as u8, (col[2] as f32 * k) as u8])
                 } else {
                     None
                 };
@@ -378,7 +445,8 @@ impl Renderer {
                 let (mut rgb, mut e, a): ([u8; 3], [f32; 3], f32) = match c.mat {
                     M::Empty => {
                         let (e, a) = match back {
-                            M::Leaves => ([0.0; 3], 0.3),
+                            M::Leaves | M::Blossom => ([0.0; 3], 0.3),
+                            M::Flower => ([0.0; 3], 0.12),
                             M::Wood => ([0.0; 3], 0.45),
                             M::Plant => ([0.0; 3], 0.12),
                             M::Mushroom => ([0.2, 0.8, 0.75], 0.15),
@@ -547,6 +615,21 @@ impl Renderer {
         gl_use_default_material();
         set_default_camera();
 
+        // Where the sun is on screen (the same path the sky draws it on), how strong its
+        // shafts are, and how golden the hour.
+        let (sun_uv, sun_k, warm) = {
+            let p = ((tod - 0.22) / 0.56).clamp(0.0, 1.0);
+            let (vw, vh) = (view.w as f32, view.h as f32);
+            let (bx, by) = (p * vw, vh * (0.6 - (p * std::f32::consts::PI).sin() * 0.45));
+            let uvs = vec2((bx + MARGIN as f32) / wf, (by + MARGIN as f32) / hf);
+            let (_, py) = game.player.center();
+            let atmo = game.world.climate.atmo as f32;
+            let space = if atmo <= 0.0 { 1.0 } else { ((-py - (atmo - 220.0)) / 340.0).clamp(0.0, 1.0) };
+            let lit = game.weather.daylight();
+            let k = ((lit - 0.08) * 1.6).clamp(0.0, 1.0) * (1.0 - clouds * 0.8) * (1.0 - rain) * (1.0 - space);
+            let dusk = (1.0 - (lit - 0.3).abs() * 3.0).clamp(0.0, 1.0);
+            (uvs, k, dusk)
+        };
         let s = view.scale;
         let ox = (x0 as f32 - view.left) * s + shake.0;
         let oy = (y0 as f32 - view.top) * s + shake.1;
@@ -560,6 +643,9 @@ impl Renderer {
         self.comp.set_uniform("u_flash", game.fx.flash);
         self.comp.set_uniform("u_ambient", 0.15f32);
         self.comp.set_uniform("u_flip", self.flip);
+        self.comp.set_uniform("u_sun", sun_uv);
+        self.comp.set_uniform("u_sunk", sun_k);
+        self.comp.set_uniform("u_warm", warm);
         draw_texture_ex(&self.alb_tex, ox, oy, WHITE, DrawTextureParams { dest_size: Some(vec2(wf * s, hf * s)), ..Default::default() });
         gl_use_default_material();
         game.fx.draw_fine(view.left - shake.0 / s, view.top - shake.1 / s, s);
@@ -764,6 +850,8 @@ struct SkyCtx<'a> {
     time: f32,
     far: &'a [f32],
     near: &'a [f32],
+    trees: &'a [f32],
+    tree_col: [u8; 3],
     /// Height of the atmosphere's edge (0 = airless).
     atmo: f32,
     scene: &'a crate::planets::SkyScene,
@@ -913,6 +1001,11 @@ fn sky(c: &SkyCtx, vx: usize, vy: usize, gy: i32) -> [u8; 3] {
         let m = 1.0 - space / 0.6;
         let hz = c.horizon;
         let sc = |k: f32, b: [u8; 3]| [(hz[0] as f32 * k * 0.6 + b[0] as f32 * 0.4) as u8, (hz[1] as f32 * k * 0.6 + b[1] as f32 * 0.4) as u8, (hz[2] as f32 * k * 0.6 + b[2] as f32 * 0.4) as u8];
+        if v.top * 0.84 + sy >= c.trees[vx] && c.tree_col != [0, 0, 0] {
+            // Nearest layer: a hazy forest, its crowns catching a little sky light.
+            let lit = lerp3([14, 20, 28], lerp3(c.tree_col, hz, 0.3), c.day);
+            return lerp3(col, lit, 0.92 * m);
+        }
         if v.top * 0.7 + sy >= c.near[vx] {
             return lerp3(col, lerp3([20, 24, 40], sc(0.5, [84, 112, 150]), c.day), 0.88 * m);
         }

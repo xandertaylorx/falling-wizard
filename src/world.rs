@@ -1036,7 +1036,7 @@ impl World {
             let back = self.cells[ni].back;
             if back.flammable() {
                 let p = match back {
-                    M::Leaves | M::Plant => 0.07,
+                    M::Leaves | M::Plant | M::Blossom | M::Flower => 0.07,
                     M::Wood => 0.02,
                     _ => 0.04,
                 } * if fuel { 1.6 } else { 1.0 };

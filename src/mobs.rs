@@ -97,124 +97,505 @@ const fn spec(kind: MobKind) -> Spec {
     use MobKind::*;
     match kind {
         Zombie => Spec {
-            sprite: &[".ggg..", ".ggR..", ".ggg..", ".bbbgg", ".bbb..", ".bbb..", ".nnn..", ".n.n..", ".n.n.."],
-            pal: &[(b'g', [104, 156, 92]), (b'R', [230, 40, 40]), (b'b', [70, 90, 140]), (b'n', [64, 54, 70])],
-            hp: 40.0, speed: 16.0, dmg: 10.0, ai: Ai::Walker, ranged: Ranged::None, gib: M::Blood, light: None, fire_immune: false, water_hurts: false, gold: 2,
+            sprite: &[
+                ".ggg..", ".ggR..", ".ggg..", ".bbbgg", ".bbb..", ".bbb..", ".nnn..", ".n.n..",
+                ".n.n..",
+            ],
+            pal: &[
+                (b'g', [104, 156, 92]),
+                (b'R', [230, 40, 40]),
+                (b'b', [70, 90, 140]),
+                (b'n', [64, 54, 70]),
+            ],
+            hp: 40.0,
+            speed: 16.0,
+            dmg: 10.0,
+            ai: Ai::Walker,
+            ranged: Ranged::None,
+            gib: M::Blood,
+            light: None,
+            fire_immune: false,
+            water_hurts: false,
+            gold: 2,
         },
         Skeleton => Spec {
-            sprite: &[".www..", ".wkw..", ".www..", "..w...", ".wwww.", "..w.w.", "..w...", ".w.w..", ".w.w.."],
+            sprite: &[
+                ".www..", ".wkw..", ".www..", "..w...", ".wwww.", "..w.w.", "..w...", ".w.w..",
+                ".w.w..",
+            ],
             pal: &[(b'w', [232, 228, 212]), (b'k', [30, 20, 30])],
-            hp: 30.0, speed: 26.0, dmg: 8.0, ai: Ai::Walker, ranged: Ranged::Bone, gib: M::Bone, light: None, fire_immune: false, water_hurts: false, gold: 3,
+            hp: 30.0,
+            speed: 26.0,
+            dmg: 8.0,
+            ai: Ai::Walker,
+            ranged: Ranged::Bone,
+            gib: M::Bone,
+            light: None,
+            fire_immune: false,
+            water_hurts: false,
+            gold: 3,
         },
         Slime => Spec {
             sprite: &["..sss..", ".sssss.", "ssesesS", "sssssss", ".sssss."],
-            pal: &[(b's', [80, 204, 112]), (b'e', [20, 50, 30]), (b'S', [200, 255, 214])],
-            hp: 24.0, speed: 30.0, dmg: 6.0, ai: Ai::Hopper, ranged: Ranged::None, gib: M::Goo, light: None, fire_immune: false, water_hurts: false, gold: 1,
+            pal: &[
+                (b's', [80, 204, 112]),
+                (b'e', [20, 50, 30]),
+                (b'S', [200, 255, 214]),
+            ],
+            hp: 24.0,
+            speed: 30.0,
+            dmg: 6.0,
+            ai: Ai::Hopper,
+            ranged: Ranged::None,
+            gib: M::Goo,
+            light: None,
+            fire_immune: false,
+            water_hurts: false,
+            gold: 1,
         },
         DemonEye => Spec {
-            sprite: &["..wwww...", ".wwrwww..", "wwwwwwwt.", "wwwwwwwtt", "wwwwwwwt.", ".wwwrww..", "..wwww..."],
-            pal: &[(b'w', [240, 236, 230]), (b'r', [200, 40, 40]), (b't', [170, 30, 30])],
-            hp: 22.0, speed: 60.0, dmg: 9.0, ai: Ai::Flyer, ranged: Ranged::None, gib: M::Blood, light: None, fire_immune: false, water_hurts: false, gold: 2,
+            sprite: &[
+                "..wwww...",
+                ".wwrwww..",
+                "wwwwwwwt.",
+                "wwwwwwwtt",
+                "wwwwwwwt.",
+                ".wwwrww..",
+                "..wwww...",
+            ],
+            pal: &[
+                (b'w', [240, 236, 230]),
+                (b'r', [200, 40, 40]),
+                (b't', [170, 30, 30]),
+            ],
+            hp: 22.0,
+            speed: 60.0,
+            dmg: 9.0,
+            ai: Ai::Flyer,
+            ranged: Ranged::None,
+            gib: M::Blood,
+            light: None,
+            fire_immune: false,
+            water_hurts: false,
+            gold: 2,
         },
         Bat => Spec {
             sprite: &["k.....k", "kk.b.kk", ".kbbbk.", "...b..."],
             pal: &[(b'k', [70, 46, 82]), (b'b', [104, 70, 104])],
-            hp: 10.0, speed: 80.0, dmg: 5.0, ai: Ai::Flyer, ranged: Ranged::None, gib: M::Blood, light: None, fire_immune: false, water_hurts: false, gold: 1,
+            hp: 10.0,
+            speed: 80.0,
+            dmg: 5.0,
+            ai: Ai::Flyer,
+            ranged: Ranged::None,
+            gib: M::Blood,
+            light: None,
+            fire_immune: false,
+            water_hurts: false,
+            gold: 1,
         },
         FireImp => Spec {
-            sprite: &["r...r", ".rrr.", ".yry.", ".rrr.", "rrrrr", ".r.r.", "..f.."],
-            pal: &[(b'r', [210, 64, 40]), (b'y', [255, 230, 90]), (b'f', [255, 170, 40])],
-            hp: 26.0, speed: 50.0, dmg: 8.0, ai: Ai::Flyer, ranged: Ranged::Fire, gib: M::Fire, light: Some([1.2, 0.5, 0.1]), fire_immune: true, water_hurts: true, gold: 3,
+            sprite: &[
+                "r...r", ".rrr.", ".yry.", ".rrr.", "rrrrr", ".r.r.", "..f..",
+            ],
+            pal: &[
+                (b'r', [210, 64, 40]),
+                (b'y', [255, 230, 90]),
+                (b'f', [255, 170, 40]),
+            ],
+            hp: 26.0,
+            speed: 50.0,
+            dmg: 8.0,
+            ai: Ai::Flyer,
+            ranged: Ranged::Fire,
+            gib: M::Fire,
+            light: Some([1.2, 0.5, 0.1]),
+            fire_immune: true,
+            water_hurts: true,
+            gold: 3,
         },
         Lion => Spec {
-            sprite: &[".........mmm.", "........mmmmm", "tt.yyyyyymyem", ".t.yyyyyymmmm", "...yyyyyyymm.", "...yy.yy.yy..", "...yy.yy.yy.."],
-            pal: &[(b'y', [214, 164, 84]), (b'm', [146, 84, 32]), (b'e', [40, 20, 10]), (b't', [184, 132, 62])],
-            hp: 70.0, speed: 40.0, dmg: 16.0, ai: Ai::Pouncer, ranged: Ranged::None, gib: M::Blood, light: None, fire_immune: false, water_hurts: false, gold: 6,
+            sprite: &[
+                ".........mmm.",
+                "........mmmmm",
+                "tt.yyyyyymyem",
+                ".t.yyyyyymmmm",
+                "...yyyyyyymm.",
+                "...yy.yy.yy..",
+                "...yy.yy.yy..",
+            ],
+            pal: &[
+                (b'y', [214, 164, 84]),
+                (b'm', [146, 84, 32]),
+                (b'e', [40, 20, 10]),
+                (b't', [184, 132, 62]),
+            ],
+            hp: 70.0,
+            speed: 40.0,
+            dmg: 16.0,
+            ai: Ai::Pouncer,
+            ranged: Ranged::None,
+            gib: M::Blood,
+            light: None,
+            fire_immune: false,
+            water_hurts: false,
+            gold: 6,
         },
         Tiger => Spec {
-            sprite: &[".........oo..", "........owoo.", "kk.okokokoooe", ".t.oooooooww.", "...okokokoo..", "...oo.oo.oo..", "...kk.kk.kk.."],
-            pal: &[(b'o', [232, 130, 40]), (b'k', [30, 22, 20]), (b'w', [240, 236, 226]), (b'e', [90, 200, 60]), (b't', [232, 130, 40])],
-            hp: 80.0, speed: 46.0, dmg: 18.0, ai: Ai::Pouncer, ranged: Ranged::None, gib: M::Blood, light: None, fire_immune: false, water_hurts: false, gold: 7,
+            sprite: &[
+                ".........oo..",
+                "........owoo.",
+                "kk.okokokoooe",
+                ".t.oooooooww.",
+                "...okokokoo..",
+                "...oo.oo.oo..",
+                "...kk.kk.kk..",
+            ],
+            pal: &[
+                (b'o', [232, 130, 40]),
+                (b'k', [30, 22, 20]),
+                (b'w', [240, 236, 226]),
+                (b'e', [90, 200, 60]),
+                (b't', [232, 130, 40]),
+            ],
+            hp: 80.0,
+            speed: 46.0,
+            dmg: 18.0,
+            ai: Ai::Pouncer,
+            ranged: Ranged::None,
+            gib: M::Blood,
+            light: None,
+            fire_immune: false,
+            water_hurts: false,
+            gold: 7,
         },
         Scorpion => Spec {
-            sprite: &["...ttt....", "..t...t...", "......r...", "cssssssss.", ".s.s.s.s.."],
-            pal: &[(b's', [70, 46, 32]), (b't', [92, 58, 34]), (b'c', [120, 70, 36]), (b'r', [220, 60, 40])],
-            hp: 28.0, speed: 44.0, dmg: 10.0, ai: Ai::Walker, ranged: Ranged::None, gib: M::Blood, light: None, fire_immune: false, water_hurts: false, gold: 2,
+            sprite: &[
+                "...ttt....",
+                "..t...t...",
+                "......r...",
+                "cssssssss.",
+                ".s.s.s.s..",
+            ],
+            pal: &[
+                (b's', [70, 46, 32]),
+                (b't', [92, 58, 34]),
+                (b'c', [120, 70, 36]),
+                (b'r', [220, 60, 40]),
+            ],
+            hp: 28.0,
+            speed: 44.0,
+            dmg: 10.0,
+            ai: Ai::Walker,
+            ranged: Ranged::None,
+            gib: M::Blood,
+            light: None,
+            fire_immune: false,
+            water_hurts: false,
+            gold: 2,
         },
         SnowWolf => Spec {
-            sprite: &[".........ww", "........wwe", "wwwwwwwwww.", ".wwwwwwww..", ".w.w...w.w.", ".w.w...w.w."],
+            sprite: &[
+                ".........ww",
+                "........wwe",
+                "wwwwwwwwww.",
+                ".wwwwwwww..",
+                ".w.w...w.w.",
+                ".w.w...w.w.",
+            ],
             pal: &[(b'w', [216, 222, 232]), (b'e', [40, 70, 110])],
-            hp: 44.0, speed: 52.0, dmg: 12.0, ai: Ai::Pouncer, ranged: Ranged::None, gib: M::Blood, light: None, fire_immune: false, water_hurts: false, gold: 4,
+            hp: 44.0,
+            speed: 52.0,
+            dmg: 12.0,
+            ai: Ai::Pouncer,
+            ranged: Ranged::None,
+            gib: M::Blood,
+            light: None,
+            fire_immune: false,
+            water_hurts: false,
+            gold: 4,
         },
         Yeti => Spec {
-            sprite: &["..ffff..", ".fbebef.", ".fbbbbf.", "ffffffff", "ffffffff", "ffffffff", ".ffffff.", ".ffffff.", ".ff..ff.", ".ff..ff.", ".ff..ff."],
-            pal: &[(b'f', [236, 240, 246]), (b'b', [120, 150, 192]), (b'e', [20, 20, 40])],
-            hp: 120.0, speed: 22.0, dmg: 20.0, ai: Ai::Walker, ranged: Ranged::Snow, gib: M::Snow, light: None, fire_immune: false, water_hurts: false, gold: 10,
+            sprite: &[
+                "..ffff..", ".fbebef.", ".fbbbbf.", "ffffffff", "ffffffff", "ffffffff", ".ffffff.",
+                ".ffffff.", ".ff..ff.", ".ff..ff.", ".ff..ff.",
+            ],
+            pal: &[
+                (b'f', [236, 240, 246]),
+                (b'b', [120, 150, 192]),
+                (b'e', [20, 20, 40]),
+            ],
+            hp: 120.0,
+            speed: 22.0,
+            dmg: 20.0,
+            ai: Ai::Walker,
+            ranged: Ranged::Snow,
+            gib: M::Snow,
+            light: None,
+            fire_immune: false,
+            water_hurts: false,
+            gold: 10,
         },
         Golem => Spec {
-            sprite: &["..rrrrrr..", ".rryrryrr.", ".rrrrrrrr.", "rr.rrrr.rr", "rr.rrrr.rr", "rr.rcrr.rr", "rr.rrrr.rr", "...rrrr...", "..rr..rr..", "..rr..rr..", ".rrr..rrr.", ".rrr..rrr."],
-            pal: &[(b'r', [112, 102, 104]), (b'y', [255, 200, 80]), (b'c', [255, 140, 40])],
-            hp: 200.0, speed: 14.0, dmg: 25.0, ai: Ai::Walker, ranged: Ranged::Rock, gib: M::Rubble, light: Some([0.8, 0.5, 0.1]), fire_immune: true, water_hurts: false, gold: 15,
+            sprite: &[
+                "..rrrrrr..",
+                ".rryrryrr.",
+                ".rrrrrrrr.",
+                "rr.rrrr.rr",
+                "rr.rrrr.rr",
+                "rr.rcrr.rr",
+                "rr.rrrr.rr",
+                "...rrrr...",
+                "..rr..rr..",
+                "..rr..rr..",
+                ".rrr..rrr.",
+                ".rrr..rrr.",
+            ],
+            pal: &[
+                (b'r', [112, 102, 104]),
+                (b'y', [255, 200, 80]),
+                (b'c', [255, 140, 40]),
+            ],
+            hp: 200.0,
+            speed: 14.0,
+            dmg: 25.0,
+            ai: Ai::Walker,
+            ranged: Ranged::Rock,
+            gib: M::Rubble,
+            light: Some([0.8, 0.5, 0.1]),
+            fire_immune: true,
+            water_hurts: false,
+            gold: 15,
         },
         Salamander => Spec {
-            sprite: &[".........oo.", "tooooooooooe", "..oooooooo..", "..o.o..o.o.."],
-            pal: &[(b'o', [232, 92, 32]), (b'e', [255, 240, 120]), (b't', [255, 160, 40])],
-            hp: 40.0, speed: 34.0, dmg: 12.0, ai: Ai::Walker, ranged: Ranged::Fire, gib: M::Lava, light: Some([0.9, 0.35, 0.05]), fire_immune: true, water_hurts: true, gold: 5,
+            sprite: &[
+                ".........oo.",
+                "tooooooooooe",
+                "..oooooooo..",
+                "..o.o..o.o..",
+            ],
+            pal: &[
+                (b'o', [232, 92, 32]),
+                (b'e', [255, 240, 120]),
+                (b't', [255, 160, 40]),
+            ],
+            hp: 40.0,
+            speed: 34.0,
+            dmg: 12.0,
+            ai: Ai::Walker,
+            ranged: Ranged::Fire,
+            gib: M::Lava,
+            light: Some([0.9, 0.35, 0.05]),
+            fire_immune: true,
+            water_hurts: true,
+            gold: 5,
         },
         Worm => Spec {
             sprite: &["ww", "ww"],
             pal: &[(b'w', [150, 108, 140])],
-            hp: 160.0, speed: 70.0, dmg: 18.0, ai: Ai::Burrower, ranged: Ranged::None, gib: M::Goo, light: None, fire_immune: false, water_hurts: false, gold: 14,
+            hp: 160.0,
+            speed: 70.0,
+            dmg: 18.0,
+            ai: Ai::Burrower,
+            ranged: Ranged::None,
+            gib: M::Goo,
+            light: None,
+            fire_immune: false,
+            water_hurts: false,
+            gold: 14,
         },
         Dragon => Spec {
             sprite: &["dd", "dd"],
             pal: &[(b'd', [176, 44, 40])],
-            hp: 400.0, speed: 95.0, dmg: 24.0, ai: Ai::Dragon, ranged: Ranged::Fire, gib: M::Blood, light: Some([0.6, 0.25, 0.05]), fire_immune: true, water_hurts: false, gold: 50,
+            hp: 400.0,
+            speed: 95.0,
+            dmg: 24.0,
+            ai: Ai::Dragon,
+            ranged: Ranged::Fire,
+            gib: M::Blood,
+            light: Some([0.6, 0.25, 0.05]),
+            fire_immune: true,
+            water_hurts: false,
+            gold: 50,
         },
         Ghost => Spec {
-            sprite: &["..ggg..", ".ggggg.", "gkgggkg", "ggggggg", "ggg.ggg", "ggggggg", "ggggggg", "g.ggg.g"],
+            sprite: &[
+                "..ggg..", ".ggggg.", "gkgggkg", "ggggggg", "ggg.ggg", "ggggggg", "ggggggg",
+                "g.ggg.g",
+            ],
             pal: &[(b'g', [216, 228, 255]), (b'k', [40, 40, 70])],
-            hp: 30.0, speed: 30.0, dmg: 10.0, ai: Ai::Ghost, ranged: Ranged::None, gib: M::Smoke, light: Some([0.25, 0.3, 0.45]), fire_immune: true, water_hurts: false, gold: 4,
+            hp: 30.0,
+            speed: 30.0,
+            dmg: 10.0,
+            ai: Ai::Ghost,
+            ranged: Ranged::None,
+            gib: M::Smoke,
+            light: Some([0.25, 0.3, 0.45]),
+            fire_immune: true,
+            water_hurts: false,
+            gold: 4,
         },
         StarJelly => Spec {
-            sprite: &["..jjjjj..", ".jjjjjjj.", "jjjsjjsjj", "jjjjjjjjj", ".j.j.j.j.", ".j.j.j.j.", "j..j.j..j", ".j..j..j."],
+            sprite: &[
+                "..jjjjj..",
+                ".jjjjjjj.",
+                "jjjsjjsjj",
+                "jjjjjjjjj",
+                ".j.j.j.j.",
+                ".j.j.j.j.",
+                "j..j.j..j",
+                ".j..j..j.",
+            ],
             pal: &[(b'j', [176, 146, 255]), (b's', [255, 255, 255])],
-            hp: 34.0, speed: 22.0, dmg: 10.0, ai: Ai::Flyer, ranged: Ranged::None, gib: M::Crystal, light: Some([0.6, 0.45, 1.0]), fire_immune: false, water_hurts: false, gold: 6,
+            hp: 34.0,
+            speed: 22.0,
+            dmg: 10.0,
+            ai: Ai::Flyer,
+            ranged: Ranged::None,
+            gib: M::Crystal,
+            light: Some([0.6, 0.45, 1.0]),
+            fire_immune: false,
+            water_hurts: false,
+            gold: 6,
         },
         MoonHopper => Spec {
-            sprite: &[".l...l.", ".l...l.", ".mmmmm.", "mmemmmm", "mmmmmmm", ".m...m."],
-            pal: &[(b'm', [184, 184, 214]), (b'l', [224, 204, 244]), (b'e', [64, 40, 124])],
-            hp: 30.0, speed: 40.0, dmg: 8.0, ai: Ai::Hopper, ranged: Ranged::None, gib: M::Goo, light: None, fire_immune: false, water_hurts: false, gold: 4,
+            sprite: &[
+                ".l...l.", ".l...l.", ".mmmmm.", "mmemmmm", "mmmmmmm", ".m...m.",
+            ],
+            pal: &[
+                (b'm', [184, 184, 214]),
+                (b'l', [224, 204, 244]),
+                (b'e', [64, 40, 124]),
+            ],
+            hp: 30.0,
+            speed: 40.0,
+            dmg: 8.0,
+            ai: Ai::Hopper,
+            ranged: Ranged::None,
+            gib: M::Goo,
+            light: None,
+            fire_immune: false,
+            water_hurts: false,
+            gold: 4,
         },
         VoidEye => Spec {
-            sprite: &["..vvvvv..", ".vvvvvvv.", "vvvvvvvvv", "vvvvvvvvv", "vvvvvvvvv", "vvvvvvvvv", "vvvvvvvvv", ".vvvvvvv.", "..vvvvv.."],
+            sprite: &[
+                "..vvvvv..",
+                ".vvvvvvv.",
+                "vvvvvvvvv",
+                "vvvvvvvvv",
+                "vvvvvvvvv",
+                "vvvvvvvvv",
+                "vvvvvvvvv",
+                ".vvvvvvv.",
+                "..vvvvv..",
+            ],
             pal: &[(b'v', [44, 22, 64])],
-            hp: 50.0, speed: 34.0, dmg: 12.0, ai: Ai::Flyer, ranged: Ranged::Void, gib: M::Gas, light: Some([0.5, 0.1, 0.8]), fire_immune: false, water_hurts: false, gold: 8,
+            hp: 50.0,
+            speed: 34.0,
+            dmg: 12.0,
+            ai: Ai::Flyer,
+            ranged: Ranged::Void,
+            gib: M::Gas,
+            light: Some([0.5, 0.1, 0.8]),
+            fire_immune: false,
+            water_hurts: false,
+            gold: 8,
         },
         Wisp => Spec {
             sprite: &[".w.", "wWw", ".w."],
             pal: &[(b'w', [150, 255, 230]), (b'W', [255, 255, 255])],
-            hp: 8.0, speed: 90.0, dmg: 4.0, ai: Ai::Flyer, ranged: Ranged::None, gib: M::Empty, light: Some([0.4, 1.2, 1.0]), fire_immune: true, water_hurts: false, gold: 2,
+            hp: 8.0,
+            speed: 90.0,
+            dmg: 4.0,
+            ai: Ai::Flyer,
+            ranged: Ranged::None,
+            gib: M::Empty,
+            light: Some([0.4, 1.2, 1.0]),
+            fire_immune: true,
+            water_hurts: false,
+            gold: 2,
         },
         CloudSprite => Spec {
-            sprite: &["..ccccc..", ".ccccccc.", "cceccecc.", "ccccccccc", ".c.c.c.c."],
+            sprite: &[
+                "..ccccc..",
+                ".ccccccc.",
+                "cceccecc.",
+                "ccccccccc",
+                ".c.c.c.c.",
+            ],
             pal: &[(b'c', [240, 244, 252]), (b'e', [60, 80, 124])],
-            hp: 30.0, speed: 30.0, dmg: 8.0, ai: Ai::Flyer, ranged: Ranged::Zap, gib: M::Steam, light: None, fire_immune: false, water_hurts: false, gold: 4,
+            hp: 30.0,
+            speed: 30.0,
+            dmg: 8.0,
+            ai: Ai::Flyer,
+            ranged: Ranged::Zap,
+            gib: M::Steam,
+            light: None,
+            fire_immune: false,
+            water_hurts: false,
+            gold: 4,
         },
         Fish => Spec {
             sprite: &["..ff..", "fffffe", ".ffff.", "t....."],
-            pal: &[(b'f', [240, 160, 60]), (b'e', [20, 20, 30]), (b't', [255, 200, 90])],
-            hp: 8.0, speed: 40.0, dmg: 0.0, ai: Ai::Swimmer, ranged: Ranged::None, gib: M::Blood, light: None, fire_immune: false, water_hurts: false, gold: 1,
+            pal: &[
+                (b'f', [240, 160, 60]),
+                (b'e', [20, 20, 30]),
+                (b't', [255, 200, 90]),
+            ],
+            hp: 8.0,
+            speed: 40.0,
+            dmg: 0.0,
+            ai: Ai::Swimmer,
+            ranged: Ranged::None,
+            gib: M::Blood,
+            light: None,
+            fire_immune: false,
+            water_hurts: false,
+            gold: 1,
         },
         Shark => Spec {
-            sprite: &[".......s......", "......sss.....", "ssssssssssssss", ".sswwwwwwwwkss", "ss..wwwwwwwtt.", "s......ss....."],
-            pal: &[(b's', [100, 116, 136]), (b'w', [222, 226, 232]), (b'k', [20, 20, 30]), (b't', [240, 240, 240])],
-            hp: 90.0, speed: 70.0, dmg: 20.0, ai: Ai::Swimmer, ranged: Ranged::None, gib: M::Blood, light: None, fire_immune: false, water_hurts: false, gold: 8,
+            sprite: &[
+                ".......s......",
+                "......sss.....",
+                "ssssssssssssss",
+                ".sswwwwwwwwkss",
+                "ss..wwwwwwwtt.",
+                "s......ss.....",
+            ],
+            pal: &[
+                (b's', [100, 116, 136]),
+                (b'w', [222, 226, 232]),
+                (b'k', [20, 20, 30]),
+                (b't', [240, 240, 240]),
+            ],
+            hp: 90.0,
+            speed: 70.0,
+            dmg: 20.0,
+            ai: Ai::Swimmer,
+            ranged: Ranged::None,
+            gib: M::Blood,
+            light: None,
+            fire_immune: false,
+            water_hurts: false,
+            gold: 8,
         },
         Mushling => Spec {
             sprite: &[".ccc.", "ccccc", ".fef.", ".fff.", ".f.f."],
-            pal: &[(b'c', [90, 232, 212]), (b'f', [222, 212, 192]), (b'e', [30, 30, 30])],
-            hp: 20.0, speed: 20.0, dmg: 6.0, ai: Ai::Walker, ranged: Ranged::None, gib: M::Mushroom, light: Some([0.15, 0.6, 0.55]), fire_immune: false, water_hurts: false, gold: 2,
+            pal: &[
+                (b'c', [90, 232, 212]),
+                (b'f', [222, 212, 192]),
+                (b'e', [30, 30, 30]),
+            ],
+            hp: 20.0,
+            speed: 20.0,
+            dmg: 6.0,
+            ai: Ai::Walker,
+            ranged: Ranged::None,
+            gib: M::Mushroom,
+            light: Some([0.15, 0.6, 0.55]),
+            fire_immune: false,
+            water_hurts: false,
+            gold: 2,
         },
     }
 }
@@ -251,8 +632,30 @@ pub fn size(kind: MobKind) -> (f32, f32) {
 pub const ALL_MOBS: [MobKind; 24] = {
     use MobKind::*;
     [
-        Zombie, Skeleton, Slime, DemonEye, Bat, FireImp, Lion, Tiger, Scorpion, SnowWolf, Yeti, Golem, Salamander, Worm, Dragon, Ghost,
-        StarJelly, MoonHopper, VoidEye, Wisp, CloudSprite, Mushling, Fish, Shark,
+        Zombie,
+        Skeleton,
+        Slime,
+        DemonEye,
+        Bat,
+        FireImp,
+        Lion,
+        Tiger,
+        Scorpion,
+        SnowWolf,
+        Yeti,
+        Golem,
+        Salamander,
+        Worm,
+        Dragon,
+        Ghost,
+        StarJelly,
+        MoonHopper,
+        VoidEye,
+        Wisp,
+        CloudSprite,
+        Mushling,
+        Fish,
+        Shark,
     ]
 };
 
@@ -381,7 +784,20 @@ const N_SEG_DRAGON: usize = 20;
 
 impl Mobs {
     pub fn new(seed: u64) -> Self {
-        Self { list: Vec::new(), corpses: Vec::new(), shots: Vec::new(), timer: 3.0, rng: Rng::new(seed ^ 0xBEA57), popups: Vec::new(), sounds: Vec::new(), gold: 0, kills: 0, big_hits: 0, density: 1.0, peaceful: false }
+        Self {
+            list: Vec::new(),
+            corpses: Vec::new(),
+            shots: Vec::new(),
+            timer: 3.0,
+            rng: Rng::new(seed ^ 0xBEA57),
+            popups: Vec::new(),
+            sounds: Vec::new(),
+            gold: 0,
+            kills: 0,
+            big_hits: 0,
+            density: 1.0,
+            peaceful: false,
+        }
     }
 
     pub fn clear(&mut self) {
@@ -471,14 +887,21 @@ impl Mobs {
         m.last_hit = kind;
         m.hp -= dmg;
         m.hurt = 0.15;
-        let heavy = matches!(spec(m.kind).ai, Ai::Dragon | Ai::Burrower) || m.kind == MobKind::Golem;
+        let heavy =
+            matches!(spec(m.kind).ai, Ai::Dragon | Ai::Burrower) || m.kind == MobKind::Golem;
         if !heavy {
             m.vx += knock.0;
             m.vy += knock.1;
         }
         let (cx, cy) = Self::center(m);
         if dmg >= 1.0 {
-            self.popups.push(Popup { x: cx, y: m.y - 2.0, text: format!("{}", dmg.round() as i32), color: [255, 236, 200], t: 0.0 });
+            self.popups.push(Popup {
+                x: cx,
+                y: m.y - 2.0,
+                text: format!("{}", dmg.round() as i32),
+                color: [255, 236, 200],
+                t: 0.0,
+            });
         }
         fx.burst(cx, cy, 4, 40.0, [255, 240, 220]);
         self.sounds.push(Sfx::Hit);
@@ -497,12 +920,27 @@ impl Mobs {
             if d < r {
                 let k = 1.0 - d / r;
                 let (dx, dy) = ((cx - x) / d.max(1.0), (cy - y) / d.max(1.0));
-                self.hurt_by(i, dmg * (0.4 + 0.6 * k), (dx * 120.0 * k, dy * 120.0 * k - 60.0 * k), kind, fx);
+                self.hurt_by(
+                    i,
+                    dmg * (0.4 + 0.6 * k),
+                    (dx * 120.0 * k, dy * 120.0 * k - 60.0 * k),
+                    kind,
+                    fx,
+                );
             }
         }
     }
 
-    pub fn damage_line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, r: f32, dmg: f32, fx: &mut Fx) {
+    pub fn damage_line(
+        &mut self,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        r: f32,
+        dmg: f32,
+        fx: &mut Fx,
+    ) {
         let len = ((x1 - x0).powi(2) + (y1 - y0).powi(2)).sqrt().max(1.0);
         let mut hit = vec![false; self.list.len()];
         let steps = (len / 2.0) as i32 + 1;
@@ -542,7 +980,13 @@ impl Mobs {
         m.pet = true;
         m.hp = m.max_hp;
         let (cx, _) = Self::center(m);
-        self.popups.push(Popup { x: cx, y: m.y - 4.0, text: format!("{} TAMED!", m.kind.name()), color: [140, 255, 150], t: 0.0 });
+        self.popups.push(Popup {
+            x: cx,
+            y: m.y - 4.0,
+            text: format!("{} TAMED!", m.kind.name()),
+            color: [140, 255, 150],
+            t: 0.0,
+        });
         fx.burst(cx, m.y, 30, 70.0, [140, 255, 150]);
         true
     }
@@ -594,7 +1038,17 @@ impl Mobs {
 
     /// Knock creatures in a cone (wind spells); pets are spared the damage.
     #[allow(clippy::too_many_arguments)]
-    pub fn push_cone(&mut self, x: f32, y: f32, (ux, uy): (f32, f32), len: f32, half: f32, force: f32, dmg: f32, fx: &mut Fx) {
+    pub fn push_cone(
+        &mut self,
+        x: f32,
+        y: f32,
+        (ux, uy): (f32, f32),
+        len: f32,
+        half: f32,
+        force: f32,
+        dmg: f32,
+        fx: &mut Fx,
+    ) {
         for i in 0..self.list.len() {
             let (cx, cy) = Self::center(&self.list[i]);
             let (dx, dy) = (cx - x, cy - y);
@@ -685,8 +1139,16 @@ impl Mobs {
         let biome = world.gen.biome(x as i32);
         let in_water = world.mat(x as i32, y as i32) == M::Water;
         use MobKind::*;
-        let alien: Vec<(MobKind, f32)> = world.gen.planet.creatures.iter().map(|k| (*k, 1.0)).collect();
-        let table: &[(MobKind, f32)] = if !world.gen.planet.is_earth() && !(in_water && world.gen.planet.sea == Some(M::Water)) {
+        let alien: Vec<(MobKind, f32)> = world
+            .gen
+            .planet
+            .creatures
+            .iter()
+            .map(|k| (*k, 1.0))
+            .collect();
+        let table: &[(MobKind, f32)] = if !world.gen.planet.is_earth()
+            && !(in_water && world.gen.planet.sea == Some(M::Water))
+        {
             if alien.is_empty() || y < -400.0 {
                 &[(Wisp, 1.0)]
             } else {
@@ -699,25 +1161,59 @@ impl Mobs {
                 &[(Fish, 1.0)]
             }
         } else if y < -520.0 {
-            &[(StarJelly, 3.0), (MoonHopper, 3.0), (VoidEye, 2.0), (Wisp, 2.0), (Dragon, 0.35)]
+            &[
+                (StarJelly, 3.0),
+                (MoonHopper, 3.0),
+                (VoidEye, 2.0),
+                (Wisp, 2.0),
+                (Dragon, 0.35),
+            ]
         } else if y < -230.0 {
-            &[(CloudSprite, 3.0), (DemonEye, 1.0), (Wisp, 1.5), (Dragon, 0.4)]
+            &[
+                (CloudSprite, 3.0),
+                (DemonEye, 1.0),
+                (Wisp, 1.5),
+                (Dragon, 0.4),
+            ]
         } else if depth < 10 {
             match (biome, night) {
                 (Biome::Forest, false) => &[(Slime, 3.0), (Tiger, 1.0), (Bat, 0.3)],
                 (Biome::Plains, false) => &[(Slime, 3.0), (Lion, 1.0)],
                 (Biome::Jungle, false) => &[(Tiger, 3.0), (Slime, 1.5), (Bat, 1.0)],
                 (Biome::Ocean, _) => &[(DemonEye, 1.0)],
-                (Biome::Forest | Biome::Plains | Biome::Jungle, true) => &[(Zombie, 4.0), (DemonEye, 3.0), (Slime, 1.0), (Ghost, 0.5)],
+                (Biome::Forest | Biome::Plains | Biome::Jungle, true) => {
+                    &[(Zombie, 4.0), (DemonEye, 3.0), (Slime, 1.0), (Ghost, 0.5)]
+                }
                 (Biome::Desert, false) => &[(Scorpion, 3.0), (Lion, 2.0)],
-                (Biome::Desert, true) => &[(Zombie, 2.0), (Ghost, 2.0), (Scorpion, 1.0), (DemonEye, 1.0)],
+                (Biome::Desert, true) => &[
+                    (Zombie, 2.0),
+                    (Ghost, 2.0),
+                    (Scorpion, 1.0),
+                    (DemonEye, 1.0),
+                ],
                 (Biome::Snow, false) => &[(SnowWolf, 3.0), (Yeti, 1.0)],
-                (Biome::Snow, true) => &[(Zombie, 2.0), (DemonEye, 2.0), (SnowWolf, 1.0), (Yeti, 0.6)],
+                (Biome::Snow, true) => {
+                    &[(Zombie, 2.0), (DemonEye, 2.0), (SnowWolf, 1.0), (Yeti, 0.6)]
+                }
             }
         } else if depth < 170 {
-            &[(Skeleton, 3.0), (Bat, 3.0), (Slime, 1.5), (Mushling, 2.0), (Worm, 0.3), (Ghost, 0.4)]
+            &[
+                (Skeleton, 3.0),
+                (Bat, 3.0),
+                (Slime, 1.5),
+                (Mushling, 2.0),
+                (Worm, 0.3),
+                (Ghost, 0.4),
+            ]
         } else {
-            &[(Golem, 1.5), (Salamander, 3.0), (FireImp, 3.0), (Worm, 0.8), (Ghost, 1.0), (Skeleton, 1.0)]
+            &[
+                (Golem, 1.5),
+                (Salamander, 3.0),
+                (FireImp, 3.0),
+                (Worm, 0.8),
+                (Ghost, 1.0),
+                (Skeleton, 1.0),
+            ]
         };
         let total: f32 = table.iter().map(|t| t.1).sum();
         let mut r = self.rng.f32() * total;
@@ -732,7 +1228,12 @@ impl Mobs {
         let s = spec(kind);
         let (w, h) = size(kind);
         let (w, h) = (w as i32, h as i32);
-        let free = |x0: i32, y0: i32| (0..h).all(|dy| (0..w).all(|dx| world.mat(x0 + dx, y0 + dy).passable()) && world.in_window(x0, y0 + dy));
+        let free = |x0: i32, y0: i32| {
+            (0..h).all(|dy| {
+                (0..w).all(|dx| world.mat(x0 + dx, y0 + dy).passable())
+                    && world.in_window(x0, y0 + dy)
+            })
+        };
         let (xi, yi) = (x as i32, y as i32);
         match s.ai {
             Ai::Swimmer => {
@@ -775,14 +1276,32 @@ impl Mobs {
         false
     }
 
-    pub fn update(&mut self, world: &mut World, player: &mut Player, fx: &mut Fx, day: f32, dt: f32) {
+    pub fn update(
+        &mut self,
+        world: &mut World,
+        player: &mut Player,
+        fx: &mut Fx,
+        day: f32,
+        dt: f32,
+    ) {
         use MobKind::*;
         let (px, py) = player.center();
         let alive = !player.dead() && !self.peaceful;
         let mut new_shots = Vec::new();
         let mut new_popups: Vec<Popup> = Vec::new();
-        let fishes: Vec<(f32, f32, f32, f32)> = self.list.iter().filter(|m| m.kind == Fish).map(|m| (m.x + m.w * 0.5, m.y + m.h * 0.5, m.vx, m.vy)).collect();
-        let hostiles: Vec<(usize, f32, f32)> = self.list.iter().enumerate().filter(|(_, m)| !m.pet).map(|(i, m)| (i, m.x + m.w * 0.5, m.y + m.h * 0.5)).collect();
+        let fishes: Vec<(f32, f32, f32, f32)> = self
+            .list
+            .iter()
+            .filter(|m| m.kind == Fish)
+            .map(|m| (m.x + m.w * 0.5, m.y + m.h * 0.5, m.vx, m.vy))
+            .collect();
+        let hostiles: Vec<(usize, f32, f32)> = self
+            .list
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| !m.pet)
+            .map(|(i, m)| (i, m.x + m.w * 0.5, m.y + m.h * 0.5))
+            .collect();
         let mut pet_hits: Vec<(usize, f32, f32)> = Vec::new();
         for m in self.list.iter_mut() {
             let s = spec(m.kind);
@@ -798,7 +1317,12 @@ impl Mobs {
             }
             let (cx, cy) = Self::center(m);
             // The undead burn in sunlight.
-            if matches!(m.kind, Zombie | Skeleton) && !m.pet && day > 0.55 && cy < world.surface_at(cx as i32) as f32 + 3.0 && world.mat(cx as i32, cy as i32) != M::Water {
+            if matches!(m.kind, Zombie | Skeleton)
+                && !m.pet
+                && day > 0.55
+                && cy < world.surface_at(cx as i32) as f32 + 3.0
+                && world.mat(cx as i32, cy as i32) != M::Water
+            {
                 m.hp -= 5.0 * dt;
                 m.last_hit = Dmg::Fire;
                 if fx.rng.chance(0.5) {
@@ -847,9 +1371,16 @@ impl Mobs {
             if dist > 0.5 {
                 m.look = (dx / dist * m.facing, dy / dist);
             }
-            let animal = matches!(m.kind, Lion | Tiger | SnowWolf | MoonHopper | Mushling | Fish | Scorpion);
+            let animal = matches!(
+                m.kind,
+                Lion | Tiger | SnowWolf | MoonHopper | Mushling | Fish | Scorpion
+            );
             let neutral = matches!(m.kind, Mushling | MoonHopper | Fish | StarJelly | Wisp);
-            let night_k = if animal && day < 0.3 && m.kind != SnowWolf { 0.7 } else { 1.0 };
+            let night_k = if animal && day < 0.3 && m.kind != SnowWolf {
+                0.7
+            } else {
+                1.0
+            };
             let sight = match m.kind {
                 Tiger if m.pose == Pose::Crouch => 75.0,
                 Lion => 120.0,
@@ -857,17 +1388,26 @@ impl Mobs {
                 Bat if m.pose == Pose::Roost => 55.0,
                 _ => 170.0,
             } * night_k;
-            let mut aggro = if m.pet { true } else { alive && dist < sight && (!neutral || m.angry > 0.0) };
+            let mut aggro = if m.pet {
+                true
+            } else {
+                alive && dist < sight && (!neutral || m.angry > 0.0)
+            };
             if !m.pet && alive && m.angry > 15.0 && !neutral {
                 aggro = true;
             }
             // Wounded animals run; shy ones keep their distance.
             let fleeing = !m.pet
                 && alive
-                && ((animal && m.hp < m.max_hp * 0.3) || (matches!(m.kind, Mushling | MoonHopper) && dist < 36.0 && m.angry <= 0.0) || (m.kind == Fish && dist < 28.0));
+                && ((animal && m.hp < m.max_hp * 0.3)
+                    || (matches!(m.kind, Mushling | MoonHopper) && dist < 36.0 && m.angry <= 0.0)
+                    || (m.kind == Fish && dist < 28.0));
             // Nobody walks into fire on purpose.
             let ahead_x = (cx + m.facing * (m.w * 0.5 + 4.0)) as i32;
-            let fire_ahead = !s.fire_immune && !m.pet && (matches!(world.mat(ahead_x, cy as i32), M::Fire | M::Lava) || matches!(world.mat(ahead_x, (m.y + m.h) as i32), M::Fire | M::Lava));
+            let fire_ahead = !s.fire_immune
+                && !m.pet
+                && (matches!(world.mat(ahead_x, cy as i32), M::Fire | M::Lava)
+                    || matches!(world.mat(ahead_x, (m.y + m.h) as i32), M::Fire | M::Lava));
             m.st -= dt;
             let mut pose = Pose::Normal;
             let mut speed_k = if aggro { 1.0 } else { 0.4 };
@@ -899,7 +1439,10 @@ impl Mobs {
                     SnowWolf if !m.pet => {
                         if m.st > 0.0 {
                             speed_k = 1.8;
-                        } else if m.attack_cd <= 0.0 && dist < 55.0 && (m.t * 1.9 + (m.seed % 100) as f32).sin() > 0.75 {
+                        } else if m.attack_cd <= 0.0
+                            && dist < 55.0
+                            && (m.t * 1.9 + (m.seed % 100) as f32).sin() > 0.75
+                        {
                             m.st = 0.7;
                             speed_k = 1.8;
                             m.attack_t = ATTACK_ANIM;
@@ -942,26 +1485,46 @@ impl Mobs {
                             pose = Pose::Sleep;
                             m.st = m.st.max(0.5);
                             if fx.rng.chance(dt * 0.6) {
-                                new_popups.push(Popup { x: cx + m.facing * 6.0, y: m.y - 2.0, text: "z".into(), color: [210, 220, 255], t: 0.0 });
+                                new_popups.push(Popup {
+                                    x: cx + m.facing * 6.0,
+                                    y: m.y - 2.0,
+                                    text: "z".into(),
+                                    color: [210, 220, 255],
+                                    t: 0.0,
+                                });
                             }
                         }
                         Tiger => pose = Pose::Crouch,
-                        SnowWolf if day < 0.3 && ((m.t * 0.25 + (m.seed % 13) as f32) % 6.0) < 1.6 => {
+                        SnowWolf
+                            if day < 0.3 && ((m.t * 0.25 + (m.seed % 13) as f32) % 6.0) < 1.6 =>
+                        {
                             pose = Pose::Howl;
                             if fx.rng.chance(dt * 0.7) {
-                                new_popups.push(Popup { x: cx + m.facing * 5.0, y: m.y - 4.0, text: "AWOO".into(), color: [190, 210, 255], t: 0.0 });
+                                new_popups.push(Popup {
+                                    x: cx + m.facing * 5.0,
+                                    y: m.y - 4.0,
+                                    text: "AWOO".into(),
+                                    color: [190, 210, 255],
+                                    t: 0.0,
+                                });
                             }
                         }
-                        Scorpion if world.mat(cx as i32, (m.y + m.h + 0.5) as i32) == M::Sand => pose = Pose::Hidden,
+                        Scorpion if world.mat(cx as i32, (m.y + m.h + 0.5) as i32) == M::Sand => {
+                            pose = Pose::Hidden
+                        }
                         _ => {}
                     }
                 }
                 // Don't wander off cliffs or into water.
-                if dir != 0.0 && m.on_ground && matches!(s.ai, Ai::Walker | Ai::Pouncer | Ai::Hopper) {
+                if dir != 0.0
+                    && m.on_ground
+                    && matches!(s.ai, Ai::Walker | Ai::Pouncer | Ai::Hopper)
+                {
                     let ax = (cx + dir * (m.w * 0.5 + 2.0)) as i32;
                     let foot = (m.y + m.h) as i32;
                     let drop = (0..7).all(|k| !world.mat(ax, foot + k).solid());
-                    let wet = world.mat(ax, foot).kind() == MK::Liquid || world.mat(ax, foot - 1).kind() == MK::Liquid;
+                    let wet = world.mat(ax, foot).kind() == MK::Liquid
+                        || world.mat(ax, foot - 1).kind() == MK::Liquid;
                     if drop || wet {
                         m.facing = -m.facing;
                         dir = 0.0;
@@ -999,7 +1562,14 @@ impl Mobs {
                             let target = dir * s.speed * speed_k * slow;
                             let acc = if ground { 300.0 } else { 120.0 };
                             m.vx += (target - m.vx).clamp(-acc * dt, acc * dt);
-                            if s.ai == Ai::Pouncer && ground && aggro && !fleeing && dist < if m.kind == Tiger { 34.0 } else { 42.0 } && m.cd <= 0.0 && m.kind != SnowWolf {
+                            if s.ai == Ai::Pouncer
+                                && ground
+                                && aggro
+                                && !fleeing
+                                && dist < if m.kind == Tiger { 34.0 } else { 42.0 }
+                                && m.cd <= 0.0
+                                && m.kind != SnowWolf
+                            {
                                 m.vy = -95.0;
                                 m.vx = dir * 140.0;
                                 m.cd = 2.0;
@@ -1045,7 +1615,8 @@ impl Mobs {
                 Ai::Flyer | Ai::Ghost => {
                     // Bats hang from cave ceilings until something comes close.
                     if m.kind == Bat && !aggro && !m.pet {
-                        let ceiling = (1..10).find(|k| world.mat(cx as i32, (m.y as i32) - k).solid());
+                        let ceiling =
+                            (1..10).find(|k| world.mat(cx as i32, (m.y as i32) - k).solid());
                         if let Some(k) = ceiling {
                             if k <= 1 {
                                 m.pose = Pose::Roost;
@@ -1059,67 +1630,83 @@ impl Mobs {
                     if m.pose == Pose::Roost {
                         // (stays put)
                     } else {
-                    let mut cap = s.speed;
-                    let (tx, ty) = if fleeing || (m.kind == Wisp && !aggro && dist < 70.0 && alive) {
-                        // Wisps orbit you, curious.
-                        let a = m.t * 1.4 + (m.seed % 10) as f32;
-                        (px + a.cos() * 16.0, py - 8.0 + a.sin() * 10.0)
-                    } else if aggro {
-                        match m.kind {
-                            DemonEye if !m.pet => {
-                                // Hover, then swoop straight at you.
-                                if m.st > 0.0 {
-                                    cap *= 2.4;
-                                    (px, py)
-                                } else {
-                                    if m.cd <= 0.0 && dist < 80.0 {
-                                        m.st = 0.6;
-                                        m.cd = 3.0;
-                                        m.attack_t = ATTACK_ANIM;
+                        let mut cap = s.speed;
+                        let (tx, ty) = if fleeing
+                            || (m.kind == Wisp && !aggro && dist < 70.0 && alive)
+                        {
+                            // Wisps orbit you, curious.
+                            let a = m.t * 1.4 + (m.seed % 10) as f32;
+                            (px + a.cos() * 16.0, py - 8.0 + a.sin() * 10.0)
+                        } else if aggro {
+                            match m.kind {
+                                DemonEye if !m.pet => {
+                                    // Hover, then swoop straight at you.
+                                    if m.st > 0.0 {
+                                        cap *= 2.4;
+                                        (px, py)
+                                    } else {
+                                        if m.cd <= 0.0 && dist < 80.0 {
+                                            m.st = 0.6;
+                                            m.cd = 3.0;
+                                            m.attack_t = ATTACK_ANIM;
+                                        }
+                                        (px + (m.t * 1.3).sin() * 30.0, py - 26.0)
                                     }
-                                    (px + (m.t * 1.3).sin() * 30.0, py - 26.0)
                                 }
+                                FireImp | CloudSprite | VoidEye if !m.pet => {
+                                    (px - dx.signum() * 38.0, py - 24.0 + (m.t * 1.1).sin() * 6.0)
+                                }
+                                Bat => (
+                                    px + (m.t * 7.0).sin() * 10.0,
+                                    py - 4.0 + (m.t * 9.0).cos() * 8.0,
+                                ),
+                                _ => (
+                                    px + (m.t * 1.3).sin() * 18.0,
+                                    py - 10.0 + (m.t * 0.9).cos() * 12.0,
+                                ),
                             }
-                            FireImp | CloudSprite | VoidEye if !m.pet => (px - dx.signum() * 38.0, py - 24.0 + (m.t * 1.1).sin() * 6.0),
-                            Bat => (px + (m.t * 7.0).sin() * 10.0, py - 4.0 + (m.t * 9.0).cos() * 8.0),
-                            _ => (px + (m.t * 1.3).sin() * 18.0, py - 10.0 + (m.t * 0.9).cos() * 12.0),
+                        } else if m.kind == CloudSprite {
+                            (
+                                cx + fx.wind * 0.5 + m.facing * 10.0,
+                                cy + (m.t * 0.5).sin() * 4.0,
+                            )
+                        } else {
+                            (cx + m.facing * 30.0, cy + (m.t * 0.7).sin() * 10.0)
+                        };
+                        let s = Spec { speed: cap, ..s };
+                        let (ax, ay) = (tx - cx, ty - cy);
+                        let l = (ax * ax + ay * ay).sqrt().max(1.0);
+                        m.vx += ax / l * s.speed * 2.0 * dt * slow;
+                        m.vy += ay / l * s.speed * 2.0 * dt * slow;
+                        let sp = (m.vx * m.vx + m.vy * m.vy).sqrt();
+                        if sp > s.speed {
+                            m.vx *= s.speed / sp;
+                            m.vy *= s.speed / sp;
                         }
-                    } else if m.kind == CloudSprite {
-                        (cx + fx.wind * 0.5 + m.facing * 10.0, cy + (m.t * 0.5).sin() * 4.0)
-                    } else {
-                        (cx + m.facing * 30.0, cy + (m.t * 0.7).sin() * 10.0)
-                    };
-                    let s = Spec { speed: cap, ..s };
-                    let (ax, ay) = (tx - cx, ty - cy);
-                    let l = (ax * ax + ay * ay).sqrt().max(1.0);
-                    m.vx += ax / l * s.speed * 2.0 * dt * slow;
-                    m.vy += ay / l * s.speed * 2.0 * dt * slow;
-                    let sp = (m.vx * m.vx + m.vy * m.vy).sqrt();
-                    if sp > s.speed {
-                        m.vx *= s.speed / sp;
-                        m.vy *= s.speed / sp;
-                    }
-                    if m.frozen > 0.0 {
-                        m.vy += 100.0 * dt;
-                    }
-                    let (nx, ny) = (m.x + m.vx * dt, m.y + m.vy * dt);
-                    if s.ai == Ai::Ghost || !Self::solid_at(world, nx, ny, m.w, m.h) {
-                        m.x = nx;
-                        m.y = ny;
-                    } else {
-                        m.vx = -m.vx * 0.6;
-                        m.vy = -m.vy * 0.6;
-                    }
-                    if m.vx.abs() > 4.0 && !(aggro && matches!(m.kind, FireImp | CloudSprite | VoidEye | DemonEye)) {
-                        m.facing = m.vx.signum();
-                    } else if aggro && dx.abs() > 1.0 {
-                        m.facing = dx.signum();
-                    }
-                    // Storm clouds drizzle as they drift.
-                    if m.kind == CloudSprite && fx.rng.chance(0.25) {
-                        let x = m.x + fx.rng.rangef(1.0, m.w - 1.0);
-                        fx.rain_drop(x, m.y + m.h, fx.wind);
-                    }
+                        if m.frozen > 0.0 {
+                            m.vy += 100.0 * dt;
+                        }
+                        let (nx, ny) = (m.x + m.vx * dt, m.y + m.vy * dt);
+                        if s.ai == Ai::Ghost || !Self::solid_at(world, nx, ny, m.w, m.h) {
+                            m.x = nx;
+                            m.y = ny;
+                        } else {
+                            m.vx = -m.vx * 0.6;
+                            m.vy = -m.vy * 0.6;
+                        }
+                        if m.vx.abs() > 4.0
+                            && !(aggro
+                                && matches!(m.kind, FireImp | CloudSprite | VoidEye | DemonEye))
+                        {
+                            m.facing = m.vx.signum();
+                        } else if aggro && dx.abs() > 1.0 {
+                            m.facing = dx.signum();
+                        }
+                        // Storm clouds drizzle as they drift.
+                        if m.kind == CloudSprite && fx.rng.chance(0.25) {
+                            let x = m.x + fx.rng.rangef(1.0, m.w - 1.0);
+                            fx.rain_drop(x, m.y + m.h, fx.wind);
+                        }
                     }
                 }
                 Ai::Swimmer => {
@@ -1145,14 +1732,24 @@ impl Mobs {
                                 }
                             }
                             if fleeing && player_in_water {
-                                (cx - dx / dist.max(1.0) * 30.0, cy - dy / dist.max(1.0) * 30.0)
+                                (
+                                    cx - dx / dist.max(1.0) * 30.0,
+                                    cy - dy / dist.max(1.0) * 30.0,
+                                )
                             } else if n > 0.0 {
-                                ((sx / n) * 0.6 + (cx + m.facing * 20.0) * 0.4, (sy / n) * 0.6 + (cy + (m.t * 0.8).sin() * 4.0) * 0.4)
+                                (
+                                    (sx / n) * 0.6 + (cx + m.facing * 20.0) * 0.4,
+                                    (sy / n) * 0.6 + (cy + (m.t * 0.8).sin() * 4.0) * 0.4,
+                                )
                             } else {
                                 (cx + m.facing * 30.0, cy + (m.t * 0.8).sin() * 6.0)
                             }
                         } else if aggro && player_in_water && s.dmg > 0.0 {
-                            if m.kind == Shark && !m.pet && (m.attack_cd > 0.0 || dist > 70.0) && m.st <= 0.0 {
+                            if m.kind == Shark
+                                && !m.pet
+                                && (m.attack_cd > 0.0 || dist > 70.0)
+                                && m.st <= 0.0
+                            {
                                 // Circle, then lunge.
                                 if m.attack_cd <= 0.0 && fx.rng.chance(dt * 0.8) {
                                     m.st = 1.0;
@@ -1177,7 +1774,10 @@ impl Mobs {
                             m.vx *= s.speed / sp;
                             m.vy *= s.speed / sp;
                         }
-                        let ahead = world.mat((cx + m.vx.signum() * (m.w * 0.5 + 1.0)) as i32, (cy + m.vy * 0.05) as i32);
+                        let ahead = world.mat(
+                            (cx + m.vx.signum() * (m.w * 0.5 + 1.0)) as i32,
+                            (cy + m.vy * 0.05) as i32,
+                        );
                         if ahead.kind() != MK::Liquid {
                             m.vx = -m.vx;
                             m.vy = -m.vy * 0.5;
@@ -1198,14 +1798,30 @@ impl Mobs {
                 Ai::Burrower => {
                     let inside = world.mat(cx as i32, cy as i32).solid();
                     if inside {
-                        let (ax, ay) = if aggro { (dx, dy) } else { (m.facing, (m.t).sin()) };
+                        let (ax, ay) = if aggro {
+                            (dx, dy)
+                        } else {
+                            (m.facing, (m.t).sin())
+                        };
                         let l = (ax * ax + ay * ay).sqrt().max(0.01);
                         let k = 2.5 * dt;
                         m.vx += (ax / l * s.speed - m.vx) * k;
                         m.vy += (ay / l * s.speed - m.vy) * k;
-                        for (ddx, ddy) in [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)] {
+                        for (ddx, ddy) in [
+                            (0, 0),
+                            (1, 0),
+                            (-1, 0),
+                            (0, 1),
+                            (0, -1),
+                            (1, 1),
+                            (-1, -1),
+                            (1, -1),
+                            (-1, 1),
+                        ] {
                             let (gx, gy) = (cx as i32 + ddx * 2, cy as i32 + ddy * 2);
-                            if world.mat(gx, gy).kind() == MK::Static || world.mat(gx, gy).kind() == MK::Powder {
+                            if world.mat(gx, gy).kind() == MK::Static
+                                || world.mat(gx, gy).kind() == MK::Powder
+                            {
                                 world.set(gx, gy, Cell::EMPTY);
                             }
                         }
@@ -1216,7 +1832,14 @@ impl Mobs {
                     m.y += m.vy * dt * slow;
                 }
                 Ai::Dragon => {
-                    let (tx, ty) = if aggro { (px - m.facing * 20.0 + (m.t * 0.8).sin() * 40.0, py - 35.0 + (m.t * 1.7).sin() * 20.0) } else { (cx + m.facing * 40.0, cy + (m.t).sin() * 8.0) };
+                    let (tx, ty) = if aggro {
+                        (
+                            px - m.facing * 20.0 + (m.t * 0.8).sin() * 40.0,
+                            py - 35.0 + (m.t * 1.7).sin() * 20.0,
+                        )
+                    } else {
+                        (cx + m.facing * 40.0, cy + (m.t).sin() * 8.0)
+                    };
                     let (ax, ay) = (tx - cx, ty - cy);
                     let l = (ax * ax + ay * ay).sqrt().max(1.0);
                     m.vx += ax / l * 160.0 * dt;
@@ -1242,16 +1865,31 @@ impl Mobs {
                         let l = dist.max(1.0);
                         for _ in 0..2 {
                             let jit = (m.t * 50.0).sin() * 0.2;
-                            new_shots.push(MobShot { x: hx, y: hy, vx: (dx / l + jit) * 130.0, vy: (dy / l - jit) * 130.0, kind: Ranged::Fire, life: 0.8 });
+                            new_shots.push(MobShot {
+                                x: hx,
+                                y: hy,
+                                vx: (dx / l + jit) * 130.0,
+                                vy: (dy / l - jit) * 130.0,
+                                kind: Ranged::Fire,
+                                life: 0.8,
+                            });
                         }
                     }
                 }
             }
             // Walk cycle, footsteps and trails.
             let prev_walk = m.walk;
-            let sp = if matches!(s.ai, Ai::Walker | Ai::Pouncer | Ai::Hopper) { m.vx.abs() } else { (m.vx * m.vx + m.vy * m.vy).sqrt() };
+            let sp = if matches!(s.ai, Ai::Walker | Ai::Pouncer | Ai::Hopper) {
+                m.vx.abs()
+            } else {
+                (m.vx * m.vx + m.vy * m.vy).sqrt()
+            };
             m.walk += sp * dt * if m.kind == Golem { 0.22 } else { 0.38 };
-            if m.kind == Golem && m.on_ground && (prev_walk / PI_F).floor() != (m.walk / PI_F).floor() && dist < 100.0 {
+            if m.kind == Golem
+                && m.on_ground
+                && (prev_walk / PI_F).floor() != (m.walk / PI_F).floor()
+                && dist < 100.0
+            {
                 fx.shake = fx.shake.max(1.6 * (1.0 - dist / 100.0) + 0.3);
                 for _ in 0..4 {
                     let x = cx + fx.rng.rangef(-4.0, 4.0);
@@ -1277,7 +1915,16 @@ impl Mobs {
             }
 
             // Ranged attacks.
-            if !m.pet && aggro && !fleeing && s.ranged != Ranged::None && s.ai != Ai::Dragon && m.cd <= 0.0 && dist < 110.0 && m.frozen <= 0.0 && m.pose != Pose::Roost {
+            if !m.pet
+                && aggro
+                && !fleeing
+                && s.ranged != Ranged::None
+                && s.ai != Ai::Dragon
+                && m.cd <= 0.0
+                && dist < 110.0
+                && m.frozen <= 0.0
+                && m.pose != Pose::Roost
+            {
                 m.cd = 2.2 + (m.t * 5.1).sin().abs();
                 m.attack_t = ATTACK_ANIM;
                 let (cx, cy) = Self::center(m);
@@ -1286,9 +1933,20 @@ impl Mobs {
                     Ranged::Fire => 120.0,
                     _ => 150.0,
                 };
-                let lob = if matches!(s.ranged, Ranged::Bone | Ranged::Rock | Ranged::Snow) { -dist * 0.9 } else { 0.0 };
+                let lob = if matches!(s.ranged, Ranged::Bone | Ranged::Rock | Ranged::Snow) {
+                    -dist * 0.9
+                } else {
+                    0.0
+                };
                 let l = dist.max(1.0);
-                new_shots.push(MobShot { x: cx, y: cy - 2.0, vx: dx / l * speed, vy: dy / l * speed + lob, kind: s.ranged, life: 3.0 });
+                new_shots.push(MobShot {
+                    x: cx,
+                    y: cy - 2.0,
+                    vx: dx / l * speed,
+                    vy: dy / l * speed + lob,
+                    kind: s.ranged,
+                    life: 3.0,
+                });
             }
 
             // Pets bite their target.
@@ -1304,8 +1962,13 @@ impl Mobs {
             }
             // Contact damage.
             if alive && m.attack_cd <= 0.0 && m.frozen <= 0.0 {
-                let touching = |x: f32, y: f32, w: f32, h: f32| x < player.x + PW && x + w > player.x && y < player.y + PH && y + h > player.y;
-                let hit = touching(m.x, m.y, m.w, m.h) || m.segs.iter().any(|sg| touching(sg.0 - 2.5, sg.1 - 2.5, 5.0, 5.0));
+                let touching = |x: f32, y: f32, w: f32, h: f32| {
+                    x < player.x + PW && x + w > player.x && y < player.y + PH && y + h > player.y
+                };
+                let hit = touching(m.x, m.y, m.w, m.h)
+                    || m.segs
+                        .iter()
+                        .any(|sg| touching(sg.0 - 2.5, sg.1 - 2.5, 5.0, 5.0));
                 if hit {
                     player.hurt(s.dmg);
                     player.vx += (player.x - m.x).signum() * 90.0;
@@ -1329,7 +1992,9 @@ impl Mobs {
         while i < self.list.len() {
             let m = &self.list[i];
             let (cx, cy) = Self::center(m);
-            let far = (cx - px).abs() > 280.0 || (cy - py).abs() > 220.0 || !world.in_window(cx as i32, cy as i32);
+            let far = (cx - px).abs() > 280.0
+                || (cy - py).abs() > 220.0
+                || !world.in_window(cx as i32, cy as i32);
             if m.hp <= 0.0 {
                 let m = self.list.swap_remove(i);
                 self.gib(&m, fx);
@@ -1434,7 +2099,13 @@ impl Mobs {
         if !m.pet {
             self.gold += s.gold;
             self.kills += 1;
-            self.popups.push(Popup { x: cx, y: cy - 6.0, text: format!("{}  +{} GOLD", m.kind.name(), s.gold), color: [255, 210, 90], t: 0.0 });
+            self.popups.push(Popup {
+                x: cx,
+                y: cy - 6.0,
+                text: format!("{}  +{} GOLD", m.kind.name(), s.gold),
+                color: [255, 210, 90],
+                t: 0.0,
+            });
         }
         self.sounds.push(if big { Sfx::Boom } else { Sfx::Hit });
     }
@@ -1464,7 +2135,11 @@ impl Mobs {
                 c.y = ny;
             }
             if matches!(c.style, Dmg::Fire | Dmg::Lightning) && fx.rng.chance(0.5) {
-                let col = if c.style == Dmg::Fire { [255, 140, 40] } else { [180, 220, 255] };
+                let col = if c.style == Dmg::Fire {
+                    [255, 140, 40]
+                } else {
+                    [180, 220, 255]
+                };
                 let (vx, vy) = (fx.rng.rangef(-20.0, 20.0), fx.rng.rangef(-40.0, -10.0));
                 fx.spark(c.x, c.y, vx, vy, 0.4, col);
             }
@@ -1483,7 +2158,11 @@ impl Mobs {
             Dmg::Fire | Dmg::Lightning => {
                 for _ in 0..14 {
                     let (vx, vy) = (fx.rng.rangef(-30.0, 30.0), fx.rng.rangef(-60.0, -10.0));
-                    let mat = if c.style == Dmg::Lightning && fx.rng.chance(0.4) { M::Bone } else { M::Coal };
+                    let mat = if c.style == Dmg::Lightning && fx.rng.chance(0.4) {
+                        M::Bone
+                    } else {
+                        M::Coal
+                    };
                     fx.debris(c.x, c.y - 1.0, vx, vy, mat, 40);
                 }
                 for k in 0..4 {
@@ -1540,7 +2219,12 @@ impl Mobs {
                 if !world.in_window(gx, gy) {
                     return false;
                 }
-                let hit_player = !peaceful && !player.dead() && s.x >= player.x && s.x < player.x + PW && s.y >= player.y && s.y < player.y + PH;
+                let hit_player = !peaceful
+                    && !player.dead()
+                    && s.x >= player.x
+                    && s.x < player.x + PW
+                    && s.y >= player.y
+                    && s.y < player.y + PH;
                 let m = world.mat(gx, gy);
                 if hit_player || !m.passable() {
                     if hit_player {
@@ -1562,7 +2246,9 @@ impl Mobs {
                                 world.set(gx, gy - 1, f);
                             }
                         }
-                        Ranged::Rock => fx.debris(s.x, s.y - 1.0, -s.vx * 0.2, -40.0, M::Rubble, 120),
+                        Ranged::Rock => {
+                            fx.debris(s.x, s.y - 1.0, -s.vx * 0.2, -40.0, M::Rubble, 120)
+                        }
                         Ranged::Snow => fx.debris(s.x, s.y - 1.0, 0.0, -20.0, M::Snow, 120),
                         Ranged::Bone => fx.debris(s.x, s.y - 1.0, 0.0, -20.0, M::Bone, 120),
                         _ => {}
@@ -1583,7 +2269,11 @@ impl Mobs {
                 if m.hurt > 0.0 {
                     [255, 255, 255]
                 } else if m.frozen > 0.0 {
-                    [(c[0] as u16 / 2 + 70) as u8, (c[1] as u16 / 2 + 100) as u8, (c[2] as u16 / 2 + 127) as u8]
+                    [
+                        (c[0] as u16 / 2 + 70) as u8,
+                        (c[1] as u16 / 2 + 100) as u8,
+                        (c[2] as u16 / 2 + 127) as u8,
+                    ]
                 } else {
                     c
                 }
@@ -1592,24 +2282,41 @@ impl Mobs {
                 Ai::Burrower => {
                     for (k, sg) in m.segs.iter().enumerate().rev() {
                         let r = if k < 2 { 3 } else { 2 };
-                        let shade = if k % 2 == 0 { [150, 108, 140] } else { [124, 86, 118] };
+                        let shade = if k % 2 == 0 {
+                            [150, 108, 140]
+                        } else {
+                            [124, 86, 118]
+                        };
                         disc(cv, sg.0, sg.1, r, tint(shade));
                     }
                     let (cx, cy) = Self::center(m);
                     disc(cv, cx, cy, 3, tint([110, 70, 104]));
-                    cv.put(cx as i32 + (m.vx.signum() * 2.0) as i32, cy as i32, [255, 240, 200]);
+                    cv.put(
+                        cx as i32 + (m.vx.signum() * 2.0) as i32,
+                        cy as i32,
+                        [255, 240, 200],
+                    );
                 }
                 Ai::Dragon => draw_dragon(cv, m, &tint),
                 _ => {
-                    let moving = if matches!(s.ai, Ai::Walker | Ai::Pouncer | Ai::Hopper) { m.vx.abs() } else { (m.vx * m.vx + m.vy * m.vy).sqrt() };
+                    let moving = if matches!(s.ai, Ai::Walker | Ai::Pouncer | Ai::Hopper) {
+                        m.vx.abs()
+                    } else {
+                        (m.vx * m.vx + m.vy * m.vy).sqrt()
+                    };
                     let anim = Anim {
                         t: m.t,
                         walk: m.walk,
                         speed: (moving / s.speed.max(1.0)).min(1.0),
                         vy: m.vy,
-                        ground: m.on_ground || !matches!(s.ai, Ai::Walker | Ai::Pouncer | Ai::Hopper),
+                        ground: m.on_ground
+                            || !matches!(s.ai, Ai::Walker | Ai::Pouncer | Ai::Hopper),
                         pose: m.pose,
-                        attack: if m.attack_t > 0.0 { (std::f32::consts::PI * (1.0 - m.attack_t / ATTACK_ANIM)).sin() } else { 0.0 },
+                        attack: if m.attack_t > 0.0 {
+                            (std::f32::consts::PI * (1.0 - m.attack_t / ATTACK_ANIM)).sin()
+                        } else {
+                            0.0
+                        },
                         look: m.look,
                         seed: m.seed,
                         w: m.w,
@@ -1624,7 +2331,16 @@ impl Mobs {
                     } else {
                         1.0
                     };
-                    blit(cv, &pix, m.x.floor() as i32, m.y.floor() as i32, m.w.ceil() as i32, m.facing, fade, &tint);
+                    blit(
+                        cv,
+                        &pix,
+                        m.x.floor() as i32,
+                        m.y.floor() as i32,
+                        m.w.ceil() as i32,
+                        m.facing,
+                        fade,
+                        &tint,
+                    );
                     if m.pet {
                         let (hx, hy) = (m.x as i32 + m.w as i32 / 2 - 1, m.y as i32 - 4);
                         for (ox, oy) in [(0, 0), (2, 0), (0, 1), (1, 1), (2, 1), (1, 2)] {
@@ -1637,7 +2353,11 @@ impl Mobs {
                         let filled = ((m.hp / m.max_hp).max(0.0) * w as f32) as i32;
                         for k in 0..w {
                             let full = if m.pet { [90, 220, 110] } else { [230, 70, 70] };
-                            cv.put(m.x as i32 + k, m.y as i32 - 2, if k < filled { full } else { [60, 20, 20] });
+                            cv.put(
+                                m.x as i32 + k,
+                                m.y as i32 - 2,
+                                if k < filled { full } else { [60, 20, 20] },
+                            );
                         }
                     }
                 }
@@ -1645,14 +2365,35 @@ impl Mobs {
         }
         for c in &self.corpses {
             let (w, h) = size(c.kind);
-            let pix = creatures::paint(c.kind, &Anim { t: 0.0, walk: 0.0, speed: 0.0, vy: 0.0, ground: true, pose: Pose::Dead, attack: 0.0, look: (1.0, 0.0), seed: c.seed, w, h });
+            let pix = creatures::paint(
+                c.kind,
+                &Anim {
+                    t: 0.0,
+                    walk: 0.0,
+                    speed: 0.0,
+                    vy: 0.0,
+                    ground: true,
+                    pose: Pose::Dead,
+                    attack: 0.0,
+                    look: (1.0, 0.0),
+                    seed: c.seed,
+                    w,
+                    h,
+                },
+            );
             let r = (w.max(h) * 0.75) as i32 + 3;
             let (sn, cs) = c.rot.sin_cos();
             for dy in -r..=r {
                 for dx in -r..=r {
                     // Inverse-rotate each screen pixel back into the body.
-                    let (fx_, fy_) = (dx as f32 * cs + dy as f32 * sn, -dx as f32 * sn + dy as f32 * cs);
-                    let (sx, sy) = ((fx_ + w * 0.5).floor() as i32 + pix.m, (fy_ + h * 0.5).floor() as i32 + pix.m);
+                    let (fx_, fy_) = (
+                        dx as f32 * cs + dy as f32 * sn,
+                        -dx as f32 * sn + dy as f32 * cs,
+                    );
+                    let (sx, sy) = (
+                        (fx_ + w * 0.5).floor() as i32 + pix.m,
+                        (fy_ + h * 0.5).floor() as i32 + pix.m,
+                    );
                     if sx < 0 || sy < 0 || sx >= pix.w || sy >= pix.h {
                         continue;
                     }
@@ -1663,14 +2404,26 @@ impl Mobs {
                         let out = match c.style {
                             Dmg::Fire => {
                                 let ember = ((c.t * 20.0 + (dx * 3 + dy) as f32).sin() > 0.7) as u8;
-                                if ember == 1 { [255, 120, 30] } else { [34, 26, 24] }
+                                if ember == 1 {
+                                    [255, 120, 30]
+                                } else {
+                                    [34, 26, 24]
+                                }
                             }
                             Dmg::Lightning if ((c.t * 24.0) as i32) % 2 == 0 && c.t < 0.6 => {
                                 // X-ray flash: the skeleton shows through.
-                                if (dx + dy) % 2 == 0 { [240, 250, 255] } else { [40, 60, 120] }
+                                if (dx + dy) % 2 == 0 {
+                                    [240, 250, 255]
+                                } else {
+                                    [40, 60, 120]
+                                }
                             }
                             Dmg::Lightning => [50, 44, 48],
-                            _ => [(rgb[0] as f32 * 0.8) as u8, (rgb[1] as f32 * 0.8) as u8, (rgb[2] as f32 * 0.8) as u8],
+                            _ => [
+                                (rgb[0] as f32 * 0.8) as u8,
+                                (rgb[1] as f32 * 0.8) as u8,
+                                (rgb[2] as f32 * 0.8) as u8,
+                            ],
                         };
                         cv.put(c.x as i32 + dx, c.y as i32 + dy, out);
                     }
@@ -1696,7 +2449,15 @@ impl Mobs {
         for s in &self.shots {
             if matches!(s.kind, Ranged::Fire | Ranged::Void | Ranged::Zap) {
                 let c = shot_color(s.kind);
-                add(s.x, s.y, [c[0] as f32 / 100.0, c[1] as f32 / 100.0, c[2] as f32 / 100.0]);
+                add(
+                    s.x,
+                    s.y,
+                    [
+                        c[0] as f32 / 100.0,
+                        c[1] as f32 / 100.0,
+                        c[2] as f32 / 100.0,
+                    ],
+                );
             }
         }
     }
@@ -1716,7 +2477,16 @@ fn shot_color(k: Ranged) -> [u8; 3] {
 
 /// Copy painted creature art into the world, mirrored when facing left.
 #[allow(clippy::too_many_arguments)]
-fn blit(cv: &mut Canvas, pix: &creatures::Pix, x0: i32, y0: i32, wc: i32, facing: f32, fade: f32, tint: &dyn Fn([u8; 3]) -> [u8; 3]) {
+fn blit(
+    cv: &mut Canvas,
+    pix: &creatures::Pix,
+    x0: i32,
+    y0: i32,
+    wc: i32,
+    facing: f32,
+    fade: f32,
+    tint: &dyn Fn([u8; 3]) -> [u8; 3],
+) {
     for iy in 0..pix.h {
         for ix in 0..pix.w {
             let p = pix.px[(iy * pix.w + ix) as usize];
@@ -1724,7 +2494,11 @@ fn blit(cv: &mut Canvas, pix: &creatures::Pix, x0: i32, y0: i32, wc: i32, facing
                 continue;
             }
             let (lx, ly) = (ix - pix.m, iy - pix.m);
-            let gx = if facing >= 0.0 { x0 + lx } else { x0 + wc - 1 - lx };
+            let gx = if facing >= 0.0 {
+                x0 + lx
+            } else {
+                x0 + wc - 1 - lx
+            };
             let c = tint([p[0], p[1], p[2]]);
             let a = p[3] as f32 / 255.0 * fade;
             if a > 0.97 {
@@ -1761,7 +2535,10 @@ fn draw_dragon(cv: &mut Canvas, m: &Mob, tint: &dyn Fn([u8; 3]) -> [u8; 3]) {
             let flap = (m.t * 6.0).sin();
             for i in 0..10 {
                 let span = 10 - i;
-                let (wx, wy) = (sg.0 as i32 - (m.facing * i as f32 * 0.6) as i32, sg.1 as i32 - (span as f32 * flap) as i32 - 2);
+                let (wx, wy) = (
+                    sg.0 as i32 - (m.facing * i as f32 * 0.6) as i32,
+                    sg.1 as i32 - (span as f32 * flap) as i32 - 2,
+                );
                 for j in 0..(span / 2).max(1) {
                     cv.put(wx, wy + j, tint([140, 30, 36]));
                 }

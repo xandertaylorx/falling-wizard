@@ -305,7 +305,12 @@ impl Weather {
             let depth = gy - world.surface_at(gx);
             let biome = world.gen.biome(gx);
             let r = self.rng.f32();
-            if c.back == M::Leaves {
+            if c.back == M::Blossom {
+                if r < 0.35 + self.gust / 100.0 {
+                    let col = if self.rng.chance(0.5) { [250, 196, 216] } else { [255, 226, 236] };
+                    fx.mote(x, y, wind * 0.4 + 3.0, 6.0, 8.0, col, 0.0, 8.0, 80.0);
+                }
+            } else if c.back == M::Leaves {
                 if r < 0.3 + self.gust / 100.0 {
                     let col = if self.rng.chance(0.3) { [222, 146, 56] } else if biome == Biome::Snow { [46, 96, 56] } else { [96, 156, 66] };
                     fx.mote(x, y, wind * 0.4, 8.0, 7.0, col, 0.0, 10.0, 70.0);

@@ -67,10 +67,14 @@ pub enum Material {
     Metal,
     /// Volcanic glass: lava quenched fast by water.
     Obsidian,
+    /// Pink blossom leaves on cherry trees.
+    Blossom,
+    /// Meadow flowers in many colours.
+    Flower,
 }
 
 /// The highest material id (for loading saves).
-pub const LAST_MATERIAL: Material = Material::Obsidian;
+pub const LAST_MATERIAL: Material = Material::Flower;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -101,7 +105,7 @@ impl Material {
         match self {
             M::Empty => Kind::Empty,
             M::Stone | M::Basalt | M::Dirt | M::Grass | M::Ice | M::Glass | M::Wood | M::Leaves | M::Plant | M::Coal | M::Gold
-            | M::MoonRock | M::Crystal | M::AlienGrass | M::Mushroom | M::Brick | M::Chest | M::Altar | M::Cloud | M::PortalStone | M::Rune | M::Portal | M::VoidRock | M::VoidCrystal | M::Metal | M::Obsidian => Kind::Static,
+            | M::MoonRock | M::Crystal | M::AlienGrass | M::Mushroom | M::Brick | M::Chest | M::Altar | M::Cloud | M::PortalStone | M::Rune | M::Portal | M::VoidRock | M::VoidCrystal | M::Metal | M::Obsidian | M::Blossom | M::Flower => Kind::Static,
             M::Sand | M::Snow | M::Seed | M::Gunpowder | M::Rubble | M::Gravel | M::Quicksand | M::Bone | M::VoidDust | M::Ash => Kind::Powder,
             M::Water | M::Oil | M::Acid | M::Lava | M::Blood | M::Goo => Kind::Liquid,
             M::Smoke | M::Steam | M::Gas => Kind::Gas,
@@ -151,7 +155,8 @@ impl Material {
         match self {
             M::Oil => Some(Burn { ignite: 100, lo: 45, hi: 110, falls: true }),
             M::Wood => Some(Burn { ignite: 180, lo: 120, hi: 230, falls: false }),
-            M::Leaves => Some(Burn { ignite: 50, lo: 12, hi: 35, falls: false }),
+            M::Leaves | M::Blossom => Some(Burn { ignite: 50, lo: 12, hi: 35, falls: false }),
+            M::Flower => Some(Burn { ignite: 60, lo: 10, hi: 25, falls: false }),
             M::Plant | M::Sprout => Some(Burn { ignite: 60, lo: 20, hi: 45, falls: false }),
             M::Grass => Some(Burn { ignite: 140, lo: 8, hi: 18, falls: false }),
             M::Coal => Some(Burn { ignite: 220, lo: 200, hi: 255, falls: false }),
@@ -171,7 +176,7 @@ impl Material {
 
     /// Background plant life (as opposed to background structures).
     pub const fn foliage(self) -> bool {
-        matches!(self, M::Wood | M::Leaves | M::Plant | M::Mushroom)
+        matches!(self, M::Wood | M::Leaves | M::Plant | M::Mushroom | M::Blossom | M::Flower)
     }
 
     /// Portal structures can't be destroyed.
@@ -194,7 +199,7 @@ impl Material {
             M::Metal => 0.15,
             M::Obsidian => 0.05,
             M::AlienGrass | M::Mushroom => 2.0,
-            M::Wood | M::Leaves | M::Plant | M::Sprout => 2.0,
+            M::Wood | M::Leaves | M::Plant | M::Sprout | M::Blossom | M::Flower => 2.0,
             _ => 0.0,
         }
     }
@@ -202,13 +207,13 @@ impl Material {
     /// Spells and particles fly through these.
     #[inline]
     pub const fn passable(self) -> bool {
-        matches!(self, M::Empty | M::Smoke | M::Steam | M::Gas | M::Fire | M::Leaves | M::Plant | M::Sprout | M::Mushroom | M::Portal)
+        matches!(self, M::Empty | M::Smoke | M::Steam | M::Gas | M::Fire | M::Leaves | M::Plant | M::Sprout | M::Mushroom | M::Portal | M::Blossom | M::Flower)
     }
 
     /// The wizard collides with these (foliage is walk-through).
     #[inline]
     pub const fn solid(self) -> bool {
-        matches!(self.kind(), Kind::Static | Kind::Powder) && !matches!(self, M::Leaves | M::Plant | M::Mushroom | M::Quicksand | M::Portal)
+        matches!(self.kind(), Kind::Static | Kind::Powder) && !matches!(self, M::Leaves | M::Plant | M::Mushroom | M::Quicksand | M::Portal | M::Blossom | M::Flower)
     }
 
     pub const fn base_color(self) -> [u8; 3] {
@@ -261,6 +266,8 @@ impl Material {
             M::Ash => [104, 100, 104],
             M::Metal => [150, 158, 172],
             M::Obsidian => [34, 24, 46],
+            M::Blossom => [246, 176, 204],
+            M::Flower => [236, 96, 128],
         }
     }
 
@@ -306,6 +313,8 @@ impl Material {
             M::Ash => 0.3,
             M::Metal => 0.12,
             M::Obsidian => 0.3,
+            M::Blossom => 0.35,
+            M::Flower => 0.3,
             _ => 0.0,
         }
     }
@@ -388,6 +397,8 @@ impl Material {
             M::Ash => "Ash",
             M::Metal => "Metal",
             M::Obsidian => "Obsidian",
+            M::Blossom => "Blossom",
+            M::Flower => "Flowers",
         }
     }
 }
